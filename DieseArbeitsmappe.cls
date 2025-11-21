@@ -170,17 +170,24 @@ Sub ImportKarteiAndFormat_Optimized()
     ReDim arrFontR(1 To rowCount)
 
     ' Indices in arrRaw for each Value/Interior pair:
-    ' ID is arrRaw(0, rec)
-    ' Value1 => arrRaw(1, rec)
-    ' InteriorColor1 => arrRaw(2, rec)
-    ' Value2 => arrRaw(3, rec)
-    ' InteriorColor2 => arrRaw(4, rec)
+    ' arrRaw(0, rec) => ID (Access primary key) - will be written to Kartei!AV (column 48)
+    ' arrRaw(1, rec) => Value1
+    ' arrRaw(2, rec) => InteriorColor1
+    ' arrRaw(3, rec) => Value2
+    ' arrRaw(4, rec) => InteriorColor2
     ' ...
-    ' ValueN => arrRaw(2*N-1, rec)
-    ' InteriorColorN => arrRaw(2*N, rec)
+    ' arrRaw(2*N-1, rec) => ValueN
+    ' arrRaw(2*N, rec) => InteriorColorN
+    ' For N=1..51:
+    '   ValueN => arrRaw(2*N-1, rec)
+    '   InteriorColorN => arrRaw(2*N, rec)
     '
-    ' FontColor3 => arrRaw(103, rec)
-    ' FontColor18 => arrRaw(104, rec)
+    ' Note: Value48 exists in database but is ignored during import.
+    '       Column 48 (AV) is always filled from arrRaw(0, rec) = ID field.
+    '
+    ' arrRaw(103, rec) => FontColor3
+    ' arrRaw(104, rec) => FontColor18
+    ' arrRaw(105, rec) => Value52
 
     Dim rec As Long
     For rec = 0 To rowCount - 1
@@ -197,7 +204,15 @@ Sub ImportKarteiAndFormat_Optimized()
             ' ...
             ' col=51 => idxValue=1+(51-1)*2 = 1+100=101 => interior=102
 
-            arrValues(rowDest, col) = arrRaw(idxValue, rec)
+            ' Special handling for column 48 (AV): write Access ID instead of Value48
+            If col <> 48 Then
+                arrValues(rowDest, col) = arrRaw(idxValue, rec)
+            Else
+                ' Column 48 (AV) = Access ID field (arrRaw(0, rec))
+                arrValues(rowDest, 48) = arrRaw(0, rec)
+            End If
+            
+            ' Interior color for all columns including 48
             arrInterior(rowDest, col) = arrRaw(idxValue + 1, rec)
         Next col
         arrValues(rowDest, 52) = arrRaw(105, rec)

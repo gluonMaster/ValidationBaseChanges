@@ -259,6 +259,20 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                         
                         ' Check if user canceled the input
                         If Notitzen.UserCanceled Then
+                            ' User canceled, remove "Ruck: " prefix and month entries added above
+                            ' Restore AZ to its state before Ruck block
+                            Dim ruckStart As String
+                            ruckStart = "Ruck: "
+                            If InStr(sh.Cells(r, 52).value, ruckStart) > 0 Then
+                                ' Find position where "Ruck: " was added
+                                Dim ruckPos As Long
+                                ruckPos = InStrRev(sh.Cells(r, 52).value, ruckStart)
+                                If ruckPos > 0 Then
+                                    ' Remove everything from "Ruck: " to end
+                                    sh.Cells(r, 52).value = Left(sh.Cells(r, 52).value, ruckPos - 1)
+                                End If
+                            End If
+                            
                             ' User canceled, exit the function without updating
                             Application.Calculation = xlCalculationAutomatic
                             Application.ScreenUpdating = True
@@ -277,13 +291,45 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                     End If
                 End If
                 
-                ' Process all other changes (future months, F/J/O fields) without "Ruck:" prefix
-                sh.Cells(r, 52).value = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, dataChanged)
-                UpdateLocalSheetRowByID = sh.Cells(r, 52).value
+                ' Process all other changes (future months, F/J/O fields)
+                ' If Ruck block was processed (dataChanged=True), call without Notitzen
+                ' If no Ruck block, call with Notitzen as usual
+                Dim historyResult As String
+                If dataChanged Then
+                    ' Already handled Notitzen in Ruck block, just append F/J/O without new comment
+                    historyResult = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, dataChanged, requestNotitzen:=False)
+                Else
+                    ' No Ruck block, normal flow with Notitzen
+                    historyResult = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, dataChanged, requestNotitzen:=True)
+                End If
+                
+                ' Check if user canceled (empty string returned)
+                If historyResult = "" Then
+                    ' User canceled, don't update AZ, return empty to signal cancellation
+                    Application.Calculation = xlCalculationAutomatic
+                    Application.ScreenUpdating = True
+                    UpdateLocalSheetRowByID = ""
+                    Exit Function
+                End If
+                
+                ' Update successful, write new history
+                sh.Cells(r, 52).Value = historyResult
+                UpdateLocalSheetRowByID = historyResult
             Else
                 ' Operator: process standard history updates
-                sh.Cells(r, 52).value = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, False)
-                UpdateLocalSheetRowByID = sh.Cells(r, 52).value
+                Dim historyResultOp As String
+                historyResultOp = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, False, requestNotitzen:=True)
+                
+                ' Check if user canceled
+                If historyResultOp = "" Then
+                    Application.Calculation = xlCalculationAutomatic
+                    Application.ScreenUpdating = True
+                    UpdateLocalSheetRowByID = ""
+                    Exit Function
+                End If
+                
+                sh.Cells(r, 52).Value = historyResultOp
+                UpdateLocalSheetRowByID = historyResultOp
             End If
             Exit For
         End If
@@ -390,55 +436,68 @@ End Sub
 
 Function UpdateHistoryString(sh As Worksheet, shOriginal As Worksheet, row As Long, _
                                     strID As String, maxIDOriginal As Long, _
-                                    ByRef dataChanged As Boolean) As String
+                                    ByRef dataChanged As Boolean, _
+                                    Optional ByVal requestNotitzen As Boolean = True) As String
     Dim i As Integer
     Dim monat As Integer
     Dim updateString As String
     Dim changesArr() As Integer
     ReDim changesArr(1 To 12)
     
-    ' If this row is not new
-    If Not dataChanged And CInt(strID) <= maxIDOriginal Then
-        updateString = sh.Cells(row, 52).value
+    Dim localChanges As Boolean
+    localChanges = False
+    
+    ' Always read existing history from AZ at start
+    updateString = sh.Cells(row, 52).Value
+    
+    ' Check if this is an existing record (not new)
+    If CInt(strID) <= maxIDOriginal Then
         
         ' Check changes in months U-AF (columns 21-32)
-        For i = 21 To 32
-            monat = i - 20
-            If Not SafeCompare(sh.Cells(row, i), shOriginal.Cells(row, i)) Then
-                updateString = updateString & "Mnt." & CStr(monat) & ": War(" & _
-                               CStr(shOriginal.Cells(row, i).value) & "); Ist(" & _
-                               CStr(sh.Cells(row, i).value) & "). "
-                changesArr(monat) = 1
-                dataChanged = True
-            End If
-        Next i
+        ' Only process if dataChanged=False (to avoid duplication after Ruck block)
+        If Not dataChanged Then
+            For i = 21 To 32
+                monat = i - 20
+                If Not SafeCompare(sh.Cells(row, i), shOriginal.Cells(row, i)) Then
+                    updateString = updateString & "Mnt." & CStr(monat) & ": War(" & _
+                                   CStr(shOriginal.Cells(row, i).Value) & "); Ist(" & _
+                                   CStr(sh.Cells(row, i).Value) & "). "
+                    changesArr(monat) = 1
+                    localChanges = True
+                    dataChanged = True
+                End If
+            Next i
+        End If
         
-        ' Check changes in Address (F, column 6)
+        ' Check changes in Address (F, column 6) - always check, independent of dataChanged
         If Not SafeCompare(sh.Cells(row, 6), shOriginal.Cells(row, 6)) Then
             updateString = updateString & "Address: Was(" & _
-                           PreserveHyphens(CStr(shOriginal.Cells(row, 6).value)) & "); Is(" & _
-                           PreserveHyphens(CStr(sh.Cells(row, 6).value)) & "). "
+                           PreserveHyphens(CStr(shOriginal.Cells(row, 6).Value)) & "); Is(" & _
+                           PreserveHyphens(CStr(sh.Cells(row, 6).Value)) & "). "
+            localChanges = True
             dataChanged = True
         End If
         
-        ' Check changes in Subject1 (J, column 10)
+        ' Check changes in Subject1 (J, column 10) - always check
         If Not SafeCompare(sh.Cells(row, 10), shOriginal.Cells(row, 10)) Then
             updateString = updateString & "Subject1: Was(" & _
-                           PreserveHyphens(CStr(shOriginal.Cells(row, 10).value)) & "); Is(" & _
-                           PreserveHyphens(CStr(sh.Cells(row, 10).value)) & "). "
+                           PreserveHyphens(CStr(shOriginal.Cells(row, 10).Value)) & "); Is(" & _
+                           PreserveHyphens(CStr(sh.Cells(row, 10).Value)) & "). "
+            localChanges = True
             dataChanged = True
         End If
         
-        ' Check changes in Subject2 (O, column 15)
+        ' Check changes in Subject2 (O, column 15) - always check
         If Not SafeCompare(sh.Cells(row, 15), shOriginal.Cells(row, 15)) Then
             updateString = updateString & "Subject2: Was(" & _
-                           PreserveHyphens(CStr(shOriginal.Cells(row, 15).value)) & "); Is(" & _
-                           PreserveHyphens(CStr(sh.Cells(row, 15).value)) & "). "
+                           PreserveHyphens(CStr(shOriginal.Cells(row, 15).Value)) & "); Is(" & _
+                           PreserveHyphens(CStr(sh.Cells(row, 15).Value)) & "). "
+            localChanges = True
             dataChanged = True
         End If
         
-        ' If data has changed, request comment via Notitzen
-        If dataChanged Then
+        ' Request comment via Notitzen only if requestNotitzen=True and localChanges exist
+        If requestNotitzen And localChanges Then
             Call CreateOrClearNotitzenSheet
             Call FillNotitzenSheet(changesArr, row)
             
@@ -450,12 +509,12 @@ Function UpdateHistoryString(sh As Worksheet, shOriginal As Worksheet, row As Lo
             End If
             
             Dim Notitz As String
-            Notitz = ThisWorkbook.Worksheets("Notitzen").Cells(5, 17).value
+            Notitz = ThisWorkbook.Worksheets("Notitzen").Cells(5, 17).Value
             updateString = updateString & "/" & Notitz & "/ " & CStr(Date) & " || "
         End If
     End If
     
-    ' Return a string with changes or an empty string
+    ' Return updated history string or empty string on cancellation
     UpdateHistoryString = updateString
 End Function
 

@@ -1,4 +1,12 @@
 Attribute VB_Name = "grossGeschichte"
+'==========================
+'   Module: grossGeschichte
+'   Purpose: Generate comprehensive history report (GrossGeschichte) for all records
+'   Updated: Support for ID-based tracking and new history formats
+'==========================
+
+Option Explicit
+
 Sub GrossGeshichteMachen()
     Dim wsGross As Worksheet
     Dim wsKartei As Worksheet
@@ -8,6 +16,7 @@ Sub GrossGeshichteMachen()
     Dim currentRow As Long
     Dim strGeschichte As String
     Dim operName As String
+    Dim recordID As String
     Dim result As Collection
     Dim outputRow As Long
     
@@ -18,45 +27,46 @@ Sub GrossGeshichteMachen()
     Application.Calculation = xlCalculationManual
     
     ' Get worksheets
-    Set wsGross = ThisWorkbook.Worksheets("GrossGeschichte")
+    Set wsGross = GetOrCreateGrossGeschichteSheet()
     Set wsKartei = ThisWorkbook.Worksheets("Kartei")
     
     ' Read date range from B1 and C1
-    If IsDate(wsGross.Range("B1").value) And IsDate(wsGross.Range("C1").value) Then
-        startDate = CDate(wsGross.Range("B1").value)
-        endDate = CDate(wsGross.Range("C1").value)
+    If IsDate(wsGross.Range("B1").Value) And IsDate(wsGross.Range("C1").Value) Then
+        startDate = CDate(wsGross.Range("B1").Value)
+        endDate = CDate(wsGross.Range("C1").Value)
     Else
-        MsgBox "Please enter valid dates in cells B1 and C1"
-        Exit Sub
+        MsgBox "Please enter valid dates in cells B1 and C1", vbExclamation
+        GoTo Cleanup
     End If
     
     ' Clear content from row 2 onwards
-    wsGross.Rows("2:" & wsGross.Rows.count).Clear
+    wsGross.Rows("2:" & wsGross.Rows.Count).Clear
     
     ' Create headers in row 2
     Call CreateGrossGeschichteHeaders(wsGross)
     
     ' Find last row in Kartei (column A)
-    lastRow = wsKartei.Cells(wsKartei.Rows.count, 1).End(xlUp).row
+    lastRow = wsKartei.Cells(wsKartei.Rows.Count, 1).End(xlUp).Row
     
     outputRow = 3 ' Start output from row 3
     
     ' Loop through all rows in Kartei
-    For currentRow = 2 To lastRow ' Start from row 2 assuming row 1 has headers
+    For currentRow = 3 To lastRow ' Start from row 3 (assuming rows 1-2 are headers)
         
-        ' Get history string and operator name
-        strGeschichte = wsKartei.Cells(currentRow, 52).value
-        operName = wsKartei.Cells(currentRow, 49).value
+        ' Get history string, operator name, and ID
+        strGeschichte = wsKartei.Cells(currentRow, 52).Value ' AZ column (history)
+        operName = wsKartei.Cells(currentRow, 49).Value ' AW column (operator)
+        recordID = CStr(wsKartei.Cells(currentRow, 48).Value) ' AV column (ID)
         
-        ' Skip if no history
-        If strGeschichte <> "" Then
+        ' Skip if no history or no ID
+        If strGeschichte <> "" And recordID <> "" Then
             
             On Error Resume Next
             ' Parse history
             Set result = ParseHistory(strGeschichte)
             
             If Err.Number <> 0 Then
-                Debug.Print "Error parsing history for row " & currentRow & ": " & Err.Description
+                Debug.Print "Error parsing history for row " & currentRow & " (ID: " & recordID & "): " & Err.Description
                 Err.Clear
                 GoTo NextRow
             End If
@@ -64,7 +74,7 @@ Sub GrossGeshichteMachen()
             
             ' Process each event in the history
             Dim i As Long
-            For i = 1 To result.count
+            For i = 1 To result.Count
                 Dim evt As Object
                 Set evt = result(i)
                 
@@ -77,7 +87,7 @@ Sub GrossGeshichteMachen()
                         ' Create entry for this event
                         Call CreateGrossGeschichteEntry(wsGross, wsKartei, outputRow, evt("IsRuck"), _
                                                       evt("Reason"), CStr(evt("ChangeDate")), _
-                                                      evt("Changes"), currentRow, operName)
+                                                      evt("Changes"), currentRow, operName, recordID)
                         outputRow = outputRow + 3 ' Each entry takes 2 rows + 1 separator row
                     End If
                 End If
@@ -104,32 +114,53 @@ NextRow:
         filterRange.AutoFilter
     End If
     
-    MsgBox "Gross Geschichte generated successfully for date range " & Format(startDate, "dd.mm.yyyy") & " - " & Format(endDate, "dd.mm.yyyy") & vbCrLf & "Total rows: " & (outputRow - 3)
-    
-    Exit Sub
+    MsgBox "Gross Geschichte generated successfully for date range " & Format(startDate, "dd.mm.yyyy") & " - " & Format(endDate, "dd.mm.yyyy") & vbCrLf & "Total rows: " & (outputRow - 3), vbInformation
     
 Cleanup:
     ' Re-enable automatic calculations and screen updating
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "There is an error: " & Err.Description
+    If Err.Number <> 0 Then
+        MsgBox "There is an error: " & Err.Description, vbCritical
+    End If
 End Sub
 
+' Get or create GrossGeschichte worksheet
+Private Function GetOrCreateGrossGeschichteSheet() As Worksheet
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets("GrossGeschichte")
+    On Error GoTo 0
+    
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        ws.Name = "GrossGeschichte"
+        
+        ' Add date range inputs
+        ws.Range("A1").Value = "Start Date:"
+        ws.Range("B1").Value = Date - 30 ' Default: last 30 days
+        ws.Range("C1").Value = Date
+        ws.Range("A1").Font.Bold = True
+    End If
+    
+    Set GetOrCreateGrossGeschichteSheet = ws
+End Function
+
 ' Helper function to convert decimal separator based on system settings
-Private Function ConvertDecimalSeparator(ByVal value As String, ByVal systemDecimalSeparator As String) As String
+Private Function ConvertDecimalSeparator(ByVal Value As String, ByVal systemDecimalSeparator As String) As String
     ' Remove extra spaces (like in original ConvertAndFormatCells)
-    value = Replace(value, " ", "")
+    Value = Replace(Value, " ", "")
     
     ' Unify decimal separators so Excel can parse them correctly (like in ConvertAndFormatCells)
     If systemDecimalSeparator = "," Then
         ' Replace any '.' with ',' in case the data was typed with a dot
-        value = Replace(value, ".", ",")
+        Value = Replace(Value, ".", ",")
     Else
         ' Replace any ',' with '.' if system uses dot
-        value = Replace(value, ",", ".")
+        Value = Replace(Value, ",", ".")
     End If
     
-    ConvertDecimalSeparator = value
+    ConvertDecimalSeparator = Value
 End Function
 
 Private Sub CreateGrossGeschichteHeaders(ws As Worksheet)
@@ -160,7 +191,8 @@ End Sub
 Private Sub CreateGrossGeschichteEntry(wsGross As Worksheet, wsKartei As Worksheet, _
                                      startRow As Long, isRuck As Boolean, _
                                      Reason As String, changeDate As String, _
-                                     Changes As Object, karteiRow As Long, operName As String)
+                                     Changes As Object, karteiRow As Long, operName As String, _
+                                     recordID As String)
     
     ' Fill basic information for both rows (War and Ist)
     Dim rowWar As Long
@@ -181,13 +213,13 @@ Private Sub CreateGrossGeschichteEntry(wsGross As Worksheet, wsKartei As Workshe
         Dim currentRow As Long
         currentRow = startRow + i
         
-        wsGross.Range("A" & currentRow).value = wsKartei.Cells(karteiRow, 1).value ' ID
-        wsGross.Range("B" & currentRow).value = wsKartei.Cells(karteiRow, 2).value ' Eltern
-        wsGross.Range("C" & currentRow).value = wsKartei.Cells(karteiRow, 4).value ' Kind
-        wsGross.Range("D" & currentRow).value = wsKartei.Cells(karteiRow, 10).value ' Gruppe I
-        wsGross.Range("E" & currentRow).value = wsKartei.Cells(karteiRow, 15).value ' Gruppe II
-        wsGross.Range("R" & currentRow).value = changeDate ' Date
-        wsGross.Range("S" & currentRow).value = operName ' Operator
+        wsGross.Range("A" & currentRow).Value = recordID ' Use passed ID
+        wsGross.Range("B" & currentRow).Value = wsKartei.Cells(karteiRow, 2).Value ' Eltern
+        wsGross.Range("C" & currentRow).Value = wsKartei.Cells(karteiRow, 4).Value ' Kind
+        wsGross.Range("D" & currentRow).Value = wsKartei.Cells(karteiRow, 10).Value ' Gruppe I
+        wsGross.Range("E" & currentRow).Value = wsKartei.Cells(karteiRow, 15).Value ' Gruppe II
+        wsGross.Range("R" & currentRow).Value = changeDate ' Date
+        wsGross.Range("S" & currentRow).Value = operName ' Operator
     Next i
     
     ' Fill Comments in Ist row with appropriate formatting (like in original)
@@ -196,10 +228,10 @@ Private Sub CreateGrossGeschichteEntry(wsGross As Worksheet, wsKartei As Workshe
     Else
         wsGross.Range("T" & rowIst).Interior.Color = RGB(204, 255, 153) ' Green for normal
     End If
-    wsGross.Range("T" & rowIst).value = Reason
+    wsGross.Range("T" & rowIst).Value = Reason
     
-    ' Fill monthly data
-    Dim monthKey As Variant
+    ' Fill monthly data and field changes
+    Dim changeKey As Variant
     Dim colIndex As Long
     Dim decimalSeparator As String
     
@@ -208,45 +240,67 @@ Private Sub CreateGrossGeschichteEntry(wsGross As Worksheet, wsKartei As Workshe
     
     On Error Resume Next ' Handle potential errors with dictionary access
     
-    For Each monthKey In Changes.Keys
-        colIndex = 5 + CLng(monthKey) ' Columns F-Q (6-17) for months 1-12
+    For Each changeKey In Changes.Keys
+        Dim keyStr As String
+        keyStr = CStr(changeKey)
         
-        ' Validate column index
-        If colIndex >= 6 And colIndex <= 17 Then
-            ' War value (previous state)
-            Dim warValue As String
-            warValue = Changes(monthKey)("War")
-            If warValue = "" Or IsEmpty(warValue) Or IsNull(warValue) Then
-                wsGross.Cells(rowWar, colIndex).value = 0
-            Else
-                ' Convert decimal separator based on system settings (like in ConvertAndFormatCells)
-                warValue = ConvertDecimalSeparator(warValue, decimalSeparator)
-                If IsNumeric(warValue) Then
-                    wsGross.Cells(rowWar, colIndex).value = CDbl(warValue)
-                Else
-                    wsGross.Cells(rowWar, colIndex).value = 0
+        ' Check if it's a month number (1-12)
+        If IsNumeric(keyStr) Then
+            Dim monthNum As Long
+            monthNum = CLng(keyStr)
+            
+            If monthNum >= 1 And monthNum <= 12 Then
+                colIndex = 5 + monthNum ' Columns F-Q (6-17) for months 1-12
+                
+                ' Validate column index
+                If colIndex >= 6 And colIndex <= 17 Then
+                    ' War value (previous state)
+                    Dim warValue As String
+                    warValue = Changes(changeKey)("War")
+                    If warValue = "" Or IsEmpty(warValue) Or IsNull(warValue) Then
+                        wsGross.Cells(rowWar, colIndex).Value = 0
+                    Else
+                        ' Convert decimal separator based on system settings (like in ConvertAndFormatCells)
+                        warValue = ConvertDecimalSeparator(warValue, decimalSeparator)
+                        If IsNumeric(warValue) Then
+                            wsGross.Cells(rowWar, colIndex).Value = CDbl(warValue)
+                        Else
+                            wsGross.Cells(rowWar, colIndex).Value = 0
+                        End If
+                    End If
+                    
+                    ' Ist value (new state) with highlighting
+                    Dim istValue As String
+                    istValue = Changes(changeKey)("Ist")
+                    If istValue = "" Or IsEmpty(istValue) Or IsNull(istValue) Then
+                        wsGross.Cells(rowIst, colIndex).Value = 0
+                    Else
+                        ' Convert decimal separator based on system settings
+                        istValue = ConvertDecimalSeparator(istValue, decimalSeparator)
+                        If IsNumeric(istValue) Then
+                            wsGross.Cells(rowIst, colIndex).Value = CDbl(istValue)
+                        Else
+                            wsGross.Cells(rowIst, colIndex).Value = 0
+                        End If
+                    End If
+                    
+                    ' Highlight the changed cell (like in original GeshichteMachen)
+                    wsGross.Cells(rowIst, colIndex).Interior.Color = RGB(255, 192, 203) ' Light pink
                 End If
             End If
+        Else
+            ' Non-numeric key - field names like "Address", "Subject1", "Subject2"
+            ' Add to comments field with field name
+            Dim fieldComment As String
+            fieldComment = keyStr & ": Was(" & Changes(changeKey)("War") & ") -> Is(" & Changes(changeKey)("Ist") & ")"
             
-            ' Ist value (new state) with highlighting
-            Dim istValue As String
-            istValue = Changes(monthKey)("Ist")
-            If istValue = "" Or IsEmpty(istValue) Or IsNull(istValue) Then
-                wsGross.Cells(rowIst, colIndex).value = 0
+            If wsGross.Range("T" & rowIst).Value <> "" Then
+                wsGross.Range("T" & rowIst).Value = wsGross.Range("T" & rowIst).Value & vbCrLf & fieldComment
             Else
-                ' Convert decimal separator based on system settings
-                istValue = ConvertDecimalSeparator(istValue, decimalSeparator)
-                If IsNumeric(istValue) Then
-                    wsGross.Cells(rowIst, colIndex).value = CDbl(istValue)
-                Else
-                    wsGross.Cells(rowIst, colIndex).value = 0
-                End If
+                wsGross.Range("T" & rowIst).Value = fieldComment
             End If
-            
-            ' Highlight the changed cell (like in original GeshichteMachen)
-            wsGross.Cells(rowIst, colIndex).Interior.Color = RGB(255, 192, 203) ' Light pink
         End If
-    Next monthKey
+    Next changeKey
     
     On Error GoTo 0 ' Reset error handling
     

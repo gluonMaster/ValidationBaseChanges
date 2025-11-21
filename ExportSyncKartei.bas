@@ -80,6 +80,9 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
     Set changedIDs = FindChangedIDs(dictLocal, dictOriginal)
     
     ' Filter out PENDING/DECLINED rows - they cannot be written directly to tblKartei
+    ' DECLINED rows: Admin must use DeclinedOverview tools to review and fix them
+    ' Once fixed via ApplyDeclinedFixes(), they move to pre_tblKartei (pending)
+    ' Modifying DECLINED rows directly on Kartei sheet without using tools is blocked here
     Dim filteredIDs As New Collection
     Dim checkID As Variant
     For Each checkID In changedIDs
@@ -136,6 +139,10 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
     Dim userRole As String
     userRole = GetUserRole()  ' "Admin" / "Operator"
     
+    ' Collections for IDs that successfully updated (user didn't cancel)
+    Dim effectiveSafeIDs As New Collection
+    Dim effectiveRiskyIDs As New Collection
+    
     ' Process safe changes
     For Each changedID In safeIDs
         arrLocal = dictLocal(changedID)
@@ -146,8 +153,17 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
         arrLocal(1, 51) = Format(Time, "HH:MM")
         
         ' Overwrite local sheet row so AW,AX,AY are updated visually
-        arrLocal(1, 52) = UpdateLocalSheetRowByID(wsLocal, wsOriginal, CStr(changedID), arrLocal, maxIDOriginal)
-        dictLocal(changedID) = arrLocal
+        Dim historyUpdate As String
+        historyUpdate = UpdateLocalSheetRowByID(wsLocal, wsOriginal, CStr(changedID), arrLocal, maxIDOriginal)
+        
+        ' Check if user canceled (empty string returned)
+        If historyUpdate <> "" Then
+            ' Update successful, save to dict and add to effective collection
+            arrLocal(1, 52) = historyUpdate
+            dictLocal(changedID) = arrLocal
+            effectiveSafeIDs.Add changedID
+        End If
+        ' If canceled (empty string), skip this ID - don't update dict, don't sync to Access
     Next changedID
     
     ' Process risky changes (update history/Notitzen on sheet, but don't write to tblKartei)
@@ -160,18 +176,26 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
         arrLocal(1, 51) = Format(Time, "HH:MM")
         
         ' Update local sheet row with history
-        arrLocal(1, 52) = UpdateLocalSheetRowByID(wsLocal, wsOriginal, CStr(changedID), arrLocal, maxIDOriginal)
-        dictLocal(changedID) = arrLocal
+        historyUpdate = UpdateLocalSheetRowByID(wsLocal, wsOriginal, CStr(changedID), arrLocal, maxIDOriginal)
+        
+        ' Check if user canceled
+        If historyUpdate <> "" Then
+            ' Update successful, save to dict and add to effective collection
+            arrLocal(1, 52) = historyUpdate
+            dictLocal(changedID) = arrLocal
+            effectiveRiskyIDs.Add changedID
+        End If
+        ' If canceled, skip this ID
     Next changedID
     
-    ' Write safe changes to Access tblKartei
-    If safeIDs.count > 0 Then
-        WriteDictionaryChangesToAccess_Recordset dictLocal, dictLocalFormats, safeIDs
+    ' Write safe changes to Access tblKartei (only IDs that weren't canceled)
+    If effectiveSafeIDs.Count > 0 Then
+        WriteDictionaryChangesToAccess_Recordset dictLocal, dictLocalFormats, effectiveSafeIDs
     End If
     
-    ' Write risky changes to pre_tblKartei
-    If riskyIDs.count > 0 Then
-        WriteRiskyChangesToPreTable dictLocal, dictLocalFormats, riskyIDs
+    ' Write risky changes to pre_tblKartei (only IDs that weren't canceled)
+    If effectiveRiskyIDs.Count > 0 Then
+        WriteRiskyChangesToPreTable dictLocal, dictLocalFormats, effectiveRiskyIDs
     End If
     
 '    Dim lastRow As Long

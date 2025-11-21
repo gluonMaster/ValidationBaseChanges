@@ -114,27 +114,31 @@ Public Sub WriteDictionaryChangesToAccess_Recordset(ByVal dictLocal As Scripting
                 Set rsCheck = db.OpenRecordset("SELECT * FROM tblKartei WHERE ID = " & targetID, dbOpenDynaset)
                 
                 If rsCheck.EOF Then
-                    ' Record not found - create new using separate recordset
+                    ' Record not found - create new with explicit ID from Kartei!AV
                     rsCheck.Close
                     
                     Dim rsNew As DAO.Recordset
                     Set rsNew = db.OpenRecordset("tblKartei", dbOpenDynaset)
                     rsNew.AddNew
+                    ' Explicitly set ID to match AV (column 48)
+                    rsNew.Fields("ID").value = targetID
                     FillRecordFromArray rsNew, arrRow, arrFormats
                     rsNew.Update
                     rsNew.Close
                 Else
-                    ' Record found - update it directly
+                    ' Record found - update it (ID already set, don't change it)
                     rsCheck.Edit
                     FillRecordFromArray rsCheck, arrRow, arrFormats
                     rsCheck.Update
                     rsCheck.Close
                 End If
             Else
-                ' ID is empty or invalid - create new record
+                ' ID is empty or invalid - should not happen in normal workflow
+                ' New records should always have valid numeric ID in AV (column 48)
                 Dim rsEmpty As DAO.Recordset
                 Set rsEmpty = db.OpenRecordset("tblKartei", dbOpenDynaset)
                 rsEmpty.AddNew
+                ' WARNING: Creating record without explicit ID - not recommended
                 FillRecordFromArray rsEmpty, arrRow, arrFormats
                 rsEmpty.Update
                 rsEmpty.Close
@@ -148,7 +152,7 @@ End Sub
 
 Private Sub FillRecordFromArray(ByVal rs As DAO.Recordset, ByVal arrRow As Variant, ByVal arrFormats As Variant)
     ' Assign recordset fields from arrRow(1,1..51).
-    ' We skip ID field because it's AutoNumber.
+    ' ID field is NOT filled here - it must be set explicitly before calling this function.
     Dim c As Long
     Application.Calculation = xlCalculationManual
     Application.ScreenUpdating = False

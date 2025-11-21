@@ -129,23 +129,32 @@ Public Function IsRiskyChange(ByVal wsKartei As Worksheet, _
         End If
     Next m
     
-    ' Check if discipline contains forbidden keywords
-    Dim isRisky As Boolean
-    isRisky = True  ' Assume risky unless proven safe
+    ' Evaluate safety of each discipline independently
+    Dim isSafeJ As Boolean
+    Dim isSafeO As Boolean
+    isSafeJ = True  ' Default safe if not checked
+    isSafeO = True  ' Default safe if not checked
     
     If needCheckJ Then
+        ' If months 1-6 changed in the past, check discipline J
         If HasSafeKeywords(disciplineJ) Then
-            isRisky = False
+            isSafeJ = True
+        Else
+            isSafeJ = False
         End If
     End If
     
     If needCheckO Then
+        ' If months 7-12 changed in the past, check discipline O
         If HasSafeKeywords(disciplineO) Then
-            isRisky = False
+            isSafeO = True
+        Else
+            isSafeO = False
         End If
     End If
     
-    IsRiskyChange = isRisky
+    ' Change is risky if ANY required discipline check failed
+    IsRiskyChange = (Not isSafeJ) Or (Not isSafeO)
 End Function
 
 Private Function HasSafeKeywords(ByVal disciplineText As String) As Boolean

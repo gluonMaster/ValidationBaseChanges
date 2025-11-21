@@ -28,7 +28,8 @@ End Sub
 
 Public Sub CreateTableKartei(ByVal dbPath As String)
     ' Creates tblKartei with:
-    '   ID (AutoNumber, Primary Key)
+    '   ID (Long, Primary Key) - regular numeric field populated from Kartei!AV (column 48)
+    '   Used as common key for tblKartei/pre_tblKartei/decl_tblKartei
     '   For each col 1..51 => ValueX (Text), InteriorColorX (Long)
     '   For col 3 (C) => FontColor3 (Long)
     '   For col 18 (R) => FontColor18 (Long)
@@ -46,10 +47,10 @@ Public Sub CreateTableKartei(ByVal dbPath As String)
     Dim tdf As DAO.TableDef
     Set tdf = db.CreateTableDef("tblKartei")
     
-    ' 1) Add an AutoNumber field ID
+    ' 1) Add ID field as regular Long (NOT AutoNumber - populated from Kartei!AV)
     Dim fldID As DAO.Field
     Set fldID = tdf.CreateField("ID", dbLong)
-    fldID.Attributes = dbAutoIncrField  ' AutoNumber
+    ' NO fldID.Attributes = dbAutoIncrField - ID is manually assigned from AV
     tdf.Fields.Append fldID
     
     ' 2) For each column 1..51, add ValueX (Text(255)) and InteriorColorX (Long)
@@ -139,8 +140,8 @@ Public Sub ExportKarteiToAccess(ByVal dbPath As String)
         Dim sqlInsert As String
         sqlInsert = "INSERT INTO tblKartei ("
         
-        ' We won't insert 'ID' because it's AutoNumber
-        ' So we list all the fields we want to fill in:
+        ' Now we INCLUDE 'ID' field - explicitly set from Kartei!AV (column 48)
+        ' List all the fields we want to fill in:
         
         Dim fieldList As String
         Dim valueList As String
@@ -150,23 +151,40 @@ Public Sub ExportKarteiToAccess(ByVal dbPath As String)
         
         Dim c As Long
         For c = 1 To 51
-            ' fieldList for Value c, InteriorColor c
-            fieldList = fieldList & "Value" & c & ",InteriorColor" & c & ","
-            
-            ' read the cell
-            Dim cellVal As Variant
-            cellVal = ws.Cells(r, c).value
-            
-            Dim sVal As String
-            ' If we want text, we must escape quotes if any
-            sVal = Replace(CStr(cellVal), "'", "''")
-            
-            ' Also read the interior color
-            Dim iColor As Long
-            iColor = ws.Cells(r, c).Interior.Color
-            
-            ' We'll put them in the SQL
-            valueList = valueList & "'" & sVal & "'" & "," & iColor & ","
+            If c = 48 Then
+                ' Column 48 = AV = ID field - add to field list
+                fieldList = fieldList & "ID,"
+                
+                ' Read ID value from column 48 (AV)
+                Dim idVal As Variant
+                idVal = ws.Cells(r, 48).value
+                
+                ' Add ID to value list (numeric, no quotes)
+                If IsNumeric(idVal) And Val(idVal) > 0 Then
+                    valueList = valueList & CLng(idVal) & ","
+                Else
+                    ' Should not happen - skip ID if invalid
+                    fieldList = Left(fieldList, Len(fieldList) - 1)  ' Remove "ID," from fieldList
+                End If
+            Else
+                ' fieldList for Value c, InteriorColor c
+                fieldList = fieldList & "Value" & c & ",InteriorColor" & c & ","
+                
+                ' read the cell
+                Dim cellVal As Variant
+                cellVal = ws.Cells(r, c).value
+                
+                Dim sVal As String
+                ' If we want text, we must escape quotes if any
+                sVal = Replace(CStr(cellVal), "'", "''")
+                
+                ' Also read the interior color
+                Dim iColor As Long
+                iColor = ws.Cells(r, c).Interior.Color
+                
+                ' We'll put them in the SQL
+                valueList = valueList & "'" & sVal & "'" & "," & iColor & ","
+            End If
         Next c
         
         ' Now handle FontColor3, FontColor18
