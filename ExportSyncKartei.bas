@@ -79,20 +79,66 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
     Dim changedIDs As Collection
     Set changedIDs = FindChangedIDs(dictLocal, dictOriginal)
     
-    Dim maxIDOriginal As Long
-    maxIDOriginal = MaxID(wsOriginal)
+    ' Filter out PENDING/DECLINED rows - they cannot be written directly to tblKartei
+    Dim filteredIDs As New Collection
+    Dim checkID As Variant
+    For Each checkID In changedIDs
+        Dim checkRow As Long
+        checkRow = FindRowByID_Sync(wsLocal, CStr(checkID))
+        If checkRow > 0 Then
+            Dim rowStatus As String
+            rowStatus = GetRowStatus(wsLocal, checkRow)
+            If rowStatus <> "PENDING" And rowStatus <> "DECLINED" Then
+                filteredIDs.Add checkID
+            End If
+        Else
+            ' Row not found, include it (new record case)
+            filteredIDs.Add checkID
+        End If
+    Next checkID
     
-    ' Update AW,AX,AY (cols 49..51) in local for changed records
-    Dim userRole As String
-    userRole = GetUserRole()  ' "Admin" / "Operator"
+    ' Use filtered IDs for further processing
+    Set changedIDs = filteredIDs
+    
+    ' Classify changes into safe and risky
+    Dim safeIDs As New Collection
+    Dim riskyIDs As New Collection
     
     Dim changedID As Variant
-    
     For Each changedID In changedIDs
         Dim arrLocal As Variant
         arrLocal = dictLocal(changedID)
         
-        ' Could do conflict resolution, date/time checks, etc. Here we skip for brevity.
+        If Not dictOriginal.exists(changedID) Then
+            ' New record (ID not in Kartei_Original/tblKartei) - always safe
+            safeIDs.Add changedID
+        Else
+            ' Existing record - check if risky
+            Dim arrOriginal As Variant
+            arrOriginal = dictOriginal(changedID)
+            
+            ' Determine if change is risky
+            Dim isRisky As Boolean
+            isRisky = IsRiskyChange(wsLocal, wsOriginal, 0, CStr(changedID), arrLocal, arrOriginal)
+            
+            If isRisky Then
+                riskyIDs.Add changedID
+            Else
+                safeIDs.Add changedID
+            End If
+        End If
+    Next changedID
+    
+    Dim maxIDOriginal As Long
+    maxIDOriginal = MaxID(wsOriginal)
+    
+    ' Update AW,AX,AY (cols 49..51) in local for all changed records
+    Dim userRole As String
+    userRole = GetUserRole()  ' "Admin" / "Operator"
+    
+    ' Process safe changes
+    For Each changedID In safeIDs
+        arrLocal = dictLocal(changedID)
         
         ' Update AW,AX,AY => userRole, Date, Time
         arrLocal(1, 49) = userRole
@@ -104,8 +150,29 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
         dictLocal(changedID) = arrLocal
     Next changedID
     
-    ' Now write changes to Access by ID (Recordset approach)
-    WriteDictionaryChangesToAccess_Recordset dictLocal, dictLocalFormats, changedIDs
+    ' Process risky changes (update history/Notitzen on sheet, but don't write to tblKartei)
+    For Each changedID In riskyIDs
+        arrLocal = dictLocal(changedID)
+        
+        ' Update AW,AX,AY => userRole, Date, Time
+        arrLocal(1, 49) = userRole
+        arrLocal(1, 50) = Date
+        arrLocal(1, 51) = Format(Time, "HH:MM")
+        
+        ' Update local sheet row with history
+        arrLocal(1, 52) = UpdateLocalSheetRowByID(wsLocal, wsOriginal, CStr(changedID), arrLocal, maxIDOriginal)
+        dictLocal(changedID) = arrLocal
+    Next changedID
+    
+    ' Write safe changes to Access tblKartei
+    If safeIDs.count > 0 Then
+        WriteDictionaryChangesToAccess_Recordset dictLocal, dictLocalFormats, safeIDs
+    End If
+    
+    ' Write risky changes to pre_tblKartei
+    If riskyIDs.count > 0 Then
+        WriteRiskyChangesToPreTable dictLocal, dictLocalFormats, riskyIDs
+    End If
     
 '    Dim lastRow As Long
 '
@@ -133,8 +200,19 @@ Cleanup:
         Exit Sub
     End If
     
+    ' Inform user about classification results
+    Dim msgText As String
+    If safeIDs.count > 0 Or riskyIDs.count > 0 Then
+        msgText = "Synchronization completed:" & vbCrLf & _
+                  "Safe changes written to database: " & safeIDs.count & vbCrLf & _
+                  "Risky changes sent for approval: " & riskyIDs.count
+        MsgBox msgText, vbInformation, "Sync Summary"
+    End If
+    
     If manualRun Then
-        MsgBox "Synchronization completed (ID-based).", vbInformation
+        If safeIDs.count = 0 And riskyIDs.count = 0 Then
+            MsgBox "Synchronization completed (ID-based).", vbInformation
+        End If
     Else
         ThisWorkbook.Save
 '        Dim newFileName As String
@@ -195,6 +273,22 @@ Public Sub LockReportColPubl(ws As Worksheet)
 
     On Error GoTo 0
 End Sub
+
+Private Function FindRowByID_Sync(ByVal ws As Worksheet, ByVal strID As String) As Long
+    ' Finds row by ID in column AV (48)
+    Dim lastRow As Long
+    lastRow = ws.Cells(ws.Rows.count, 1).End(xlUp).row
+    
+    Dim r As Long
+    For r = 3 To lastRow
+        If CStr(ws.Cells(r, 48).value) = strID Then
+            FindRowByID_Sync = r
+            Exit Function
+        End If
+    Next r
+    
+    FindRowByID_Sync = 0
+End Function
 
 Private Sub ValidateOperatorSepaRestrictions(ByVal wsLocal As Worksheet, ByVal wsOriginal As Worksheet)
     ' Validate that Operator has not modified SEPA rows (columns U-AF)

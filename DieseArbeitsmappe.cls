@@ -32,7 +32,11 @@ Public Sub Workbook_Open()
     
     Call ImportKarteiAndFormat_Optimized
     Call ConvertAndFormatCellsOptimized
-    ' Rebuild Kartei_Original
+    
+    ' Overlay pending and declined records from pre_/decl_ tables
+    Call OverlayPendingAndDeclined(ws)
+    
+    ' Rebuild Kartei_Original (with pending/declined data overlaid)
     Call RebuildKarteiOriginalSheet(ws)
 
     

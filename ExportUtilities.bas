@@ -190,7 +190,7 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
             sh.Cells(r, 50).value = rowData(1, 50)
             sh.Cells(r, 51).value = rowData(1, 51)
             
-            ' If user is Admin then all lowersituated lines should be processed
+            ' Process history updates based on user role
             Dim userRole As String
             userRole = GetCurrentUserRole()
             
@@ -206,11 +206,14 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                 Dim forbiddenEndCol As Integer
                 Dim forbiddenStartCol As Integer
                 
+                ' Determine range of past months that require "Ruck:" prefix
                 If currentY > dataYear Then
                     forbiddenEndCol = 32
                     forbiddenStartCol = 21
                 ElseIf currentY < dataYear Then
-                    Exit Function
+                    ' Future year, no past months
+                    forbiddenEndCol = 0
+                    forbiddenStartCol = 1
                 Else
                     forbiddenEndCol = 20 + (currentM - 1)
                     forbiddenStartCol = 21
@@ -219,23 +222,38 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                 Dim dataChanged As Boolean
                 dataChanged = False
                 
-                If Not IsOperatorAllowedToChange(dataYear) Then
-                    If forbiddenStartCol <= forbiddenEndCol Then
+                Dim hasPastMonthChanges As Boolean
+                hasPastMonthChanges = False
+                
+                ' Check if there are changes in past months (requiring "Ruck:" prefix)
+                If Not IsOperatorAllowedToChange(dataYear) And forbiddenStartCol <= forbiddenEndCol Then
+                    Dim i As Integer
+                    Dim mo As Integer
+                    Dim changesArr() As Integer
+                    ReDim changesArr(1 To 12)
+                    
+                    For i = forbiddenStartCol To forbiddenEndCol
+                        mo = i - 20
+                        If Not SafeCompare(sh.Cells(r, i), shOriginal.Cells(r, i)) Then
+                            hasPastMonthChanges = True
+                            changesArr(mo) = 1
+                            dataChanged = True
+                        End If
+                    Next i
+                    
+                    ' If past months changed, add "Ruck:" prefix
+                    If hasPastMonthChanges Then
                         sh.Cells(r, 52).value = sh.Cells(r, 52).value & "Ruck: "
-                        Dim i As Integer
-                        Dim mo As Integer
-                        Dim changesArr() As Integer
-                        ReDim changesArr(1 To 12)
+                        
                         For i = forbiddenStartCol To forbiddenEndCol
                             mo = i - 20
-                            If Not SafeCompare(sh.Cells(r, i), shOriginal.Cells(r, i)) Then
-                                sh.Cells(r, 52).value = sh.Cells(r, 52).value & "Mnt." & CStr(mo) & ": War(" & CStr(shOriginal.Cells(r, i).value) & "); Ist(" & CStr(sh.Cells(r, i).value) & "). "
-                                changesArr(mo) = 1
-                                dataChanged = True
+                            If changesArr(mo) = 1 Then
+                                sh.Cells(r, 52).value = sh.Cells(r, 52).value & "Mnt." & CStr(mo) & ": War(" & _
+                                                        CStr(shOriginal.Cells(r, i).value) & "); Ist(" & _
+                                                        CStr(sh.Cells(r, i).value) & "). "
                             End If
                         Next i
-                    End If
-                    If dataChanged Then
+                        
                         Call CreateOrClearNotitzenSheet
                         Call FillNotitzenSheet(changesArr, r)
                         
@@ -252,16 +270,18 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                         Notitz = ThisWorkbook.Worksheets("Notitzen").Cells(5, 17).value
                         sh.Cells(r, 52).value = sh.Cells(r, 52).value & "/" & Notitz & "/ " & CStr(Date) & " || "
                     End If
+                    
+                    ' Clean up empty "Ruck: " if no changes were actually added
                     If Right(sh.Cells(r, 52).value, Len("Ruck: ")) = "Ruck: " Then
                         sh.Cells(r, 52).value = Left(sh.Cells(r, 52).value, Len(sh.Cells(r, 52).value) - Len("Ruck: "))
                     End If
-                    UpdateLocalSheetRowByID = sh.Cells(r, 52).value
                 End If
-                If Not dataChanged Then
-                    sh.Cells(r, 52).value = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, dataChanged)
-                    UpdateLocalSheetRowByID = sh.Cells(r, 52).value
-                End If
+                
+                ' Process all other changes (future months, F/J/O fields) without "Ruck:" prefix
+                sh.Cells(r, 52).value = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, dataChanged)
+                UpdateLocalSheetRowByID = sh.Cells(r, 52).value
             Else
+                ' Operator: process standard history updates
                 sh.Cells(r, 52).value = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, False)
                 UpdateLocalSheetRowByID = sh.Cells(r, 52).value
             End If
@@ -377,12 +397,13 @@ Function UpdateHistoryString(sh As Worksheet, shOriginal As Worksheet, row As Lo
     Dim changesArr() As Integer
     ReDim changesArr(1 To 12)
     
-    ' If this row not new and in the cell
+    ' If this row is not new
     If Not dataChanged And CInt(strID) <= maxIDOriginal Then
         updateString = sh.Cells(row, 52).value
+        
+        ' Check changes in months U-AF (columns 21-32)
         For i = 21 To 32
             monat = i - 20
-            ' Comparison of cell values
             If Not SafeCompare(sh.Cells(row, i), shOriginal.Cells(row, i)) Then
                 updateString = updateString & "Mnt." & CStr(monat) & ": War(" & _
                                CStr(shOriginal.Cells(row, i).value) & "); Ist(" & _
@@ -392,7 +413,31 @@ Function UpdateHistoryString(sh As Worksheet, shOriginal As Worksheet, row As Lo
             End If
         Next i
         
-        ' If the data has changed, add the reason, date and delimiter
+        ' Check changes in Address (F, column 6)
+        If Not SafeCompare(sh.Cells(row, 6), shOriginal.Cells(row, 6)) Then
+            updateString = updateString & "Address: Was(" & _
+                           PreserveHyphens(CStr(shOriginal.Cells(row, 6).value)) & "); Is(" & _
+                           PreserveHyphens(CStr(sh.Cells(row, 6).value)) & "). "
+            dataChanged = True
+        End If
+        
+        ' Check changes in Subject1 (J, column 10)
+        If Not SafeCompare(sh.Cells(row, 10), shOriginal.Cells(row, 10)) Then
+            updateString = updateString & "Subject1: Was(" & _
+                           PreserveHyphens(CStr(shOriginal.Cells(row, 10).value)) & "); Is(" & _
+                           PreserveHyphens(CStr(sh.Cells(row, 10).value)) & "). "
+            dataChanged = True
+        End If
+        
+        ' Check changes in Subject2 (O, column 15)
+        If Not SafeCompare(sh.Cells(row, 15), shOriginal.Cells(row, 15)) Then
+            updateString = updateString & "Subject2: Was(" & _
+                           PreserveHyphens(CStr(shOriginal.Cells(row, 15).value)) & "); Is(" & _
+                           PreserveHyphens(CStr(sh.Cells(row, 15).value)) & "). "
+            dataChanged = True
+        End If
+        
+        ' If data has changed, request comment via Notitzen
         If dataChanged Then
             Call CreateOrClearNotitzenSheet
             Call FillNotitzenSheet(changesArr, row)
@@ -412,6 +457,11 @@ Function UpdateHistoryString(sh As Worksheet, shOriginal As Worksheet, row As Lo
     
     ' Return a string with changes or an empty string
     UpdateHistoryString = updateString
+End Function
+
+Private Function PreserveHyphens(ByVal text As String) As String
+    ' Helper function to preserve hyphens in text (no removal)
+    PreserveHyphens = text
 End Function
 
 Sub SelectFolder()
