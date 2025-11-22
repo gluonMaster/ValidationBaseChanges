@@ -21,7 +21,7 @@ Public Sub LoadPendingChangesFromPre()
     ClearKarteiData wsKartei
     
     ' Load data from pre_tblKartei
-    Dim dictPending As Scripting.Dictionary
+    Dim dictPending As Object
     Set dictPending = ReadPreTableIntoDictionary()
     
     If dictPending.Count = 0 Then
@@ -49,8 +49,9 @@ ErrorHandler:
 End Sub
 
 ' Read all records from pre_tblKartei into dictionary (key = ID)
-Private Function ReadPreTableIntoDictionary() As Scripting.Dictionary
-    Dim dict As New Scripting.Dictionary
+Private Function ReadPreTableIntoDictionary() As Object
+    Dim dict As Object
+    Set dict = CreateObject("Scripting.Dictionary")
     
     Dim dbPath As String
     dbPath = GetDatabasePath()
@@ -115,7 +116,7 @@ Private Function ReadPreTableIntoDictionary() As Scripting.Dictionary
 End Function
 
 ' Write pending records to Kartei sheet, starting from row 3
-Private Sub WritePendingToKartei(ByVal ws As Worksheet, ByVal dictPending As Scripting.Dictionary)
+Private Sub WritePendingToKartei(ByVal ws As Worksheet, ByVal dictPending As Object)
     Dim currentRow As Long
     currentRow = 3 ' Start from row 3 (rows 1-2 are headers)
     
@@ -147,7 +148,7 @@ End Sub
 
 ' Optionally load original values from tblKartei for comparison
 ' (can be displayed in adjacent columns or separate sheet)
-Private Sub LoadOriginalValues(ByVal ws As Worksheet, ByVal dictPending As Scripting.Dictionary)
+Private Sub LoadOriginalValues(ByVal ws As Worksheet, ByVal dictPending As Object)
     ' This is a stub - implement if Superadmin needs to see original vs pending side-by-side
     ' For now, we'll just ensure the data is loaded
     ' In future iterations, this could populate columns to the right or a separate comparison sheet

@@ -34,12 +34,27 @@ Sub GeshichteMachen()
         GoTo Cleanup
     End If
     
-    Set result = ParseHistory(strGeshichte)
+    ' Split history into segments to enrich parsed events with Address/Subject1/Subject2
+    Dim segments() As String
+    segments = Split(strGeshichte, "||")
+    
+    Set result = valid_ParseHistory.ParseHistory(strGeshichte)
     
     Dim i As Long
     For i = 1 To result.Count
         Dim evt As Object
         Set evt = result(i)
+        
+        ' Enrich Changes with Address/Subject1/Subject2 parsed from corresponding raw segment
+        Dim segmentText As String
+        segmentText = ""
+        If (i - 1) >= LBound(segments) And (i - 1) <= UBound(segments) Then
+            segmentText = Trim$(segments(i - 1))
+        End If
+        
+        Dim fieldChanges As Object
+        Set fieldChanges = ParseFieldChangesFromSegment(segmentText)
+        Call MergeFieldChangesIntoChanges(evt("Changes"), fieldChanges)
         
         Call CreateGeshichteSheet(i, evt("IsRuck"), evt("Reason"), CStr(evt("ChangeDate")), evt("Changes"), currentRow, operName, recordID)
         
@@ -179,8 +194,14 @@ Public Sub CreateGeshichteSheet(ByVal j As Long, ByVal isRuck As Boolean, _
         Else
             ' Non-numeric key - field names like "Address", "Subject1", "Subject2"
             ' Add to comments field with field name
+            Dim warText As String
+            Dim istText As String
             Dim fieldComment As String
-            fieldComment = keyStr & ": Was(" & Changes(changeKey)("War") & ") -> Is(" & Changes(changeKey)("Ist") & ")"
+            
+            warText = Changes(changeKey)("War")
+            istText = Changes(changeKey)("Ist")
+            
+            fieldComment = keyStr & ": Was(" & warText & "); Is(" & istText & ")."
             
             If ws.Range("T" & (3 * j)).Value <> "" Then
                 ws.Range("T" & (3 * j)).Value = ws.Range("T" & (3 * j)).Value & vbCrLf & fieldComment
@@ -195,6 +216,92 @@ Public Sub CreateGeshichteSheet(ByVal j As Long, ByVal isRuck As Boolean, _
     End With
 
     
+End Sub
+
+' Parse Address/Subject1/Subject2 changes from a raw history segment
+Private Function ParseFieldChangesFromSegment(ByVal segment As String) As Object
+    Dim result As Object
+    Set result = CreateObject("Scripting.Dictionary")
+    
+    If Len(Trim$(segment)) = 0 Then
+        Set ParseFieldChangesFromSegment = result
+        Exit Function
+    End If
+    
+    Call AddFieldChangeToDict(segment, "Address", result)
+    Call AddFieldChangeToDict(segment, "Subject1", result)
+    Call AddFieldChangeToDict(segment, "Subject2", result)
+    
+    Set ParseFieldChangesFromSegment = result
+End Function
+
+' Merge additional field changes into the base Changes dictionary
+Private Sub MergeFieldChangesIntoChanges(ByVal baseChanges As Object, ByVal fieldChanges As Object)
+    If baseChanges Is Nothing Then Exit Sub
+    If fieldChanges Is Nothing Then Exit Sub
+    
+    Dim key As Variant
+    For Each key In fieldChanges.Keys
+        If Not baseChanges.Exists(key) Then
+            baseChanges.Add key, fieldChanges(key)
+        Else
+            baseChanges(key) = fieldChanges(key)
+        End If
+    Next key
+End Sub
+
+' Helper: extract single "FieldName: Was(...); Is(...)." block into dictionary
+Private Sub AddFieldChangeToDict(ByVal segment As String, ByVal fieldName As String, ByVal dict As Object)
+    Dim marker As String
+    marker = fieldName & ": Was("
+    
+    Dim pos As Long
+    pos = InStr(1, segment, marker, vbTextCompare)
+    If pos = 0 Then Exit Sub
+    
+    Dim startWar As Long
+    startWar = pos + Len(marker)
+    
+    Dim endWar As Long
+    endWar = InStr(startWar, segment, ")", vbTextCompare)
+    If endWar = 0 Then Exit Sub
+    
+    Dim warVal As String
+    warVal = Mid$(segment, startWar, endWar - startWar)
+    
+    Dim markerIs As String
+    markerIs = "); Is("
+    
+    Dim posIs As Long
+    posIs = InStr(endWar, segment, markerIs, vbTextCompare)
+    If posIs = 0 Then Exit Sub
+    
+    Dim startIst As Long
+    startIst = posIs + Len(markerIs)
+    
+    Dim endIst As Long
+    endIst = InStr(startIst, segment, ")", vbTextCompare)
+    
+    Dim istVal As String
+    If endIst > startIst Then
+        istVal = Mid$(segment, startIst, endIst - startIst)
+    Else
+        istVal = Mid$(segment, startIst)
+    End If
+    
+    warVal = Trim$(warVal)
+    istVal = Trim$(istVal)
+    
+    Dim fieldDict As Object
+    Set fieldDict = CreateObject("Scripting.Dictionary")
+    fieldDict.Add "War", warVal
+    fieldDict.Add "Ist", istVal
+    
+    If dict.Exists(fieldName) Then
+        dict(fieldName) = fieldDict
+    Else
+        dict.Add fieldName, fieldDict
+    End If
 End Sub
 
 Sub ConvertAndFormatCells()
@@ -242,194 +349,4 @@ Sub ConvertAndFormatCells()
     Next i
     
 End Sub
-
-' ==============================
-' ParseHistory Function
-' ==============================
-' Parses history string from AZ column and returns collection of event objects
-' History format:
-'   - Events separated by " || "
-'   - Each event can have "Ruck: " prefix for past month changes
-'   - Month changes: "Mnt.N: War(X); Ist(Y). "
-'   - Field changes: "FieldName: Was(X); Is(Y). " (Address, Subject1, Subject2)
-'   - Decl comments: "Decl_N: comment"
-'   - Date: dd.mm.yyyy or similar
-'   - Comment: /text/
-' ==============================
-Public Function ParseHistory(ByVal historyStr As String) As Collection
-    Dim result As New Collection
-    
-    If Trim(historyStr) = "" Then
-        Set ParseHistory = result
-        Exit Function
-    End If
-    
-    ' Split by event separator " || "
-    Dim events() As String
-    events = Split(historyStr, " || ")
-    
-    Dim i As Long
-    For i = LBound(events) To UBound(events)
-        Dim eventStr As String
-        eventStr = Trim(events(i))
-        
-        If eventStr <> "" Then
-            Dim evt As Object
-            Set evt = ParseSingleEvent(eventStr)
-            
-            If Not evt Is Nothing Then
-                result.Add evt
-            End If
-        End If
-    Next i
-    
-    Set ParseHistory = result
-End Function
-
-' Parse a single event from history string
-Private Function ParseSingleEvent(ByVal eventStr As String) As Object
-    Dim evt As Object
-    Set evt = CreateObject("Scripting.Dictionary")
-    
-    Dim isRuck As Boolean
-    isRuck = False
-    
-    Dim changeDate As String
-    changeDate = ""
-    
-    Dim reason As String
-    reason = ""
-    
-    Dim changesDict As Object
-    Set changesDict = CreateObject("Scripting.Dictionary")
-    
-    ' Check for "Ruck: " prefix
-    If Left(eventStr, 6) = "Ruck: " Then
-        isRuck = True
-        eventStr = Mid(eventStr, 7) ' Remove "Ruck: "
-    End If
-    
-    ' Extract comment enclosed in /.../ 
-    Dim commentStart As Long
-    Dim commentEnd As Long
-    commentStart = InStr(eventStr, "/")
-    
-    If commentStart > 0 Then
-        commentEnd = InStr(commentStart + 1, eventStr, "/")
-        If commentEnd > commentStart Then
-            reason = Mid(eventStr, commentStart + 1, commentEnd - commentStart - 1)
-        End If
-    End If
-    
-    ' Extract date (dd.mm.yyyy or similar format)
-    Dim datePattern As String
-    Dim pos As Long
-    
-    ' Simple date extraction: look for pattern like "dd.mm.yyyy"
-    ' We'll search for sequences that look like dates
-    pos = 1
-    Do While pos <= Len(eventStr)
-        Dim char As String
-        char = Mid(eventStr, pos, 1)
-        
-        If IsNumeric(char) Then
-            ' Found start of potential date
-            Dim dateCandidate As String
-            Dim j As Long
-            For j = 0 To 10 ' Max length for date
-                If pos + j <= Len(eventStr) Then
-                    Dim testChar As String
-                    testChar = Mid(eventStr, pos + j, 1)
-                    If IsNumeric(testChar) Or testChar = "." Or testChar = "/" Or testChar = "-" Then
-                        dateCandidate = dateCandidate & testChar
-                    Else
-                        Exit For
-                    End If
-                End If
-            Next j
-            
-            ' Check if this looks like a valid date
-            On Error Resume Next
-            If IsDate(dateCandidate) Then
-                changeDate = dateCandidate
-                Exit Do
-            End If
-            On Error GoTo 0
-        End If
-        
-        pos = pos + 1
-    Loop
-    
-    ' Parse change entries: "Mnt.N: War(...); Ist(...)." or "FieldName: Was(...); Is(...)."
-    ' Pattern: "Mnt.1: War(123); Ist(456). "
-    Dim changes As String
-    changes = eventStr
-    
-    Dim regex As Object
-    Set regex = CreateObject("VBScript.RegExp")
-    regex.Global = True
-    regex.IgnoreCase = True
-    
-    ' Pattern for month changes: Mnt.N: War(...); Ist(...).
-    regex.Pattern = "Mnt\.(\d+):\s*War\(([^)]*)\);\s*Ist\(([^)]*)\)\."
-    
-    Dim matches As Object
-    Set matches = regex.Execute(changes)
-    
-    Dim match As Object
-    For Each match In matches
-        If match.SubMatches.Count >= 3 Then
-            Dim monthNum As String
-            monthNum = match.SubMatches(0)
-            
-            Dim warValue As String
-            warValue = match.SubMatches(1)
-            
-            Dim istValue As String
-            istValue = match.SubMatches(2)
-            
-            Dim changeInfo As Object
-            Set changeInfo = CreateObject("Scripting.Dictionary")
-            changeInfo("War") = warValue
-            changeInfo("Ist") = istValue
-            
-            If Not changesDict.Exists(monthNum) Then
-                changesDict.Add monthNum, changeInfo
-            End If
-        End If
-    Next match
-    
-    ' Pattern for field changes: FieldName: Was(...); Is(...).
-    ' Supports: Address, Subject1, Subject2, etc.
-    regex.Pattern = "(Address|Subject1|Subject2|Decl_\d+):\s*Was\(([^)]*)\);\s*Is\(([^)]*)\)\."
-    
-    Set matches = regex.Execute(changes)
-    
-    For Each match In matches
-        If match.SubMatches.Count >= 3 Then
-            Dim fieldName As String
-            fieldName = match.SubMatches(0)
-            
-            warValue = match.SubMatches(1)
-            istValue = match.SubMatches(2)
-            
-            Set changeInfo = CreateObject("Scripting.Dictionary")
-            changeInfo("War") = warValue
-            changeInfo("Ist") = istValue
-            
-            If Not changesDict.Exists(fieldName) Then
-                changesDict.Add fieldName, changeInfo
-            End If
-        End If
-    Next match
-    
-    ' Store parsed data in event dictionary
-    evt("IsRuck") = isRuck
-    evt("Reason") = reason
-    evt("ChangeDate") = changeDate
-    evt("Changes") = changesDict
-    
-    Set ParseSingleEvent = evt
-End Function
-
 

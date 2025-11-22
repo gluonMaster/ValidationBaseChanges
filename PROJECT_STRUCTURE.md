@@ -47,8 +47,9 @@ This VBA project manages a validation workflow for pending changes between Admin
 
 - `valid_ImportPending.bas` - Load pending changes from pre_tblKartei into Kartei
 - `valid_ApproveFlow.bas` - Approve/Decline workflow and sync decisions
-- `Geschichte.bas` - Individual record history display (adapted for new formats)
-- `grossGeschichte.bas` - Comprehensive history report generation (adapted for ID-based tracking)
+- `valid_ParseHistory.bas` - Tested history parser (from alt/Parceing.bas, DO NOT MODIFY REGEX)
+- `Geschichte.bas` - Individual record history display (uses valid_ParseHistory)
+- `grossGeschichte.bas` - Comprehensive history report generation (uses valid_ParseHistory)
 
 ---
 

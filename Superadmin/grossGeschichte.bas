@@ -61,9 +61,13 @@ Sub GrossGeshichteMachen()
         ' Skip if no history or no ID
         If strGeschichte <> "" And recordID <> "" Then
             
+            ' Split raw history into segments so we can parse Address/Subject1/Subject2 per event
+            Dim segments() As String
+            segments = Split(strGeschichte, "||")
+            
             On Error Resume Next
-            ' Parse history
-            Set result = ParseHistory(strGeschichte)
+            ' Parse history using tested parser from valid_ParseHistory module
+            Set result = valid_ParseHistory.ParseHistory(strGeschichte)
             
             If Err.Number <> 0 Then
                 Debug.Print "Error parsing history for row " & currentRow & " (ID: " & recordID & "): " & Err.Description
@@ -77,6 +81,19 @@ Sub GrossGeshichteMachen()
             For i = 1 To result.Count
                 Dim evt As Object
                 Set evt = result(i)
+                
+                ' Enrich Changes with Address/Subject1/Subject2 parsed from the corresponding raw segment
+                Dim segmentText As String
+                segmentText = ""
+                On Error Resume Next
+                If (i - 1) >= LBound(segments) And (i - 1) <= UBound(segments) Then
+                    segmentText = Trim$(segments(i - 1))
+                End If
+                On Error GoTo Cleanup
+                
+                Dim fieldChanges As Object
+                Set fieldChanges = ParseFieldChangesFromSegment(segmentText)
+                Call MergeFieldChangesIntoChanges(evt("Changes"), fieldChanges)
                 
                 ' Check if event date falls within the specified range
                 Dim eventDate As Date
@@ -110,7 +127,7 @@ NextRow:
         
         ' Apply AutoFilter to range from headers (row 2) to last data row
         Dim filterRange As Range
-        Set filterRange = wsGross.Range("A2:T" & (outputRow - 1))
+        Set filterRange = wsGross.Range("A2:Y" & (outputRow - 1))
         filterRange.AutoFilter
     End If
     
@@ -170,7 +187,7 @@ Private Sub CreateGrossGeschichteHeaders(ws As Worksheet)
     Dim i As Long
     For i = LBound(headers) To UBound(headers)
         With ws.Cells(2, i + 1) ' Row 2, start from column A (1)
-            .value = headers(i)
+            .Value = headers(i)
             .Font.Bold = True
             .HorizontalAlignment = xlCenter
         End With
@@ -186,6 +203,34 @@ Private Sub CreateGrossGeschichteHeaders(ws As Worksheet)
     ws.Columns("R").ColumnWidth = 12
     ws.Columns("S").ColumnWidth = 9
     ws.Columns("T").ColumnWidth = 40
+    
+    ' Additional columns to show Address and Subject changes (War/Ist on separate rows)
+    With ws.Cells(2, 21) ' Column U
+        .Value = "Address"
+        .Font.Bold = True
+        .HorizontalAlignment = xlCenter
+    End With
+    With ws.Cells(2, 22) ' Column V
+        .Value = "Subject1"
+        .Font.Bold = True
+        .HorizontalAlignment = xlCenter
+    End With
+    With ws.Cells(2, 23) ' Column W
+        .Value = "Subject2"
+        .Font.Bold = True
+        .HorizontalAlignment = xlCenter
+    End With
+    
+    ws.Columns("U:W").ColumnWidth = 20
+    
+    ' Column X: Decision (added by PrepareGrossGeschichteForDecisions)
+    ' Column Y: Decline Comment
+    With ws.Cells(2, 25) ' Column Y
+        .Value = "Decline Comment"
+        .Font.Bold = True
+        .HorizontalAlignment = xlCenter
+    End With
+    ws.Columns("Y").ColumnWidth = 40
 End Sub
 
 Private Sub CreateGrossGeschichteEntry(wsGross As Worksheet, wsKartei As Worksheet, _
@@ -206,7 +251,7 @@ Private Sub CreateGrossGeschichteEntry(wsGross As Worksheet, wsKartei As Workshe
     
     ' Create separator row (like in original GeshichteMachen)
     wsGross.Rows(rowSeparator).RowHeight = wsGross.StandardHeight * 1 / 4
-    wsGross.Range("A" & rowSeparator & ":T" & rowSeparator).Interior.Color = RGB(192, 192, 192)
+    wsGross.Range("A" & rowSeparator & ":Y" & rowSeparator).Interior.Color = RGB(192, 192, 192)
     
     ' Fill basic data for both rows
     For i = 0 To 1
@@ -230,10 +275,48 @@ Private Sub CreateGrossGeschichteEntry(wsGross As Worksheet, wsKartei As Workshe
     End If
     wsGross.Range("T" & rowIst).Value = Reason
     
+    ' Highlight SEPA rows explicitly in comments
+    Dim sepaMarker As String
+    sepaMarker = Trim$(UCase$(CStr(wsKartei.Cells(karteiRow, 47).Value)))
+    If sepaMarker = "SEPA" Then
+        Dim sepaText As String
+        sepaText = "SEPA"
+        
+        Dim commentCell As Range
+        Set commentCell = wsGross.Range("T" & rowIst)
+        
+        Dim baseText As String
+        baseText = CStr(commentCell.Value)
+        
+        Dim startPos As Long
+        If baseText <> "" Then
+            commentCell.Value = baseText & vbCrLf & sepaText
+            startPos = Len(baseText) + 2 ' account for vbCrLf
+        Else
+            commentCell.Value = sepaText
+            startPos = 1
+        End If
+        
+        With commentCell.Characters(startPos, Len(sepaText)).Font
+            .Color = vbRed
+            .Bold = True
+        End With
+    End If
+    
     ' Fill monthly data and field changes
     Dim changeKey As Variant
     Dim colIndex As Long
     Dim decimalSeparator As String
+    Dim addressWar As String, addressIst As String
+    Dim subject1War As String, subject1Ist As String
+    Dim subject2War As String, subject2Ist As String
+    
+    addressWar = ""
+    addressIst = ""
+    subject1War = ""
+    subject1Ist = ""
+    subject2War = ""
+    subject2Ist = ""
     
     ' Get the system decimal separator (like in original ConvertAndFormatCells)
     decimalSeparator = Application.International(xlDecimalSeparator)
@@ -289,20 +372,51 @@ Private Sub CreateGrossGeschichteEntry(wsGross As Worksheet, wsKartei As Workshe
                 End If
             End If
         Else
-            ' Non-numeric key - field names like "Address", "Subject1", "Subject2"
-            ' Add to comments field with field name
-            Dim fieldComment As String
-            fieldComment = keyStr & ": Was(" & Changes(changeKey)("War") & ") -> Is(" & Changes(changeKey)("Ist") & ")"
+            ' Non-numeric key - capture values for dedicated columns only (no duplication in comments)
+            Dim warText As String
+            Dim istText As String
             
-            If wsGross.Range("T" & rowIst).Value <> "" Then
-                wsGross.Range("T" & rowIst).Value = wsGross.Range("T" & rowIst).Value & vbCrLf & fieldComment
-            Else
-                wsGross.Range("T" & rowIst).Value = fieldComment
-            End If
+            warText = Changes(changeKey)("War")
+            istText = Changes(changeKey)("Ist")
+            
+            Select Case keyStr
+                Case "Address"
+                    addressWar = warText
+                    addressIst = istText
+                Case "Subject1"
+                    subject1War = warText
+                    subject1Ist = istText
+                Case "Subject2"
+                    subject2War = warText
+                    subject2Ist = istText
+            End Select
         End If
     Next changeKey
     
     On Error GoTo 0 ' Reset error handling
+    
+    ' Fill dedicated columns for Address/Subject1/Subject2
+    Const COL_ADDRESS As Long = 21 ' U
+    Const COL_SUBJECT1 As Long = 22 ' V
+    Const COL_SUBJECT2 As Long = 23 ' W
+    
+    If addressWar <> "" Or addressIst <> "" Then
+        wsGross.Cells(rowWar, COL_ADDRESS).Value = addressWar
+        wsGross.Cells(rowIst, COL_ADDRESS).Value = addressIst
+        wsGross.Cells(rowIst, COL_ADDRESS).Interior.Color = RGB(255, 192, 203)
+    End If
+    
+    If subject1War <> "" Or subject1Ist <> "" Then
+        wsGross.Cells(rowWar, COL_SUBJECT1).Value = subject1War
+        wsGross.Cells(rowIst, COL_SUBJECT1).Value = subject1Ist
+        wsGross.Cells(rowIst, COL_SUBJECT1).Interior.Color = RGB(255, 192, 203)
+    End If
+    
+    If subject2War <> "" Or subject2Ist <> "" Then
+        wsGross.Cells(rowWar, COL_SUBJECT2).Value = subject2War
+        wsGross.Cells(rowIst, COL_SUBJECT2).Value = subject2Ist
+        wsGross.Cells(rowIst, COL_SUBJECT2).Interior.Color = RGB(255, 192, 203)
+    End If
     
     ' Format monthly columns as decimal
     With wsGross.Range("F" & rowWar & ":Q" & rowIst)
@@ -310,7 +424,7 @@ Private Sub CreateGrossGeschichteEntry(wsGross As Worksheet, wsKartei As Workshe
     End With
     
     ' Add borders (like in original GeshichteMachen)
-    With wsGross.Range("A" & rowWar & ":S" & rowIst).Borders
+    With wsGross.Range("A" & rowWar & ":X" & rowIst).Borders
         .LineStyle = xlContinuous
         .Color = vbBlack
         .Weight = xlThin
@@ -319,13 +433,99 @@ End Sub
 
 Private Sub FormatGrossGeschichte(ws As Worksheet, lastRow As Long)
     ' Add borders to headers
-    With ws.Range("A2:T2").Borders
+    With ws.Range("A2:Y2").Borders
         .LineStyle = xlContinuous
         .Color = vbBlack
         .Weight = xlMedium
     End With
     
     ' Format headers background
-    ws.Range("A2:T2").Interior.Color = RGB(220, 220, 220) ' Light gray
+    ws.Range("A2:Y2").Interior.Color = RGB(220, 220, 220) ' Light gray
+End Sub
+
+' Parse Address/Subject1/Subject2 changes from a raw history segment (text before/including Was()/Is() blocks)
+Private Function ParseFieldChangesFromSegment(ByVal segment As String) As Object
+    Dim result As Object
+    Set result = CreateObject("Scripting.Dictionary")
+    
+    If Len(Trim$(segment)) = 0 Then
+        Set ParseFieldChangesFromSegment = result
+        Exit Function
+    End If
+    
+    Call AddFieldChangeToDict(segment, "Address", result)
+    Call AddFieldChangeToDict(segment, "Subject1", result)
+    Call AddFieldChangeToDict(segment, "Subject2", result)
+    
+    Set ParseFieldChangesFromSegment = result
+End Function
+
+' Merge additional field changes into the base Changes dictionary used by GrossGeschichte
+Private Sub MergeFieldChangesIntoChanges(ByVal baseChanges As Object, ByVal fieldChanges As Object)
+    If baseChanges Is Nothing Then Exit Sub
+    If fieldChanges Is Nothing Then Exit Sub
+    
+    Dim key As Variant
+    For Each key In fieldChanges.Keys
+        If Not baseChanges.Exists(key) Then
+            baseChanges.Add key, fieldChanges(key)
+        Else
+            baseChanges(key) = fieldChanges(key)
+        End If
+    Next key
+End Sub
+
+' Helper: extract single "FieldName: Was(...); Is(...)." block into dictionary
+Private Sub AddFieldChangeToDict(ByVal segment As String, ByVal fieldName As String, ByVal dict As Object)
+    Dim marker As String
+    marker = fieldName & ": Was("
+    
+    Dim pos As Long
+    pos = InStr(1, segment, marker, vbTextCompare)
+    If pos = 0 Then Exit Sub
+    
+    Dim startWar As Long
+    startWar = pos + Len(marker)
+    
+    Dim endWar As Long
+    endWar = InStr(startWar, segment, ")", vbTextCompare)
+    If endWar = 0 Then Exit Sub
+    
+    Dim warVal As String
+    warVal = Mid$(segment, startWar, endWar - startWar)
+    
+    Dim markerIs As String
+    markerIs = "); Is("
+    
+    Dim posIs As Long
+    posIs = InStr(endWar, segment, markerIs, vbTextCompare)
+    If posIs = 0 Then Exit Sub
+    
+    Dim startIst As Long
+    startIst = posIs + Len(markerIs)
+    
+    Dim endIst As Long
+    endIst = InStr(startIst, segment, ")", vbTextCompare)
+    
+    Dim istVal As String
+    If endIst > startIst Then
+        istVal = Mid$(segment, startIst, endIst - startIst)
+    Else
+        istVal = Mid$(segment, startIst)
+    End If
+    
+    warVal = Trim$(warVal)
+    istVal = Trim$(istVal)
+    
+    Dim fieldDict As Object
+    Set fieldDict = CreateObject("Scripting.Dictionary")
+    fieldDict.Add "War", warVal
+    fieldDict.Add "Ist", istVal
+    
+    If dict.Exists(fieldName) Then
+        dict(fieldName) = fieldDict
+    Else
+        dict.Add fieldName, fieldDict
+    End If
 End Sub
 

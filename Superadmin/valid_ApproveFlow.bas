@@ -25,8 +25,9 @@ Public Sub LoadPendingChanges()
     
     MsgBox "Pending changes loaded successfully." & vbCrLf & vbCrLf & _
            "Please review the GrossGeschichte sheet and mark each change as:" & vbCrLf & _
-           "  - 'Approved' to accept and move to tblKartei" & vbCrLf & _
-           "  - 'Declined' to reject and move to decl_tblKartei" & vbCrLf & vbCrLf & _
+           "  - 'Approved' (column X) to accept and move to tblKartei" & vbCrLf & _
+           "  - 'Declined' (column X) to reject and move to decl_tblKartei" & vbCrLf & _
+           "  - For declined records, optionally enter comment in column Y" & vbCrLf & vbCrLf & _
            "Then run 'SyncDecisions' to process your decisions.", _
            vbInformation, "Load Pending Changes"
     
@@ -40,7 +41,7 @@ ErrorHandler:
     MsgBox "Error loading pending changes: " & Err.Description, vbCritical, "Load Error"
 End Sub
 
-' Prepare GrossGeschichte sheet with decision column (column U)
+' Prepare GrossGeschichte sheet with decision column (X) and decline comment column (Y)
 Private Sub PrepareGrossGeschichteForDecisions()
     Dim ws As Worksheet
     On Error Resume Next
@@ -49,11 +50,11 @@ Private Sub PrepareGrossGeschichteForDecisions()
     
     If ws Is Nothing Then Exit Sub
     
-    ' Add header in column U (Decision)
-    ws.Range("U2").Value = "Decision"
-    ws.Range("U2").Font.Bold = True
-    ws.Range("U2").HorizontalAlignment = xlCenter
-    ws.Range("U2").Interior.Color = RGB(255, 255, 153) ' Light yellow
+    ' Add header in column X (Decision)
+    ws.Range("X2").Value = "Decision"
+    ws.Range("X2").Font.Bold = True
+    ws.Range("X2").HorizontalAlignment = xlCenter
+    ws.Range("X2").Interior.Color = RGB(255, 255, 153) ' Light yellow
     
     ' Add validation dropdown (Approved/Declined) to decision cells
     Dim lastRow As Long
@@ -63,8 +64,8 @@ Private Sub PrepareGrossGeschichteForDecisions()
         ' Find all "Ist" rows (every 3rd row starting from row 3: 3, 6, 9, ...)
         Dim r As Long
         For r = 4 To lastRow Step 3 ' Ist rows are at positions 4, 7, 10, ...
-            ' Add dropdown validation
-            With ws.Range("U" & r).Validation
+            ' Add dropdown validation to column X
+            With ws.Range("X" & r).Validation
                 .Delete
                 .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
                      Formula1:="Approved,Declined"
@@ -72,7 +73,10 @@ Private Sub PrepareGrossGeschichteForDecisions()
                 .InCellDropdown = True
             End With
             
-            ws.Range("U" & r).Interior.Color = RGB(255, 255, 204) ' Lighter yellow
+            ws.Range("X" & r).Interior.Color = RGB(255, 255, 204) ' Lighter yellow
+            
+            ' Prepare column Y for decline comments (no validation, just styling)
+            ws.Range("Y" & r).Interior.Color = RGB(255, 230, 230) ' Light pink
         Next r
     End If
 End Sub
@@ -99,7 +103,7 @@ Public Sub SyncDecisions()
     Dim r As Long
     For r = 4 To lastRow Step 3 ' Process "Ist" rows (4, 7, 10, ...)
         Dim decision As String
-        decision = UCase(Trim(wsGross.Range("U" & r).Value))
+        decision = UCase(Trim(wsGross.Range("X" & r).Value))
         
         If decision = "APPROVED" Or decision = "DECLINED" Then
             Dim recordID As String
@@ -112,10 +116,16 @@ Public Sub SyncDecisions()
                         approvedIDs.Add recordID
                     End If
                 ElseIf decision = "DECLINED" Then
-                    ' For declined, we need to collect comment from user
+                    ' For declined, first check column Y for pre-entered comment
                     Dim declComment As String
-                    declComment = InputBox("Enter reason for declining ID " & recordID & ":", _
-                                          "Decline Comment", "Superadmin declined this change")
+                    declComment = Trim(wsGross.Range("Y" & r).Value)
+                    
+                    ' If column Y is empty, prompt for comment via InputBox
+                    If declComment = "" Then
+                        declComment = InputBox("Enter reason for declining ID " & recordID & ":" & vbCrLf & _
+                                              "(You can also enter comments directly in column Y of GrossGeschichte)", _
+                                              "Decline Comment", "Superadmin declined this change")
+                    End If
                     
                     If declComment <> "" Then
                         If Not CollectionContains(declinedIDs, recordID) Then
@@ -130,7 +140,7 @@ Public Sub SyncDecisions()
     Next r
     
     If approvedIDs.Count = 0 And declinedIDs.Count = 0 Then
-        MsgBox "No decisions found. Please mark records as 'Approved' or 'Declined' in column U.", _
+        MsgBox "No decisions found. Please mark records as 'Approved' or 'Declined' in column X.", _
                vbExclamation, "No Decisions"
         GoTo Cleanup
     End If
@@ -175,6 +185,8 @@ Private Sub ProcessApprovedRecords(ByVal approvedIDs As Collection)
     Dim db As DAO.Database
     Set db = wsDao.OpenDatabase(dbPath)
     
+    Dim fld As DAO.Field ' Declare once at procedure level
+    
     wsDao.BeginTrans
     
     Dim idVar As Variant
@@ -198,7 +210,6 @@ Private Sub ProcessApprovedRecords(ByVal approvedIDs As Collection)
                 rsMain.AddNew
                 
                 ' Copy all fields INCLUDING ID (to preserve ID from pre_tblKartei)
-                Dim fld As DAO.Field
                 For Each fld In rsPre.Fields
                     On Error Resume Next
                     rsMain.Fields(fld.Name).Value = rsPre.Fields(fld.Name).Value
@@ -208,7 +219,6 @@ Private Sub ProcessApprovedRecords(ByVal approvedIDs As Collection)
                 ' Record exists - update (skip ID since it already matches)
                 rsMain.Edit
                 
-                Dim fld As DAO.Field
                 For Each fld In rsPre.Fields
                     If fld.Name <> "ID" Then ' ID already matches, update other fields
                         On Error Resume Next
@@ -423,6 +433,7 @@ Private Sub CreateDeclTable(ByVal dbPath As String)
     Dim i As Long
     For i = 1 To 51
         Set fld = tbl.CreateField("Value" & i, dbText, 255)
+        fld.AllowZeroLength = True ' Allow empty strings in text fields
         tbl.Fields.Append fld
     Next i
     
