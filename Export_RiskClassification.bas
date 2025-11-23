@@ -103,7 +103,38 @@ Public Function IsRiskyChange(ByVal wsKartei As Worksheet, _
         Exit Function
     End If
     
-    ' Now check disciplines (J for months 1-6, O for months 7-12)
+    ' ========================================
+    ' Depth-based policy: changes more than 1 month in the past are always risky
+    ' This applies even when disciplines contain NH/Nachhilfe/Ind./VSpE keywords
+    ' ========================================
+    Dim maxPastDepth As Long
+    maxPastDepth = 0
+    
+    If currentYear > dataYear Then
+        ' Editing previous year's data - always considered deep (>1 month)
+        maxPastDepth = 999
+    ElseIf currentYear = dataYear Then
+        ' Calculate actual depth for each changed past month
+        For m = 1 To 12
+            If changedMonths(m) And isPastMonth(m) Then
+                Dim depth As Long
+                depth = currentMonth - m
+                If depth > maxPastDepth Then
+                    maxPastDepth = depth
+                End If
+            End If
+        Next m
+    End If
+    
+    ' If editing more than 1 month in the past, always risky
+    If maxPastDepth > 1 Then
+        IsRiskyChange = True
+        Exit Function
+    End If
+    
+    ' ========================================
+    ' For edits within 1 month depth, check disciplines (J for months 1-6, O for months 7-12)
+    ' ========================================
     Dim disciplineJ As String
     Dim disciplineO As String
     disciplineJ = CStr(arrLocal(1, 10))  ' Column J (10)

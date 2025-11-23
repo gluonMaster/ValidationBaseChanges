@@ -31,10 +31,10 @@ Public Sub Workbook_Open()
 '    ws.Cells.Locked = False
     
     Call ImportKarteiAndFormat_Optimized
-    Call ConvertAndFormatCellsOptimized
     
     ' Overlay pending and declined records from pre_/decl_ tables
     Call OverlayPendingAndDeclined(ws)
+    Call ConvertAndFormatCellsOptimized
     
     ' Rebuild Kartei_Original (with pending/declined data overlaid)
     Call RebuildKarteiOriginalSheet(ws)

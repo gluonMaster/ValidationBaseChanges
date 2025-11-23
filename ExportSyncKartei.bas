@@ -216,6 +216,9 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
     ' Write risky changes to pre_tblKartei (only IDs that weren't canceled)
     If effectiveRiskyIDs.Count > 0 Then
         WriteRiskyChangesToPreTable dictLocal, dictLocalFormats, effectiveRiskyIDs
+        
+        ' Mark risky records as PENDING on Kartei sheet immediately
+        Call MarkRiskyRowsAsPending(wsLocal, effectiveRiskyIDs)
     End If
     
     ' ========================================
@@ -771,5 +774,32 @@ Private Sub UpdateKarteiOriginalForDeclined(ByVal wsKartei As Worksheet, _
     ' This ensures next sync sees the record as PENDING, not DECLINED
     wsKarteiOriginal.Cells(origRow, 53).value = "PENDING"
 End Sub
+
+Private Sub MarkRiskyRowsAsPending(ByVal ws As Worksheet, ByVal riskyIDs As Collection)
+    ' Marks risky records as PENDING on Kartei sheet immediately after writing to pre_tblKartei
+    ' This ensures visual feedback without waiting for file reopen
+    
+    Const STATUS_COL As Long = 53           ' BA column
+    Const COLOR_PENDING As Long = 15849925  ' Light blue (same as in Export_OverlayPending)
+    
+    Dim varID As Variant
+    Dim r As Long
+    Dim cellD As String
+    
+    For Each varID In riskyIDs
+        r = FindRowByID_Sync(ws, CStr(varID))
+        If r > 0 Then
+            ' Set PENDING status in BA column
+            ws.Cells(r, STATUS_COL).value = "PENDING"
+            
+            ' Color column A light blue if D <> "Zahlung"
+            cellD = Trim(CStr(ws.Cells(r, 4).value))
+            If cellD <> "Zahlung" Then
+                ws.Cells(r, 1).Interior.Color = COLOR_PENDING
+            End If
+        End If
+    Next varID
+End Sub
+
 
 
