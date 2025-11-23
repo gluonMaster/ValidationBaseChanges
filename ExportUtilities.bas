@@ -232,6 +232,19 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                     Dim changesArr() As Integer
                     ReDim changesArr(1 To 12)
                     
+                    ' Array to track ALL changed months (both past and current/future)
+                    Dim allChangedArr() As Integer
+                    ReDim allChangedArr(1 To 12)
+                    
+                    ' First, detect ALL changed months (columns 21-32)
+                    For i = 21 To 32
+                        mo = i - 20
+                        If Not SafeCompare(sh.Cells(r, i), shOriginal.Cells(r, i)) Then
+                            allChangedArr(mo) = 1
+                        End If
+                    Next i
+                    
+                    ' Then, check if any of the past months changed
                     For i = forbiddenStartCol To forbiddenEndCol
                         mo = i - 20
                         If Not SafeCompare(sh.Cells(r, i), shOriginal.Cells(r, i)) Then
@@ -241,13 +254,14 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                         End If
                     Next i
                     
-                    ' If past months changed, add "Ruck:" prefix
+                    ' If past months changed, add "Ruck:" prefix with ALL changed months
                     If hasPastMonthChanges Then
                         sh.Cells(r, 52).value = sh.Cells(r, 52).value & "Ruck: "
                         
-                        For i = forbiddenStartCol To forbiddenEndCol
+                        ' Include ALL changed months (past and current/future) in the Ruck: block
+                        For i = 21 To 32
                             mo = i - 20
-                            If changesArr(mo) = 1 Then
+                            If allChangedArr(mo) = 1 Then
                                 sh.Cells(r, 52).value = sh.Cells(r, 52).value & "Mnt." & CStr(mo) & ": War(" & _
                                                         CStr(shOriginal.Cells(r, i).value) & "); Ist(" & _
                                                         CStr(sh.Cells(r, i).value) & "). "
@@ -255,7 +269,8 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                         Next i
                         
                         Call CreateOrClearNotitzenSheet
-                        Call FillNotitzenSheet(changesArr, r)
+                        ' Show all changed months in Notitzen window
+                        Call FillNotitzenSheet(allChangedArr, r)
                         
                         ' Check if user canceled the input
                         If Notitzen.UserCanceled Then
@@ -424,8 +439,9 @@ Public Sub ResetSheetView(ByVal ws As Worksheet, ByVal wsOrig As Worksheet)
     Dim rng1 As Range
     Dim rngOrig As Range
     Dim sortColumn As Integer
-    Set rng1 = ws.Range("A2:AZ" & lastRow)
-    Set rngOrig = wsOrig.Range("A2:AZ" & lastRowOrig)
+    ' Include column BA (53) to keep status (PENDING/DECLINED) synchronized with row data
+    Set rng1 = ws.Range("A2:BA" & lastRow)
+    Set rngOrig = wsOrig.Range("A2:BA" & lastRowOrig)
     sortColumn = 48
     
     rngOrig.Sort Key1:=rngOrig.Columns(sortColumn), Order1:=xlAscending, Header:=xlYes

@@ -266,7 +266,8 @@ Sub ImportKarteiAndFormat_Optimized()
         Dim lastCol As Long
 
         lastRow = .Cells(.Rows.count, "B").End(xlUp).row
-        lastCol = 52
+        ' Include column BA (53) to keep status (PENDING/DECLINED) synchronized with row data
+        lastCol = 53
 
         .Range(.Cells(2, 1), .Cells(lastRow, lastCol)).Sort _
             Key1:=.Range("B2"), Order1:=xlAscending, Header:=xlYes

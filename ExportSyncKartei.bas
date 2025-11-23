@@ -79,11 +79,13 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
     Dim changedIDs As Collection
     Set changedIDs = FindChangedIDs(dictLocal, dictOriginal)
     
-    ' Filter out PENDING/DECLINED rows - they cannot be written directly to tblKartei
-    ' DECLINED rows: Admin must use DeclinedOverview tools to review and fix them
-    ' Once fixed via ApplyDeclinedFixes(), they move to pre_tblKartei (pending)
-    ' Modifying DECLINED rows directly on Kartei sheet without using tools is blocked here
-    Dim filteredIDs As New Collection
+    ' Categorize changed IDs by status: normal, pending, declined
+    Dim normalChangedIDs As New Collection
+    Dim pendingChangedIDs As New Collection
+    Dim declinedChangedIDs As New Collection
+    
+    Debug.Print "Categorizing " & changedIDs.Count & " changed IDs by status..."
+    
     Dim checkID As Variant
     For Each checkID In changedIDs
         Dim checkRow As Long
@@ -91,24 +93,42 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
         If checkRow > 0 Then
             Dim rowStatus As String
             rowStatus = GetRowStatus(wsLocal, checkRow)
-            If rowStatus <> "PENDING" And rowStatus <> "DECLINED" Then
-                filteredIDs.Add checkID
+            
+            ' DIAGNOSTIC: Read BA column directly
+            Dim baValue As Variant
+            baValue = wsLocal.Cells(checkRow, 53).value
+            Dim baText As String
+            If IsEmpty(baValue) Then
+                baText = "(empty)"
+            Else
+                baText = "'" & CStr(baValue) & "'"
+            End If
+            
+            Debug.Print "ID " & checkID & " (row " & checkRow & "): status = '" & rowStatus & "', BA(53) raw = " & baText
+            
+            If rowStatus = "PENDING" Then
+                pendingChangedIDs.Add checkID
+            ElseIf rowStatus = "DECLINED" Then
+                declinedChangedIDs.Add checkID
+            Else
+                ' Normal record (no special status)
+                normalChangedIDs.Add checkID
             End If
         Else
-            ' Row not found, include it (new record case)
-            filteredIDs.Add checkID
+            ' Row not found, include as normal (new record case)
+            Debug.Print "ID " & checkID & ": row not found, treating as normal (new)"
+            normalChangedIDs.Add checkID
         End If
     Next checkID
     
-    ' Use filtered IDs for further processing
-    Set changedIDs = filteredIDs
+    Debug.Print "Categorization complete: normal=" & normalChangedIDs.Count & ", pending=" & pendingChangedIDs.Count & ", declined=" & declinedChangedIDs.Count
     
     ' Classify changes into safe and risky
     Dim safeIDs As New Collection
     Dim riskyIDs As New Collection
     
     Dim changedID As Variant
-    For Each changedID In changedIDs
+    For Each changedID In normalChangedIDs
         Dim arrLocal As Variant
         arrLocal = dictLocal(changedID)
         
@@ -198,6 +218,106 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
         WriteRiskyChangesToPreTable dictLocal, dictLocalFormats, effectiveRiskyIDs
     End If
     
+    ' ========================================
+    ' Process PENDING changes
+    ' ========================================
+    ' Admin edits to existing PENDING records are updated in pre_tblKartei
+    ' BA remains "PENDING", color stays pending blue
+    Dim effectivePendingIDs As New Collection
+    
+    For Each changedID In pendingChangedIDs
+        arrLocal = dictLocal(changedID)
+        
+        ' Update AW,AX,AY => userRole, Date, Time
+        arrLocal(1, 49) = userRole
+        arrLocal(1, 50) = Date
+        arrLocal(1, 51) = Format(Time, "HH:MM")
+        
+        ' Update local sheet row with history
+        historyUpdate = UpdateLocalSheetRowByID(wsLocal, wsOriginal, CStr(changedID), arrLocal, maxIDOriginal)
+        
+        ' Check if user canceled
+        If historyUpdate <> "" Then
+            ' Update successful, save to dict and add to effective collection
+            arrLocal(1, 52) = historyUpdate
+            dictLocal(changedID) = arrLocal
+            effectivePendingIDs.Add changedID
+        End If
+        ' If canceled, skip this ID
+    Next changedID
+    
+    ' Write pending changes to pre_tblKartei (update existing records)
+    If effectivePendingIDs.Count > 0 Then
+        WriteRiskyChangesToPreTable dictLocal, dictLocalFormats, effectivePendingIDs
+    End If
+    
+    ' ========================================
+    ' Process DECLINED changes
+    ' ========================================
+    ' Admin fixes to DECLINED records move them from decl_tblKartei to pre_tblKartei
+    ' BA changes to "PENDING", color changes to pending blue
+    Dim effectiveDeclinedIDs As New Collection
+    
+    Debug.Print "Processing DECLINED changes: declinedChangedIDs.Count = " & declinedChangedIDs.Count
+    
+    For Each changedID In declinedChangedIDs
+        Debug.Print "Processing DECLINED ID: " & changedID
+        arrLocal = dictLocal(changedID)
+        
+        ' Update AW,AX,AY => userRole, Date, Time
+        arrLocal(1, 49) = userRole
+        arrLocal(1, 50) = Date
+        arrLocal(1, 51) = Format(Time, "HH:MM")
+        
+        ' Update local sheet row with history and Notitzen
+        historyUpdate = UpdateLocalSheetRowByID(wsLocal, wsOriginal, CStr(changedID), arrLocal, maxIDOriginal)
+        
+        Debug.Print "UpdateLocalSheetRowByID returned: '" & historyUpdate & "' for ID " & changedID
+        
+        ' Check if user canceled
+        If historyUpdate <> "" Then
+            ' Update successful, save to dict and add to effective collection
+            arrLocal(1, 52) = historyUpdate
+            dictLocal(changedID) = arrLocal
+            effectiveDeclinedIDs.Add changedID
+            
+            Debug.Print "Added ID " & changedID & " to effectiveDeclinedIDs"
+            
+            ' CRITICAL: Re-read formats from sheet after UpdateLocalSheetRowByID
+            ' because formats may have changed during history updates
+            Dim strID_Decl As String
+            strID_Decl = CStr(changedID)
+            Dim rowDecl As Long
+            rowDecl = FindRowByID_Sync(wsLocal, strID_Decl)
+            
+            If rowDecl > 0 Then
+                ' Re-read format data from sheet for this ID
+                Dim updatedFormats() As Variant
+                ReDim updatedFormats(1 To 1, 1 To 53)
+                
+                Dim colIdx As Integer
+                For colIdx = 1 To 51
+                    updatedFormats(1, colIdx) = wsLocal.Cells(rowDecl, colIdx).Interior.Color
+                Next colIdx
+                updatedFormats(1, 52) = wsLocal.Cells(rowDecl, 3).Font.Color
+                updatedFormats(1, 53) = wsLocal.Cells(rowDecl, 18).Font.Color
+                
+                ' Update dictLocalFormats with fresh data
+                dictLocalFormats(changedID) = updatedFormats
+            End If
+        End If
+        ' If canceled, skip this ID
+    Next changedID
+    
+    ' Move declined records from decl_tblKartei to pre_tblKartei
+    If effectiveDeclinedIDs.Count > 0 Then
+        Debug.Print "About to call MoveDeclinedToPending with " & effectiveDeclinedIDs.Count & " IDs"
+        Call MoveDeclinedToPending(dictLocal, dictLocalFormats, effectiveDeclinedIDs, wsLocal)
+        Debug.Print "Returned from MoveDeclinedToPending"
+    Else
+        Debug.Print "No declined IDs to process (effectiveDeclinedIDs.Count = 0)"
+    End If
+    
 '    Dim lastRow As Long
 '
 '    lastRow = wsLocal.Cells(wsLocal.Rows.Count, 1).End(xlUp).row
@@ -226,15 +346,27 @@ Cleanup:
     
     ' Inform user about classification results
     Dim msgText As String
-    If safeIDs.count > 0 Or riskyIDs.count > 0 Then
+    Dim totalProcessed As Long
+    totalProcessed = safeIDs.Count + riskyIDs.Count + effectivePendingIDs.Count + effectiveDeclinedIDs.Count
+    
+    If totalProcessed > 0 Then
         msgText = "Synchronization completed:" & vbCrLf & _
-                  "Safe changes written to database: " & safeIDs.count & vbCrLf & _
-                  "Risky changes sent for approval: " & riskyIDs.count
+                  "Safe changes written to database: " & safeIDs.Count & vbCrLf & _
+                  "Risky changes sent for approval: " & riskyIDs.Count
+        
+        If effectivePendingIDs.Count > 0 Then
+            msgText = msgText & vbCrLf & "Pending records updated: " & effectivePendingIDs.Count
+        End If
+        
+        If effectiveDeclinedIDs.Count > 0 Then
+            msgText = msgText & vbCrLf & "Declined records fixed and moved to pending: " & effectiveDeclinedIDs.Count
+        End If
+        
         MsgBox msgText, vbInformation, "Sync Summary"
     End If
     
     If manualRun Then
-        If safeIDs.count = 0 And riskyIDs.count = 0 Then
+        If totalProcessed = 0 Then
             MsgBox "Synchronization completed (ID-based).", vbInformation
         End If
     Else
@@ -367,4 +499,277 @@ Private Sub ValidateOperatorSepaRestrictions(ByVal wsLocal As Worksheet, ByVal w
         MsgBox "Operator is not allowed to edit SEPA records. Changes have been reverted.", vbExclamation, "SEPA Protection"
     End If
 End Sub
+
+Private Sub MoveDeclinedToPending(ByVal dictLocal As Scripting.Dictionary, _
+                                  ByVal dictLocalFormats As Scripting.Dictionary, _
+                                  ByVal declinedIDs As Collection, _
+                                  ByVal wsLocal As Worksheet)
+    ' Moves declined records from decl_tblKartei to pre_tblKartei
+    ' Updates status to PENDING and changes color on Kartei sheet
+    ' Updates Kartei_Original to prevent repeated history requests
+    
+    ' DIAGNOSTIC: Show that function is called
+    Debug.Print "MoveDeclinedToPending called with " & declinedIDs.Count & " IDs"
+    
+    Const STATUS_COL As Integer = 53  ' BA column
+    Const COLOR_PENDING As Long = 15849925  ' Light blue
+    
+    Dim engine As DAO.DBEngine
+    Set engine = New DAO.DBEngine
+    
+    Dim wsDao As DAO.Workspace
+    Set wsDao = engine.Workspaces(0)
+    
+    Dim dbPath As String
+    dbPath = wsLocal.Range("X1").value & "\Alarm\KindElternDaten_25_front.accdb"
+    
+    Dim db As DAO.Database
+    Set db = wsDao.OpenDatabase(dbPath)
+    
+    ' Ensure pre_tblKartei exists
+    Call EnsurePreTableExists(db)
+    
+    ' Get reference to Kartei_Original for updates
+    Dim wsOriginal As Worksheet
+    Set wsOriginal = ThisWorkbook.Worksheets("Kartei_Original")
+    
+    wsDao.BeginTrans
+    
+    On Error GoTo RollbackTrans
+    
+    Dim varID As Variant
+    Dim processedCount As Long
+    processedCount = 0
+    
+    For Each varID In declinedIDs
+        If dictLocal.exists(varID) Then
+            Dim arrRow As Variant
+            Dim arrFormats As Variant
+            arrRow = dictLocal(varID)
+            arrFormats = dictLocalFormats(varID)
+            
+            Dim strID As String
+            strID = CStr(arrRow(1, 48))
+            
+            If IsNumeric(strID) And Val(strID) > 0 Then
+                Dim targetID As Long
+                targetID = CLng(strID)
+                
+                ' First, re-read current data from Kartei sheet to ensure we have latest values
+                Dim karteiRow As Long
+                karteiRow = FindRowByID_Sync(wsLocal, strID)
+                
+                If karteiRow = 0 Then
+                    ' Row not found on Kartei - data inconsistency
+                    Debug.Print "Warning: MoveDeclinedToPending - ID " & targetID & " not found on Kartei sheet."
+                    MsgBox "Warning: Record ID " & targetID & " not found on Kartei sheet. Skipping.", vbExclamation, "Data Inconsistency"
+                    GoTo NextDeclinedID
+                End If
+                
+                ' Re-read fresh data from sheet (includes updated history from UpdateLocalSheetRowByID)
+                ReDim arrRow(1 To 1, 1 To 52)
+                Dim c As Long
+                For c = 1 To 52
+                    arrRow(1, c) = wsLocal.Cells(karteiRow, c).value
+                Next c
+                
+                ' Re-read fresh formats
+                ReDim arrFormats(1 To 1, 1 To 53)
+                For c = 1 To 51
+                    arrFormats(1, c) = wsLocal.Cells(karteiRow, c).Interior.Color
+                Next c
+                arrFormats(1, 52) = wsLocal.Cells(karteiRow, 3).Font.Color
+                arrFormats(1, 53) = wsLocal.Cells(karteiRow, 18).Font.Color
+                
+                ' Write to pre_tblKartei (will create or update)
+                Dim rsCheck As DAO.Recordset
+                Set rsCheck = db.OpenRecordset("SELECT * FROM pre_tblKartei WHERE ID = " & targetID, dbOpenDynaset)
+                
+                If rsCheck.EOF Then
+                    ' Create new record
+                    rsCheck.Close
+                    
+                    Dim rsNew As DAO.Recordset
+                    Set rsNew = db.OpenRecordset("pre_tblKartei", dbOpenDynaset)
+                    rsNew.AddNew
+                    rsNew.Fields("ID").value = targetID
+                    Call FillPreRecordFromArray_Sync(rsNew, arrRow, arrFormats)
+                    rsNew.Update
+                    rsNew.Close
+                Else
+                    ' Update existing record
+                    rsCheck.Edit
+                    Call FillPreRecordFromArray_Sync(rsCheck, arrRow, arrFormats)
+                    rsCheck.Update
+                    rsCheck.Close
+                End If
+                
+                ' Delete from decl_tblKartei with verification
+                db.Execute "DELETE FROM decl_tblKartei WHERE ID = " & targetID
+                
+                ' DIAGNOSTIC: Log deletion (RecordsAffected is a property of Database, not Workspace)
+                Debug.Print "Executed DELETE for ID " & targetID & ", RecordsAffected = " & db.RecordsAffected
+                
+                ' Check if deletion was successful
+                If db.RecordsAffected = 0 Then
+                    ' Record was not found in decl_tblKartei - data inconsistency
+                    Debug.Print "Warning: MoveDeclinedToPending - ID " & targetID & " not found in decl_tblKartei."
+                    ' This is a warning but not critical - record is already gone or was never there
+                    ' Continue processing but log it
+                End If
+                
+                ' Update status on Kartei sheet to PENDING
+                wsLocal.Cells(karteiRow, STATUS_COL).value = "PENDING"
+                
+                ' DIAGNOSTIC: Log status update
+                Debug.Print "Set BA=PENDING for row " & karteiRow & ", ID " & targetID
+                
+                ' Color column A light blue if D <> "Zahlung"
+                Dim cellD As String
+                cellD = Trim(CStr(wsLocal.Cells(karteiRow, 4).value))
+                
+                If cellD <> "Zahlung" Then
+                    wsLocal.Cells(karteiRow, 1).Interior.Color = COLOR_PENDING
+                    Debug.Print "Set pending color for row " & karteiRow & ", ID " & targetID
+                End If
+                
+                ' Update corresponding row in Kartei_Original to prevent repeated history
+                Call UpdateKarteiOriginalForDeclined(wsLocal, wsOriginal, karteiRow, targetID)
+                
+                processedCount = processedCount + 1
+            End If
+        End If
+        
+NextDeclinedID:
+    Next varID
+    
+    wsDao.CommitTrans
+    db.Close
+    
+    ' Debug log and user notification
+    Debug.Print "MoveDeclinedToPending: Successfully processed " & processedCount & " of " & declinedIDs.Count & " declined records."
+    
+    ' TEMPORARY: Show visible confirmation
+    If processedCount > 0 Then
+        MsgBox "MoveDeclinedToPending completed:" & vbCrLf & _
+               "Processed: " & processedCount & " records" & vbCrLf & _
+               "Total requested: " & declinedIDs.Count, _
+               vbInformation, "Declined Processing Complete"
+    End If
+    
+    Exit Sub
+    
+RollbackTrans:
+    wsDao.Rollback
+    db.Close
+    MsgBox "Error moving declined records to pending: " & Err.Description & vbCrLf & vbCrLf & _
+           "Transaction rolled back. No changes were made.", vbCritical, "Database Error"
+    Err.Raise Err.Number, Err.Source, Err.Description
+End Sub
+
+Private Sub FillPreRecordFromArray_Sync(ByVal rs As DAO.Recordset, _
+                                        ByVal arrRow As Variant, _
+                                        ByVal arrFormats As Variant)
+    ' Fills recordset fields from array data
+    ' Same logic as in Export_RiskClassification but local to this module
+    
+    Dim c As Long
+    For c = 1 To 51
+        Dim fieldName As String
+        fieldName = "Value" & c
+        If Not IsError(arrRow(1, c)) Then
+            rs.Fields(fieldName).value = arrRow(1, c)
+        Else
+            rs.Fields(fieldName).value = ""
+        End If
+        
+        fieldName = "InteriorColor" & c
+        If IsNull(arrFormats(1, c)) Or IsEmpty(arrFormats(1, c)) Then
+            rs.Fields(fieldName).value = 0
+        Else
+            rs.Fields(fieldName).value = arrFormats(1, c)
+        End If
+    Next c
+    
+    ' Value52 (history)
+    If Not IsError(arrRow(1, 52)) Then
+        rs.Fields("Value52").value = arrRow(1, 52)
+    Else
+        rs.Fields("Value52").value = ""
+    End If
+    
+    ' FontColor fields
+    If IsNull(arrFormats(1, 52)) Or IsEmpty(arrFormats(1, 52)) Then
+        rs.Fields("FontColor3").value = 0
+    Else
+        rs.Fields("FontColor3").value = arrFormats(1, 52)
+    End If
+    
+    If IsNull(arrFormats(1, 53)) Or IsEmpty(arrFormats(1, 53)) Then
+        rs.Fields("FontColor18").value = 0
+    Else
+        rs.Fields("FontColor18").value = arrFormats(1, 53)
+    End If
+End Sub
+
+Private Sub EnsurePreTableExists(ByVal db As DAO.Database)
+    ' Creates pre_tblKartei if it doesn't exist
+    ' Delegates to Export_RiskClassification module
+    Call Export_RiskClassification.EnsurePreTableExists(db)
+End Sub
+
+Private Sub UpdateKarteiOriginalForDeclined(ByVal wsKartei As Worksheet, _
+                                           ByVal wsKarteiOriginal As Worksheet, _
+                                           ByVal karteiRow As Long, _
+                                           ByVal targetID As Long)
+    ' Updates the corresponding row in Kartei_Original with current Kartei data
+    ' This prevents the fixed declined record from requiring Notitzen again during next CompareAndSyncKartei
+    ' Similar logic to UpdateKarteiOriginalRow in Export_DeclinedTools
+    
+    ' Find row in Kartei_Original by ID (column AV = 48)
+    Dim lastRow As Long
+    lastRow = wsKarteiOriginal.Cells(wsKarteiOriginal.Rows.Count, 1).End(xlUp).Row
+    
+    Dim origRow As Long
+    origRow = 0
+    
+    Dim r As Long
+    For r = 3 To lastRow
+        Dim checkID As Variant
+        checkID = wsKarteiOriginal.Cells(r, 48).value
+        
+        If Not IsEmpty(checkID) And IsNumeric(checkID) Then
+            If CLng(checkID) = targetID Then
+                origRow = r
+                Exit For
+            End If
+        End If
+    Next r
+    
+    If origRow = 0 Then
+        ' ID not found in Original - shouldn't happen, but log it
+        Debug.Print "Warning: UpdateKarteiOriginalForDeclined - ID " & targetID & " not found in Kartei_Original."
+        Exit Sub
+    End If
+    
+    ' Copy values from Kartei to Kartei_Original (columns 1..52 = A..AZ)
+    Dim c As Integer
+    For c = 1 To 52
+        wsKarteiOriginal.Cells(origRow, c).value = wsKartei.Cells(karteiRow, c).value
+        
+        ' Copy formats for columns 1-51
+        If c <= 51 Then
+            wsKarteiOriginal.Cells(origRow, c).Interior.Color = wsKartei.Cells(karteiRow, c).Interior.Color
+        End If
+    Next c
+    
+    ' Copy font colors for columns C (3) and R (18)
+    wsKarteiOriginal.Cells(origRow, 3).Font.Color = wsKartei.Cells(karteiRow, 3).Font.Color
+    wsKarteiOriginal.Cells(origRow, 18).Font.Color = wsKartei.Cells(karteiRow, 18).Font.Color
+    
+    ' IMPORTANT: Also update status column BA (53) in Original to PENDING
+    ' This ensures next sync sees the record as PENDING, not DECLINED
+    wsKarteiOriginal.Cells(origRow, 53).value = "PENDING"
+End Sub
+
 

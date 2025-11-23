@@ -9,7 +9,8 @@ Attribute SortNameZ.VB_ProcData.VB_Invoke_Func = " \n14"
    End If
  Next i
  
-  Range("A3:AZ" & letzte).RowHeight = 16
+  ' Include column BA (53) to keep status (PENDING/DECLINED) synchronized with row data
+  Range("A3:BA" & letzte).RowHeight = 16
  
  Worksheets("Kartei").Sort.SortFields.Clear
  Worksheets("Kartei").Sort.SortFields.Add key:=Range("B3:B" & letzte), _
@@ -19,7 +20,7 @@ Attribute SortNameZ.VB_ProcData.VB_Invoke_Func = " \n14"
  Worksheets("Kartei").Sort.SortFields.Add key:=Range("D3:D" & letzte), _
    SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
  With Worksheets("Kartei").Sort
-    .SetRange Range("A2:AZ" & letzte)
+    .SetRange Range("A2:BA" & letzte)
     .Header = xlYes
     .MatchCase = False
     .Orientation = xlTopToBottom
@@ -38,7 +39,8 @@ Sub SortNummer()
    End If
  Next i
  
-  Range("A3:AU" & letzte).RowHeight = 16
+  ' Include column BA (53) to keep status (PENDING/DECLINED) synchronized with row data
+  Range("A3:BA" & letzte).RowHeight = 16
  
  Worksheets("Kartei").Sort.SortFields.Clear
  Worksheets("Kartei").Sort.SortFields.Add key:=Range("A3:A" & letzte), _
@@ -46,7 +48,7 @@ Sub SortNummer()
  Worksheets("Kartei").Sort.SortFields.Add key:=Range("D3:D" & letzte), _
    SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
  With Worksheets("Kartei").Sort
-    .SetRange Range("A2:AZ" & letzte)
+    .SetRange Range("A2:BA" & letzte)
     .Header = xlYes
     .MatchCase = False
     .Orientation = xlTopToBottom

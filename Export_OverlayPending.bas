@@ -44,6 +44,19 @@ Public Sub OverlayPendingAndDeclined(ByVal ws As Worksheet)
     Dim declinedIDs As New Collection
     Dim conflictIDs As New Collection
     
+    ' Clear all old PENDING/DECLINED statuses and colors before overlaying
+    ' This prevents stale statuses from remaining when records are approved/moved
+    Dim lastRow As Long
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    
+    If lastRow >= 3 Then
+        ' Clear status column BA (53)
+        ws.Range("BA3:BA" & lastRow).ClearContents
+        
+        ' Reset interior color for column A
+        ws.Range("A3:A" & lastRow).Interior.ColorIndex = xlColorIndexNone
+    End If
+    
     ' Process pre_tblKartei records
     Call ProcessPreTable(db, ws, pendingIDs)
     

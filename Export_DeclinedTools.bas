@@ -104,7 +104,8 @@ Public Sub ApplyDeclinedFixes()
     ' Process the fixes
     Dim movedCount As Long
     Dim skippedCount As Long
-    movedCount = ProcessDeclinedFixes(wsOverview, idsToProcess, skippedCount)
+    Dim unchangedCount As Long
+    movedCount = ProcessDeclinedFixes(wsOverview, idsToProcess, skippedCount, unchangedCount)
     
     ' Show results
     Dim msg As String
@@ -112,8 +113,12 @@ Public Sub ApplyDeclinedFixes()
         msg = "Successfully moved " & movedCount & " record(s) from declined to pending approval." & vbCrLf & _
               "Records are now in pre_tblKartei awaiting Superadmin review."
         
+        If unchangedCount > 0 Then
+            msg = msg & vbCrLf & vbCrLf & "Unchanged: " & unchangedCount & " record(s) (no corrections detected)."
+        End If
+        
         If skippedCount > 0 Then
-            msg = msg & vbCrLf & vbCrLf & "Skipped " & skippedCount & " record(s) (not found on Kartei sheet)."
+            msg = msg & vbCrLf & vbCrLf & "Skipped: " & skippedCount & " record(s) (not found or user canceled)."
         End If
         
         msg = msg & vbCrLf & vbCrLf & "DeclinedOverview sheet will be deleted."
@@ -121,6 +126,9 @@ Public Sub ApplyDeclinedFixes()
         MsgBox msg, vbInformation, "Fixes Applied"
     Else
         msg = "No records were processed."
+        If unchangedCount > 0 Then
+            msg = msg & vbCrLf & "Unchanged: " & unchangedCount
+        End If
         If skippedCount > 0 Then
             msg = msg & vbCrLf & "Skipped: " & skippedCount
         End If
@@ -328,6 +336,30 @@ Private Function GetOrCreateDeclinedSheet() As Worksheet
     Set GetOrCreateDeclinedSheet = ws
 End Function
 
+Private Sub RemoveExistingButtonsFromRow(ByVal ws As Worksheet, ByVal rowNum As Long)
+    ' Removes all buttons and shapes from specified row
+    ' Used to prevent duplicate buttons when recreating DeclinedOverview sheet
+    
+    On Error Resume Next
+    
+    Dim shp As Shape
+    Dim rowTop As Double
+    Dim rowBottom As Double
+    
+    ' Get row boundaries
+    rowTop = ws.Rows(rowNum).Top
+    rowBottom = rowTop + ws.Rows(rowNum).Height
+    
+    ' Remove all shapes/buttons that are within this row
+    For Each shp In ws.Shapes
+        If shp.Top >= rowTop And shp.Top < rowBottom Then
+            shp.Delete
+        End If
+    Next shp
+    
+    On Error GoTo 0
+End Sub
+
 Private Sub BuildDeclinedOverview(ByVal ws As Worksheet, ByVal records As Collection)
     ' Builds the overview table on the worksheet
     ' Headers and column widths are copied from Kartei for consistency
@@ -388,9 +420,41 @@ Private Sub BuildDeclinedOverview(ByVal ws As Worksheet, ByVal records As Collec
         ' Set width for custom columns
         .Columns(20).ColumnWidth = 12  ' Declined Times
         .Columns(21).ColumnWidth = wsKartei.Columns(52).ColumnWidth  ' History (AZ)
+        
+        ' Adjust row 1 height to accommodate button
+        .Rows(1).RowHeight = 30
     End With
     
+    ' ========================================
+    ' Add "Apply Fixes" button in cell U1
+    ' ========================================
+    
+    ' Remove any existing buttons/shapes from row 1 to avoid duplicates
+    Call RemoveExistingButtonsFromRow(ws, 1)
+    
+    ' Create button over cell U1
+    Dim btnApply As Button
+    Dim cellU1 As Range
+    Set cellU1 = ws.Range("U1")
+    
+    ' Add button (Form Control type)
+    Set btnApply = ws.Buttons.Add( _
+        Left:=cellU1.Left + 2, _
+        Top:=cellU1.Top + 2, _
+        Width:=100, _
+        Height:=24)
+    
+    ' Configure button
+    With btnApply
+        .Caption = "Apply Fixes"
+        .OnAction = "Export_DeclinedTools.ApplyDeclinedFixes"
+        .Font.Name = "Segoe UI"
+        .Font.Size = 9
+    End With
+    
+    ' ========================================
     ' Fill data rows
+    ' ========================================
     Dim rowNum As Long
     rowNum = 2
     
@@ -474,17 +538,17 @@ End Function
 
 Private Function ProcessDeclinedFixes(ByVal wsOverview As Worksheet, _
                                      ByVal idsToProcess As Collection, _
-                                     ByRef skippedCount As Long) As Long
-    ' Processes fixes for declined records
-    ' Priority logic:
-    '   1. If DeclinedOverview row differs from decl_tblKartei -> use DeclinedOverview data and copy to Kartei first
-    '   2. Otherwise if Kartei row differs from decl_tblKartei -> use Kartei data
-    ' Writes corrected data to pre_tblKartei, deletes from decl_tblKartei
-    ' Sets BA="PENDING" and colors column A light blue on Kartei
+                                     ByRef skippedCount As Long, _
+                                     ByRef unchangedCount As Long) As Long
+    ' Processes fixes for declined records with intelligent change detection
+    ' Only processes records that were actually changed on DeclinedOverview or Kartei
+    ' Calls UpdateLocalSheetRowByID to handle history and Notitzen
+    ' Updates Kartei_Original for successfully processed records
     
     Dim movedCount As Long
     movedCount = 0
     skippedCount = 0
+    unchangedCount = 0
     
     Dim engine As DAO.DBEngine
     Set engine = New DAO.DBEngine
@@ -506,17 +570,22 @@ Private Function ProcessDeclinedFixes(ByVal wsOverview As Worksheet, _
     On Error GoTo RollbackTrans
     
     Dim wsKartei As Worksheet
+    Dim wsKarteiOriginal As Worksheet
     Set wsKartei = ThisWorkbook.Worksheets("Kartei")
+    Set wsKarteiOriginal = ThisWorkbook.Worksheets("Kartei_Original")
     
-    ' Build a dictionary of DeclinedOverview data for quick lookup
+    ' Build dictionaries for comparison
     Dim overviewDict As Object
     Set overviewDict = CreateObject("Scripting.Dictionary")
     Call Export_DeclinedHelpers.BuildOverviewDictionary(wsOverview, overviewDict)
     
-    ' Build a dictionary of decl_tblKartei data for comparison
     Dim declDict As Object
     Set declDict = CreateObject("Scripting.Dictionary")
     Call Export_DeclinedHelpers.BuildDeclDictionary(db, declDict)
+    
+    ' Get max ID from Kartei_Original for UpdateLocalSheetRowByID
+    Dim maxIDOriginal As Long
+    maxIDOriginal = ExportUtilities.MaxID(wsKarteiOriginal)
     
     Dim idToProcess As Variant
     For Each idToProcess In idsToProcess
@@ -534,31 +603,80 @@ Private Function ProcessDeclinedFixes(ByVal wsOverview As Worksheet, _
             GoTo NextID
         End If
         
-        ' Determine source of corrected data
-        Dim useOverview As Boolean
-        useOverview = False
-        
-        If overviewDict.exists(targetID) And declDict.exists(targetID) Then
-            ' Check if DeclinedOverview differs from decl_tblKartei
-            If Export_DeclinedHelpers.RecordsAreDifferent(overviewDict(targetID), declDict(targetID)) Then
-                useOverview = True
-            End If
+        ' Check if record exists in decl_tblKartei
+        If Not declDict.exists(targetID) Then
+            ' Not in decl_tblKartei, skip
+            skippedCount = skippedCount + 1
+            Debug.Print "Warning: ID " & targetID & " not found in decl_tblKartei, skipping."
+            GoTo NextID
         End If
         
-        ' If using overview data, copy it to Kartei first
-        If useOverview Then
+        ' Determine if changes were made
+        Dim changedOnOverview As Boolean
+        Dim changedOnKartei As Boolean
+        
+        changedOnOverview = False
+        changedOnKartei = False
+        
+        ' Check if DeclinedOverview differs from decl_tblKartei
+        If overviewDict.exists(targetID) Then
+            changedOnOverview = CompareRecordWithDecl(overviewDict(targetID), declDict(targetID))
+        End If
+        
+        ' Check if Kartei differs from decl_tblKartei
+        Dim karteiData As Variant
+        karteiData = BuildKarteiRecordArray(wsKartei, karteiRow)
+        changedOnKartei = CompareRecordWithDecl(karteiData, declDict(targetID))
+        
+        ' If neither changed, skip this ID
+        If Not changedOnOverview And Not changedOnKartei Then
+            unchangedCount = unchangedCount + 1
+            Debug.Print "Info: ID " & targetID & " unchanged, skipping."
+            GoTo NextID
+        End If
+        
+        ' If DeclinedOverview changed, copy it to Kartei first
+        If changedOnOverview Then
             Call Export_DeclinedHelpers.CopyOverviewDataToKartei(wsKartei, karteiRow, overviewDict(targetID))
         End If
         
-        ' Read current data from Kartei sheet (either updated from overview or original)
-        Dim rowData As Variant
-        rowData = wsKartei.Range(wsKartei.Cells(karteiRow, 1), wsKartei.Cells(karteiRow, 52)).Value2
+        ' Prepare rowData for UpdateLocalSheetRowByID
+        Dim rowData() As Variant
+        ReDim rowData(1 To 1, 1 To 51)
+        
+        Dim c As Integer
+        For c = 1 To 51
+            rowData(1, c) = wsKartei.Cells(karteiRow, c).value
+        Next c
+        
+        ' Set user, date, time
+        rowData(1, 49) = ExportUtilities.GetUserRole()
+        rowData(1, 50) = Date
+        rowData(1, 51) = Format(Time, "HH:MM")
+        
+        ' Call UpdateLocalSheetRowByID to handle history and Notitzen
+        Dim strID As String
+        strID = CStr(targetID)
+        
+        Dim historyResult As String
+        historyResult = ExportUtilities.UpdateLocalSheetRowByID(wsKartei, wsKarteiOriginal, strID, rowData, maxIDOriginal)
+        
+        ' Check if user canceled
+        If historyResult = "" Then
+            ' User canceled, skip this ID
+            skippedCount = skippedCount + 1
+            Debug.Print "Info: ID " & targetID & " - user canceled Notitzen."
+            GoTo NextID
+        End If
+        
+        ' Read updated data from Kartei (including updated AZ history)
+        Dim finalRowData As Variant
+        finalRowData = wsKartei.Range(wsKartei.Cells(karteiRow, 1), wsKartei.Cells(karteiRow, 52)).Value2
         
         ' Read formats
         Dim rowFormats() As Variant
         ReDim rowFormats(1 To 53)
         
-        Dim c As Integer
         For c = 1 To 51
             rowFormats(c) = wsKartei.Cells(karteiRow, c).Interior.Color
         Next c
@@ -566,7 +684,7 @@ Private Function ProcessDeclinedFixes(ByVal wsOverview As Worksheet, _
         rowFormats(53) = wsKartei.Cells(karteiRow, 18).Font.Color
         
         ' Write to pre_tblKartei
-        Call WriteRecordToPreTable(db, targetID, rowData, rowFormats)
+        Call WriteRecordToPreTable(db, targetID, finalRowData, rowFormats)
         
         ' Delete from decl_tblKartei
         db.Execute "DELETE FROM decl_tblKartei WHERE ID = " & targetID
@@ -581,6 +699,9 @@ Private Function ProcessDeclinedFixes(ByVal wsOverview As Worksheet, _
         If cellD <> "Zahlung" Then
             wsKartei.Cells(karteiRow, 1).Interior.Color = COLOR_PENDING
         End If
+        
+        ' Update corresponding row in Kartei_Original to reflect the new state
+        Call UpdateKarteiOriginalRow(wsKartei, wsKarteiOriginal, karteiRow, targetID)
         
         movedCount = movedCount + 1
         
@@ -675,4 +796,239 @@ Private Sub WriteRecordToPreTable(ByVal db As DAO.Database, _
     rs.Update
     rs.Close
 End Sub
+
+' ========================================
+' Helper Functions for Change Detection
+' ========================================
+
+Private Function CompareRecordWithDecl(ByVal currentRecord As Variant, ByVal declRecord As Variant) As Boolean
+    ' Compares current record (from Overview or Kartei) with decl_tblKartei record
+    ' Returns True if any key field differs (A/B/C/F/J/O and 12 months)
+    ' Indices: (1)=A, (2)=B, (3)=C, (4)=F, (5)=J, (6)=O, (7-18)=Months
+    
+    Dim i As Integer
+    For i = 1 To 18  ' Compare A, B, C, F, J, O, Months 1-12
+        If CStr(currentRecord(i)) <> CStr(declRecord(i)) Then
+            CompareRecordWithDecl = True
+            Exit Function
+        End If
+    Next i
+    
+    CompareRecordWithDecl = False
+End Function
+
+Private Function BuildKarteiRecordArray(ByVal ws As Worksheet, ByVal rowNum As Long) As Variant
+    ' Builds a record array from Kartei sheet row matching the structure used in dictionaries
+    ' Array structure: (0)=ID, (1)=A, (2)=B, (3)=C, (4)=F, (5)=J, (6)=O, (7-18)=Months, (19)=AZ
+    
+    Dim recData(0 To 20) As Variant
+    
+    recData(0) = CLng(ws.Cells(rowNum, 48).value)  ' ID from AV
+    recData(1) = Export_DeclinedHelpers.NzStr(ws.Cells(rowNum, 1).value)   ' A
+    recData(2) = Export_DeclinedHelpers.NzStr(ws.Cells(rowNum, 2).value)   ' B
+    recData(3) = Export_DeclinedHelpers.NzStr(ws.Cells(rowNum, 3).value)   ' C
+    recData(4) = Export_DeclinedHelpers.NzStr(ws.Cells(rowNum, 6).value)   ' F (Address)
+    recData(5) = Export_DeclinedHelpers.NzStr(ws.Cells(rowNum, 10).value)  ' J (Subject1)
+    recData(6) = Export_DeclinedHelpers.NzStr(ws.Cells(rowNum, 15).value)  ' O (Subject2)
+    
+    ' Months U-AF (columns 21-32)
+    Dim m As Integer
+    For m = 1 To 12
+        recData(6 + m) = Export_DeclinedHelpers.NzStr(ws.Cells(rowNum, 20 + m).value)
+    Next m
+    
+    recData(19) = Export_DeclinedHelpers.NzStr(ws.Cells(rowNum, 52).value)  ' AZ (History)
+    recData(20) = 0  ' DeclCount (not used)
+    
+    BuildKarteiRecordArray = recData
+End Function
+
+Private Sub UpdateKarteiOriginalRow(ByVal wsKartei As Worksheet, _
+                                    ByVal wsKarteiOriginal As Worksheet, _
+                                    ByVal karteiRow As Long, _
+                                    ByVal targetID As Long)
+    ' Updates the corresponding row in Kartei_Original with current Kartei data
+    ' This prevents the fixed declined record from requiring Notitzen again during CompareAndSyncKartei
+    
+    ' Find row in Kartei_Original by ID (column AV = 48)
+    Dim lastRow As Long
+    lastRow = wsKarteiOriginal.Cells(wsKarteiOriginal.Rows.Count, 1).End(xlUp).Row
+    
+    Dim origRow As Long
+    origRow = 0
+    
+    Dim r As Long
+    For r = 3 To lastRow
+        Dim checkID As Variant
+        checkID = wsKarteiOriginal.Cells(r, 48).value
+        
+        If Not IsEmpty(checkID) And IsNumeric(checkID) Then
+            If CLng(checkID) = targetID Then
+                origRow = r
+                Exit For
+            End If
+        End If
+    Next r
+    
+    If origRow = 0 Then
+        ' ID not found in Original - shouldn't happen, but log it
+        Debug.Print "Warning: ID " & targetID & " not found in Kartei_Original during update."
+        Exit Sub
+    End If
+    
+    ' Copy values from Kartei to Kartei_Original (columns A..AZ = 1..52)
+    Dim c As Integer
+    For c = 1 To 52
+        wsKarteiOriginal.Cells(origRow, c).value = wsKartei.Cells(karteiRow, c).value
+        
+        ' Copy formats for key columns (1-51)
+        If c <= 51 Then
+            wsKarteiOriginal.Cells(origRow, c).Interior.Color = wsKartei.Cells(karteiRow, c).Interior.Color
+        End If
+    Next c
+    
+    ' Copy font colors for columns C (3) and R (18)
+    wsKarteiOriginal.Cells(origRow, 3).Font.Color = wsKartei.Cells(karteiRow, 3).Font.Color
+    wsKarteiOriginal.Cells(origRow, 18).Font.Color = wsKartei.Cells(karteiRow, 18).Font.Color
+End Sub
+
+' ========================================
+' Quick View Tool for Current Row
+' ========================================
+
+Public Sub ShowLastDeclineCommentForCurrentRow()
+    ' Shows the last decline comment from Superadmin for the currently selected row
+    ' Works with active cell on Kartei sheet
+    ' Displays comment in a message box for quick review
+    
+    On Error GoTo ErrorHandler
+    
+    ' Verify we're on the Kartei sheet
+    If ActiveSheet.Name <> "Kartei" Then
+        MsgBox "This tool only works on the Kartei sheet." & vbCrLf & _
+               "Please activate the Kartei sheet and select a declined row.", _
+               vbExclamation, "Wrong Sheet"
+        Exit Sub
+    End If
+    
+    Dim wsKartei As Worksheet
+    Set wsKartei = ActiveSheet
+    
+    Dim rowIndex As Long
+    rowIndex = ActiveCell.Row
+    
+    ' Check if row is valid (not header rows)
+    If rowIndex < 3 Then
+        MsgBox "Please select a data row (row 3 or below).", vbExclamation, "Invalid Row"
+        Exit Sub
+    End If
+    
+    ' Get ID from column AV (48)
+    Dim recordID As Variant
+    recordID = wsKartei.Cells(rowIndex, 48).Value
+    
+    If IsEmpty(recordID) Or Not IsNumeric(recordID) Then
+        MsgBox "Current row does not have a valid ID in column AV.", vbExclamation, "No ID"
+        Exit Sub
+    End If
+    
+    Dim strID As String
+    strID = CStr(CLng(recordID))
+    
+    ' Get status from column BA (53)
+    Dim rowStatus As String
+    rowStatus = Trim(CStr(wsKartei.Cells(rowIndex, STATUS_COL).Value))
+    
+    ' Check if row is DECLINED
+    If rowStatus <> "DECLINED" Then
+        MsgBox "Current row does not have DECLINED status." & vbCrLf & vbCrLf & _
+               "ID: " & strID & vbCrLf & _
+               "Status: " & IIf(rowStatus = "", "(none)", rowStatus), _
+               vbInformation, "Not Declined"
+        Exit Sub
+    End If
+    
+    ' Get history from column AZ (52)
+    Dim historyText As String
+    historyText = CStr(wsKartei.Cells(rowIndex, 52).Value)
+    
+    If Len(Trim(historyText)) = 0 Then
+        MsgBox "No history data found for this declined record." & vbCrLf & vbCrLf & _
+               "ID: " & strID, _
+               vbInformation, "No History"
+        Exit Sub
+    End If
+    
+    ' Extract last decline comment
+    Dim lastComment As String
+    lastComment = GetLastDeclineCommentFromHistory(historyText)
+    
+    If Len(lastComment) = 0 Then
+        MsgBox "No Decl_n blocks found in history for this record." & vbCrLf & vbCrLf & _
+               "ID: " & strID & vbCrLf & vbCrLf & _
+               "This may indicate a data inconsistency.", _
+               vbExclamation, "No Decline Comments"
+        Exit Sub
+    End If
+    
+    ' Display the comment
+    MsgBox lastComment, vbInformation, "Last Decline Comment (ID: " & strID & ")"
+    
+    Exit Sub
+    
+ErrorHandler:
+    MsgBox "Error displaying decline comment: " & Err.Description, vbCritical, "Error"
+End Sub
+
+Private Function GetLastDeclineCommentFromHistory(ByVal historyText As String) As String
+    ' Extracts the text from the last Decl_n: block in history string
+    ' Returns the content from Is(...) of the highest-numbered Decl_n marker
+    ' Returns empty string if no Decl_ marker found
+    
+    If Len(Trim(historyText)) = 0 Then
+        GetLastDeclineCommentFromHistory = ""
+        Exit Function
+    End If
+    
+    ' Use regex to find all Decl_N: blocks with their numbers
+    Dim regex As Object
+    Set regex = CreateObject("VBScript.RegExp")
+    
+    With regex
+        .Global = True
+        .IgnoreCase = True
+        ' Pattern: Decl_(\d+):\s*Was\([^)]*\);\s*Is\(([^)]+(?:\([^)]*\))?[^)]*)\)\.
+        ' This captures the Is(...) content, including nested parentheses for dates
+        .Pattern = "Decl_(\d+):\s*Was\([^)]*\);\s*Is\(((?:[^()]|\([^)]*\))+)\)\."
+    End With
+    
+    Dim matches As Object
+    Set matches = regex.Execute(historyText)
+    
+    If matches.Count = 0 Then
+        ' No Decl_ markers found, return empty
+        GetLastDeclineCommentFromHistory = ""
+        Exit Function
+    End If
+    
+    ' Find the match with the highest N
+    Dim maxN As Long
+    maxN = -1
+    Dim maxContent As String
+    maxContent = ""
+    
+    Dim match As Object
+    For Each match In matches
+        Dim currentN As Long
+        currentN = CLng(match.SubMatches(0))  ' First capture group = N
+        
+        If currentN > maxN Then
+            maxN = currentN
+            maxContent = match.SubMatches(1)  ' Second capture group = Is(...) content
+        End If
+    Next match
+    
+    GetLastDeclineCommentFromHistory = Trim(maxContent)
+End Function
+
 
