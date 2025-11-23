@@ -19,6 +19,15 @@ Sub GrossGeshichteMachen()
     Dim recordID As String
     Dim result As Collection
     Dim outputRow As Long
+    Dim showOnlyLastChange As Boolean
+    Dim userChoice As VbMsgBoxResult
+    Dim segments() As String
+    Dim lastEvent As Object
+    Dim i As Long
+    Dim evt As Object
+    Dim segmentText As String
+    Dim fieldChanges As Object
+    Dim eventDate As Date
     
     On Error GoTo Cleanup
     
@@ -38,6 +47,18 @@ Sub GrossGeshichteMachen()
         MsgBox "Please enter valid dates in cells B1 and C1", vbExclamation
         GoTo Cleanup
     End If
+    
+    ' Ask user which mode to use
+    userChoice = MsgBox("Choose report mode:" & vbCrLf & vbCrLf & _
+                        "YES - Show all history events (Mode A)" & vbCrLf & _
+                        "NO - Show only last change per ID (Mode B)", _
+                        vbYesNoCancel + vbQuestion, "GrossGeschichte Mode")
+    
+    If userChoice = vbCancel Then
+        GoTo Cleanup
+    End If
+    
+    showOnlyLastChange = (userChoice = vbNo)
     
     ' Clear content from row 2 onwards
     wsGross.Rows("2:" & wsGross.Rows.Count).Clear
@@ -62,7 +83,6 @@ Sub GrossGeshichteMachen()
         If strGeschichte <> "" And recordID <> "" Then
             
             ' Split raw history into segments so we can parse Address/Subject1/Subject2 per event
-            Dim segments() As String
             segments = Split(strGeschichte, "||")
             
             On Error Resume Next
@@ -76,41 +96,49 @@ Sub GrossGeshichteMachen()
             End If
             On Error GoTo Cleanup
             
-            ' Process each event in the history
-            Dim i As Long
-            For i = 1 To result.Count
-                Dim evt As Object
-                Set evt = result(i)
+            ' If Mode B, find the last event in date range for this ID
+            If showOnlyLastChange Then
+                Set lastEvent = FindLastEventInRange(result, segments, startDate, endDate)
                 
-                ' Enrich Changes with Address/Subject1/Subject2 parsed from the corresponding raw segment
-                Dim segmentText As String
-                segmentText = ""
-                On Error Resume Next
-                If (i - 1) >= LBound(segments) And (i - 1) <= UBound(segments) Then
-                    segmentText = Trim$(segments(i - 1))
+                If Not lastEvent Is Nothing Then
+                    ' Create entry for the last event only
+                    Call CreateGrossGeschichteEntry(wsGross, wsKartei, outputRow, lastEvent("IsRuck"), _
+                                                  lastEvent("Reason"), CStr(lastEvent("ChangeDate")), _
+                                                  lastEvent("Changes"), currentRow, operName, recordID)
+                    outputRow = outputRow + 3 ' Each entry takes 2 rows + 1 separator row
                 End If
-                On Error GoTo Cleanup
-                
-                Dim fieldChanges As Object
-                Set fieldChanges = ParseFieldChangesFromSegment(segmentText)
-                Call MergeFieldChangesIntoChanges(evt("Changes"), fieldChanges)
-                
-                ' Check if event date falls within the specified range
-                Dim eventDate As Date
-                On Error Resume Next
-                eventDate = CDate(evt("ChangeDate"))
-                If Err.Number = 0 Then
-                    If eventDate >= startDate And eventDate <= endDate Then
-                        ' Create entry for this event
-                        Call CreateGrossGeschichteEntry(wsGross, wsKartei, outputRow, evt("IsRuck"), _
-                                                      evt("Reason"), CStr(evt("ChangeDate")), _
-                                                      evt("Changes"), currentRow, operName, recordID)
-                        outputRow = outputRow + 3 ' Each entry takes 2 rows + 1 separator row
+            Else
+                ' Mode A: Process each event in the history
+                For i = 1 To result.Count
+                    Set evt = result(i)
+                    
+                    ' Enrich Changes with Address/Subject1/Subject2 parsed from the corresponding raw segment
+                    segmentText = ""
+                    On Error Resume Next
+                    If (i - 1) >= LBound(segments) And (i - 1) <= UBound(segments) Then
+                        segmentText = Trim$(segments(i - 1))
                     End If
-                End If
-                Err.Clear
-                On Error GoTo Cleanup
-            Next i
+                    On Error GoTo Cleanup
+                    
+                    Set fieldChanges = ParseFieldChangesFromSegment(segmentText)
+                    Call MergeFieldChangesIntoChanges(evt("Changes"), fieldChanges)
+                    
+                    ' Check if event date falls within the specified range
+                    On Error Resume Next
+                    eventDate = CDate(evt("ChangeDate"))
+                    If Err.Number = 0 Then
+                        If eventDate >= startDate And eventDate <= endDate Then
+                            ' Create entry for this event
+                            Call CreateGrossGeschichteEntry(wsGross, wsKartei, outputRow, evt("IsRuck"), _
+                                                          evt("Reason"), CStr(evt("ChangeDate")), _
+                                                          evt("Changes"), currentRow, operName, recordID)
+                            outputRow = outputRow + 3 ' Each entry takes 2 rows + 1 separator row
+                        End If
+                    End If
+                    Err.Clear
+                    On Error GoTo Cleanup
+                Next i
+            End If
         End If
 NextRow:
     Next currentRow
@@ -131,7 +159,16 @@ NextRow:
         filterRange.AutoFilter
     End If
     
-    MsgBox "Gross Geschichte generated successfully for date range " & Format(startDate, "dd.mm.yyyy") & " - " & Format(endDate, "dd.mm.yyyy") & vbCrLf & "Total rows: " & (outputRow - 3), vbInformation
+    Dim modeText As String
+    If showOnlyLastChange Then
+        modeText = "Mode B (Last change per ID only)"
+    Else
+        modeText = "Mode A (All events)"
+    End If
+    
+    MsgBox "Gross Geschichte generated successfully for date range " & Format(startDate, "dd.mm.yyyy") & " - " & Format(endDate, "dd.mm.yyyy") & vbCrLf & _
+           "Mode: " & modeText & vbCrLf & _
+           "Total rows: " & (outputRow - 3), vbInformation
     
 Cleanup:
     ' Re-enable automatic calculations and screen updating
@@ -444,7 +481,7 @@ Private Sub FormatGrossGeschichte(ws As Worksheet, lastRow As Long)
 End Sub
 
 ' Parse Address/Subject1/Subject2 changes from a raw history segment (text before/including Was()/Is() blocks)
-Private Function ParseFieldChangesFromSegment(ByVal segment As String) As Object
+Function ParseFieldChangesFromSegment(ByVal segment As String) As Object
     Dim result As Object
     Set result = CreateObject("Scripting.Dictionary")
     
@@ -461,7 +498,7 @@ Private Function ParseFieldChangesFromSegment(ByVal segment As String) As Object
 End Function
 
 ' Merge additional field changes into the base Changes dictionary used by GrossGeschichte
-Private Sub MergeFieldChangesIntoChanges(ByVal baseChanges As Object, ByVal fieldChanges As Object)
+Sub MergeFieldChangesIntoChanges(ByVal baseChanges As Object, ByVal fieldChanges As Object)
     If baseChanges Is Nothing Then Exit Sub
     If fieldChanges Is Nothing Then Exit Sub
     
@@ -529,3 +566,62 @@ Private Sub AddFieldChangeToDict(ByVal segment As String, ByVal fieldName As Str
     End If
 End Sub
 
+' Find the last event in date range for a given ID
+' Returns the event with the latest date, and if multiple events have the same date, returns the last one in the collection
+Function FindLastEventInRange(ByVal events As Collection, ByRef segments() As String, ByVal startDate As Date, ByVal endDate As Date) As Object
+    Dim lastEvt As Object
+    Set lastEvt = Nothing
+    
+    Dim maxDate As Date
+    maxDate = 0
+    
+    Dim maxDateIndex As Long
+    maxDateIndex = 0
+    
+    Dim i As Long
+    For i = 1 To events.Count
+        Dim evt As Object
+        Set evt = events(i)
+        
+        ' Enrich this event with field changes
+        Dim segmentText As String
+        segmentText = ""
+        On Error Resume Next
+        If (i - 1) >= LBound(segments) And (i - 1) <= UBound(segments) Then
+            segmentText = Trim$(segments(i - 1))
+        End If
+        On Error GoTo 0
+        
+        Dim fieldChanges As Object
+        Set fieldChanges = ParseFieldChangesFromSegment(segmentText)
+        Call MergeFieldChangesIntoChanges(evt("Changes"), fieldChanges)
+        
+        ' Check if event date falls within range
+        Dim eventDate As Date
+        On Error Resume Next
+        eventDate = CDate(evt("ChangeDate"))
+        
+        If Err.Number = 0 Then
+            If eventDate >= startDate And eventDate <= endDate Then
+                ' Check if this is the latest date or same date but later position
+                If lastEvt Is Nothing Then
+                    Set lastEvt = evt
+                    maxDate = eventDate
+                    maxDateIndex = i
+                ElseIf eventDate > maxDate Then
+                    ' Found a later date
+                    Set lastEvt = evt
+                    maxDate = eventDate
+                    maxDateIndex = i
+                ElseIf eventDate = maxDate And i > maxDateIndex Then
+                    ' Same date but later in the collection (last in order)
+                    Set lastEvt = evt
+                    maxDateIndex = i
+                End If
+            End If
+        End If
+        Err.Clear
+    Next i
+    
+    Set FindLastEventInRange = lastEvt
+End Function

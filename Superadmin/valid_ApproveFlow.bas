@@ -99,6 +99,10 @@ Public Sub SyncDecisions()
     Set approvedIDs = New Collection
     Set declinedIDs = New Collection
     
+    ' Dictionary to track the latest decision per ID (to handle Mode A with multiple blocks per ID)
+    Dim idDecisions As Object
+    Set idDecisions = CreateObject("Scripting.Dictionary")
+    
     ' Collect decisions by ID
     Dim r As Long
     For r = 4 To lastRow Step 3 ' Process "Ist" rows (4, 7, 10, ...)
@@ -110,34 +114,64 @@ Public Sub SyncDecisions()
             recordID = CStr(wsGross.Range("A" & r).Value)
             
             If recordID <> "" Then
-                ' Check for duplicate decisions
+                ' Store decision with row number (to determine which is the last one for this ID)
+                Dim decisionData As Variant
+                
                 If decision = "APPROVED" Then
-                    If Not CollectionContains(approvedIDs, recordID) Then
-                        approvedIDs.Add recordID
-                    End If
-                ElseIf decision = "DECLINED" Then
-                    ' For declined, first check column Y for pre-entered comment
+                    decisionData = Array(r, "APPROVED", "")
+                Else
+                    ' For declined, get comment from column Y
                     Dim declComment As String
                     declComment = Trim(wsGross.Range("Y" & r).Value)
+                    decisionData = Array(r, "DECLINED", declComment)
+                End If
+                
+                ' Store in dictionary; if ID already exists, keep the one with higher row number (later block)
+                If idDecisions.Exists(recordID) Then
+                    Dim existingData As Variant
+                    existingData = idDecisions(recordID)
                     
-                    ' If column Y is empty, prompt for comment via InputBox
-                    If declComment = "" Then
-                        declComment = InputBox("Enter reason for declining ID " & recordID & ":" & vbCrLf & _
-                                              "(You can also enter comments directly in column Y of GrossGeschichte)", _
-                                              "Decline Comment", "Superadmin declined this change")
+                    ' Compare row numbers; keep the later one (higher row = later event)
+                    If CLng(decisionData(0)) > CLng(existingData(0)) Then
+                        idDecisions(recordID) = decisionData
                     End If
-                    
-                    If declComment <> "" Then
-                        If Not CollectionContains(declinedIDs, recordID) Then
-                            declinedIDs.Add Array(recordID, declComment)
-                        End If
-                    Else
-                        MsgBox "Skipping ID " & recordID & " - no comment provided.", vbExclamation
-                    End If
+                    ' If same row or earlier, keep existing decision
+                Else
+                    idDecisions.Add recordID, decisionData
                 End If
             End If
         End If
     Next r
+    
+    ' Now process unique decisions per ID
+    Dim idKey As Variant
+    For Each idKey In idDecisions.Keys
+        Dim finalDecision As Variant
+        finalDecision = idDecisions(idKey)
+        
+        Dim finalDecisionType As String
+        finalDecisionType = CStr(finalDecision(1))
+        
+        If finalDecisionType = "APPROVED" Then
+            approvedIDs.Add CStr(idKey)
+        ElseIf finalDecisionType = "DECLINED" Then
+            Dim finalComment As String
+            finalComment = CStr(finalDecision(2))
+            
+            ' If comment is still empty, prompt for it
+            If finalComment = "" Then
+                finalComment = InputBox("Enter reason for declining ID " & idKey & ":" & vbCrLf & _
+                                      "(You can also enter comments directly in column Y of GrossGeschichte)", _
+                                      "Decline Comment", "Superadmin declined this change")
+            End If
+            
+            If finalComment <> "" Then
+                declinedIDs.Add Array(CStr(idKey), finalComment)
+            Else
+                MsgBox "Skipping ID " & idKey & " - no comment provided.", vbExclamation
+            End If
+        End If
+    Next idKey
     
     If approvedIDs.Count = 0 And declinedIDs.Count = 0 Then
         MsgBox "No decisions found. Please mark records as 'Approved' or 'Declined' in column X.", _

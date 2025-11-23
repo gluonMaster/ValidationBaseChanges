@@ -20,11 +20,12 @@ This VBA project manages a validation workflow for pending changes between Admin
 - `Notitzen.bas` - Mandatory comment mechanism for changes
 - `ImportData.bas` - Import data from Access to Kartei sheet
 
-**Risk Classification Modules (NEW):**
+**Risk Classification Modules:**
 
-- `Export_RiskClassification.bas` - Classifies changes as risky (Scenario A/B)
-- `Export_OverlayPending.bas` - Overlays pre*/decl* records onto Kartei with color coding
-- `Export_DeclinedTools.bas` - Tools for Admin to view/edit declined records
+- `Export_RiskClassification.bas` - ✅ Classifies changes as risky (Scenario A/B)
+- `Export_OverlayPending.bas` - ✅ Overlays pre*/decl* records onto Kartei with color coding
+- `Export_DeclinedTools.bas` - ✅ Tools for Admin to view/edit declined records (improved UX: positioned after Kartei, consistent headers/widths, last Decl_n comment only, AutoFilter, auto-cleanup)
+- `Export_DeclinedHelpers.bas` - ✅ Helper functions for declined records management (comparison, copying, table creation)
 
 **Utility Modules:**
 
@@ -45,11 +46,12 @@ This VBA project manages a validation workflow for pending changes between Admin
 
 **Core Modules:**
 
-- `valid_ImportPending.bas` - Load pending changes from pre_tblKartei into Kartei
-- `valid_ApproveFlow.bas` - Approve/Decline workflow and sync decisions
-- `valid_ParseHistory.bas` - Tested history parser (from alt/Parceing.bas, DO NOT MODIFY REGEX)
-- `Geschichte.bas` - Individual record history display (uses valid_ParseHistory)
-- `grossGeschichte.bas` - Comprehensive history report generation (uses valid_ParseHistory)
+- `valid_ImportPending.bas` - ✅ Load pending changes from pre_tblKartei into Kartei (with automatic monthly column formatting)
+- `valid_ApproveFlow.bas` - ✅ Approve/Decline workflow and sync decisions (supports Mode A/B)
+- `valid_ParseHistory.bas` - ✅ Tested history parser (from alt/Parceing.bas, DO NOT MODIFY REGEX)
+- `valid_FormatMonths.bas` - ✅ Format monthly columns U-AF (21-32) to numeric with proper decimal separators
+- `Geschichte.bas` - ✅ Individual record history display (uses valid_ParseHistory)
+- `grossGeschichte.bas` - ✅ Comprehensive history report generation (Mode A: all events, Mode B: last change per ID)
 
 ---
 
@@ -120,11 +122,16 @@ decl_tblKartei    → Declined changes (rejected by Superadmin)
 
 1. Opens Suprime file
 2. Runs `LoadPendingChanges` → Imports from pre_tblKartei, generates GrossGeschichte
-3. Reviews changes in GrossGeschichte sheet
-4. Marks each record in column U:
+3. **Chooses report mode:**
+   - **Mode A:** Show all history events in date range
+   - **Mode B:** Show only last change per ID in date range
+4. Reviews changes in GrossGeschichte sheet
+5. Marks each record in column X:
    - `Approved` → Move to tblKartei
-   - `Declined` → Move to decl_tblKartei (with comment)
-5. Runs `SyncDecisions` → Processes all decisions
+   - `Declined` → Move to decl_tblKartei (with comment in column Y)
+6. Runs `SyncDecisions` → Processes all decisions
+   - In Mode A: If multiple blocks exist for same ID, only the decision from the last event is applied
+   - In Mode B: Only one block per ID exists by design
 
 ---
 
@@ -171,18 +178,27 @@ End Sub
 
 ---
 
-## Database Tables
+### Database Tables
 
-### tblKartei / pre_tblKartei / decl_tblKartei Structure
+### tblKartei Structure
 
 ```
 ID               → AutoNumber (primary key)
-Value1..Value51  → Text(255) [data columns A-AY]
+Value1..Value51  → Text(255) [data columns A-AY], AllowZeroLength = True
 Value52          → Memo [history column AZ]
 InteriorColor1..InteriorColor51 → Long [cell background colors]
 FontColor3       → Long [font color for column C]
 FontColor18      → Long [font color for column R]
 ```
+
+### pre_tblKartei Structure
+
+Same as tblKartei, but ID is regular Long (not AutoNumber) - preserves original ID from tblKartei.
+
+### decl_tblKartei Structure
+
+Same as tblKartei, but ID is regular Long (not AutoNumber) - preserves original ID from tblKartei.
+**Important:** All text fields must have `AllowZeroLength = True` to accept empty strings.
 
 ---
 
@@ -190,17 +206,20 @@ FontColor18      → Long [font color for column R]
 
 ### For Admin File:
 
-- Implement `Export_RiskClassification.bas` (classify changes)
-- Implement `Export_OverlayPending.bas` (overlay pre*/decl* on Kartei)
-- Implement `Export_DeclinedTools.bas` (handle declined records)
-- Integrate risk classification into `CompareAndSyncKartei`
+- ✅ Implement `Export_RiskClassification.bas` (classify changes)
+- ✅ Implement `Export_OverlayPending.bas` (overlay pre*/decl* on Kartei)
+- ✅ Implement `Export_DeclinedTools.bas` (handle declined records)
+- [ ] Integrate risk classification into `CompareAndSyncKartei`
+- [ ] Block SEPA changes for Operator role
+- [ ] Integrate overlay logic into `Workbook_Open`
 
 ### For Superadmin File:
 
 - ✅ `valid_ImportPending.bas` - Load pending changes
 - ✅ `valid_ApproveFlow.bas` - Approve/decline workflow
-- ✅ `Geschichte.bas` - Updated history parsing
-- ✅ `grossGeschichte.bas` - Updated for ID-based tracking
+- ✅ `valid_ParseHistory.bas` - History parser
+- ✅ `Geschichte.bas` - Individual record history
+- ✅ `grossGeschichte.bas` - Comprehensive history report
 
 ---
 
@@ -213,14 +232,19 @@ FontColor18      → Long [font color for column R]
 - [ ] Risky changes → Write to pre_tblKartei
 - [ ] Declined record edit → Moves back to pre_tblKartei
 - [ ] Pending records → Cannot be written to tblKartei directly
+- [ ] SEPA records → Operator cannot modify
 
 ### Superadmin Side:
 
 - [x] Load pending → Kartei populated from pre_tblKartei
-- [x] GrossGeschichte → Shows all changes with ID
+- [x] GrossGeschichte Mode A → Shows all events per ID in date range
+- [x] GrossGeschichte Mode B → Shows only last change per ID in date range
+- [x] Mode B filtering → Correctly identifies latest date and last event in collection
 - [x] Approve decision → Moves to tblKartei, deletes from pre\_
 - [x] Decline decision → Moves to decl*tblKartei with comment, deletes from pre*
+- [x] Conflicting decisions (Mode A) → Only decision from last event is applied per ID
 - [x] History parsing → Supports months, Address, Subject1/2, Decl_N
+- [x] decl_tblKartei creation → AllowZeroLength = True for text fields
 
 ---
 

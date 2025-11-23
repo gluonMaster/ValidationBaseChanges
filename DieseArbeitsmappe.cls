@@ -87,8 +87,26 @@ Private Sub Workbook_BeforeClose(Cancel As Boolean)
     Application.CutCopyMode = False
     ws.Cells(3, 1).Select
     
+    ' Delete DeclinedOverview sheet if it still exists (cleanup for fresh session start)
+    Call DeleteDeclinedOverviewIfExists
+    
     Call StopHourlyMessage
     Call CompareAndSyncKartei_OnSave
+End Sub
+
+Private Sub DeleteDeclinedOverviewIfExists()
+    ' Safety check: delete DeclinedOverview sheet on close to ensure clean start next session
+    
+    Dim wsDeclined As Worksheet
+    On Error Resume Next
+    Set wsDeclined = ThisWorkbook.Worksheets("DeclinedOverview")
+    On Error GoTo 0
+    
+    If Not wsDeclined Is Nothing Then
+        Application.DisplayAlerts = False
+        wsDeclined.Delete
+        Application.DisplayAlerts = True
+    End If
 End Sub
 
 '===========================================

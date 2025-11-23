@@ -32,6 +32,9 @@ Public Sub LoadPendingChangesFromPre()
     ' Write pending data to Kartei sheet
     WritePendingToKartei wsKartei, dictPending
     
+    ' Format monthly columns (U-AF) to ensure numeric values with proper decimal separators
+    Call valid_FormatMonths.FormatMonthlyColumns
+    
     ' Optionally load original values from tblKartei for comparison
     LoadOriginalValues wsKartei, dictPending
     
