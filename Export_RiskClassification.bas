@@ -6,6 +6,40 @@ Attribute VB_Name = "Export_RiskClassification"
 Option Explicit
 
 ' ========================================
+' Risk Policy Constants
+' ========================================
+
+' Policy modes:
+'   "TRACKED_FIELDS" - Changes in tracked (history-recorded) fields are risky, others are safe
+'   "ALL_RISKY"      - All changes to existing records are risky
+'   "GRANULAR"       - Original SEPA/past months/discipline logic
+Private Const RISK_POLICY_MODE As String = "TRACKED_FIELDS"
+
+' ========================================
+' Tracked (History-Recorded) Columns
+' These are the columns that get recorded in history (AZ column)
+' Changes to these fields WILL appear on GrossGeschichte
+' Changes to other fields will NOT appear on GrossGeschichte
+' ========================================
+Private Const TRACKED_COL_FAMILY_ID As Integer = 1       ' A - FID
+Private Const TRACKED_COL_PARENT As Integer = 2          ' B - PAR
+Private Const TRACKED_COL_CHILD As Integer = 4           ' D - CHD
+Private Const TRACKED_COL_BIRTHDATE As Integer = 5       ' E - DOB
+Private Const TRACKED_COL_ADDRESS As Integer = 6         ' F - ADR
+Private Const TRACKED_COL_PHONE As Integer = 7           ' G - TEL
+Private Const TRACKED_COL_MOBILE As Integer = 8          ' H - MOB
+Private Const TRACKED_COL_EMAIL As Integer = 9           ' I - EML
+Private Const TRACKED_COL_SUBJECT1 As Integer = 10       ' J - SB1
+Private Const TRACKED_COL_PRICE1 As Integer = 13         ' M - PR1
+Private Const TRACKED_COL_SUBJECT2 As Integer = 15       ' O - SB2
+Private Const TRACKED_COL_PRICE2 As Integer = 18         ' R - PR2
+Private Const TRACKED_COL_MONTH_START As Integer = 21    ' U - M01 (Month 1)
+Private Const TRACKED_COL_MONTH_END As Integer = 32      ' AF - M12 (Month 12)
+Private Const TRACKED_COL_EXTRA1 As Integer = 37         ' AK - EX1
+Private Const TRACKED_COL_EXTRA2 As Integer = 38         ' AL - EX2
+Private Const TRACKED_COL_EXTRA3 As Integer = 39         ' AM - EX3
+
+' ========================================
 ' Risk Classification Functions
 ' ========================================
 
@@ -15,10 +49,169 @@ Public Function IsRiskyChange(ByVal wsKartei As Worksheet, _
                               ByVal strID As String, _
                               ByVal arrLocal As Variant, _
                               ByVal arrOriginal As Variant) As Boolean
-    ' Determines if a change is risky based on Scenario A (non-strict) or B (strict)
+    ' Determines if a change is risky based on current policy
     ' Returns True if the change should go to pre_tblKartei instead of tblKartei
     ' NOTE: This function is only called for EXISTING records (ID exists in dictOriginal/tblKartei)
     '       New records are always considered safe and go directly to tblKartei
+    
+    Select Case RISK_POLICY_MODE
+        Case "TRACKED_FIELDS"
+            ' Changes in tracked (history-recorded) fields are risky
+            ' Changes in non-tracked fields are safe (they won't appear on GrossGeschichte anyway)
+            IsRiskyChange = HasTrackedFieldChanges(arrLocal, arrOriginal)
+            
+        Case "ALL_RISKY"
+            ' All changes to existing records are risky
+            IsRiskyChange = True
+            
+        Case "GRANULAR"
+            ' Original SEPA/past months/discipline logic
+            IsRiskyChange = IsRiskyChange_Granular(wsKartei, wsOriginal, rowIndex, strID, arrLocal, arrOriginal)
+            
+        Case Else
+            ' Default to tracked fields policy
+            IsRiskyChange = HasTrackedFieldChanges(arrLocal, arrOriginal)
+    End Select
+End Function
+
+' ========================================
+' Tracked Fields Policy Implementation
+' ========================================
+
+Public Function HasTrackedFieldChanges(ByVal arrLocal As Variant, _
+                                       ByVal arrOriginal As Variant) As Boolean
+    ' Checks if any tracked (history-recorded) field has changed
+    ' Returns True if at least one tracked field differs between local and original
+    ' Returns False if only non-tracked fields changed (those won't appear on GrossGeschichte)
+    
+    HasTrackedFieldChanges = False
+    
+    ' Check individual tracked columns
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_FAMILY_ID) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_PARENT) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_CHILD) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_BIRTHDATE) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_ADDRESS) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_PHONE) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_MOBILE) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_EMAIL) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_SUBJECT1) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_PRICE1) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_SUBJECT2) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_PRICE2) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    ' Check months (columns 21-32)
+    Dim col As Integer
+    For col = TRACKED_COL_MONTH_START To TRACKED_COL_MONTH_END
+        If HasColumnChanged(arrLocal, arrOriginal, col) Then
+            HasTrackedFieldChanges = True
+            Exit Function
+        End If
+    Next col
+    
+    ' Check extra subjects
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_EXTRA1) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_EXTRA2) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    If HasColumnChanged(arrLocal, arrOriginal, TRACKED_COL_EXTRA3) Then
+        HasTrackedFieldChanges = True
+        Exit Function
+    End If
+    
+    ' No tracked field changes found
+    HasTrackedFieldChanges = False
+End Function
+
+Private Function HasColumnChanged(ByVal arrLocal As Variant, _
+                                  ByVal arrOriginal As Variant, _
+                                  ByVal colIndex As Integer) As Boolean
+    ' Safely compares a single column between local and original arrays
+    ' Returns True if values differ
+    
+    On Error Resume Next
+    
+    Dim localVal As String
+    Dim origVal As String
+    
+    If IsError(arrLocal(1, colIndex)) Then
+        localVal = ""
+    Else
+        localVal = CStr(arrLocal(1, colIndex))
+    End If
+    
+    If IsError(arrOriginal(1, colIndex)) Then
+        origVal = ""
+    Else
+        origVal = CStr(arrOriginal(1, colIndex))
+    End If
+    
+    On Error GoTo 0
+    
+    HasColumnChanged = (localVal <> origVal)
+End Function
+
+Private Function IsRiskyChange_Granular(ByVal wsKartei As Worksheet, _
+                                        ByVal wsOriginal As Worksheet, _
+                                        ByVal rowIndex As Long, _
+                                        ByVal strID As String, _
+                                        ByVal arrLocal As Variant, _
+                                        ByVal arrOriginal As Variant) As Boolean
+    ' Original granular risk classification logic
+    ' Preserved for easy rollback by changing USE_STRICT_ALL_RISKY_POLICY to False
     
     Dim sepaMarker As String
     sepaMarker = Trim(CStr(arrLocal(1, 47)))  ' Column AU (47)
@@ -48,7 +241,7 @@ Public Function IsRiskyChange(ByVal wsKartei As Worksheet, _
     
     If Not hasMonthChanges Then
         ' No month changes, not risky
-        IsRiskyChange = False
+        IsRiskyChange_Granular = False
         Exit Function
     End If
     
@@ -56,7 +249,7 @@ Public Function IsRiskyChange(ByVal wsKartei As Worksheet, _
     ' Scenario B (Strict): SEPA + any month changes
     ' ========================================
     If sepaMarker = "SEPA" Then
-        IsRiskyChange = True
+        IsRiskyChange_Granular = True
         Exit Function
     End If
     
@@ -99,7 +292,7 @@ Public Function IsRiskyChange(ByVal wsKartei As Worksheet, _
     
     If Not hasPastMonthChanges Then
         ' Only future/current months changed, not risky
-        IsRiskyChange = False
+        IsRiskyChange_Granular = False
         Exit Function
     End If
     
@@ -128,7 +321,7 @@ Public Function IsRiskyChange(ByVal wsKartei As Worksheet, _
     
     ' If editing more than 1 month in the past, always risky
     If maxPastDepth > 1 Then
-        IsRiskyChange = True
+        IsRiskyChange_Granular = True
         Exit Function
     End If
     
@@ -185,7 +378,7 @@ Public Function IsRiskyChange(ByVal wsKartei As Worksheet, _
     End If
     
     ' Change is risky if ANY required discipline check failed
-    IsRiskyChange = (Not isSafeJ) Or (Not isSafeO)
+    IsRiskyChange_Granular = (Not isSafeJ) Or (Not isSafeO)
 End Function
 
 Private Function HasSafeKeywords(ByVal disciplineText As String) As Boolean

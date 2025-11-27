@@ -219,6 +219,9 @@ Public Sub CreateGeshichteSheet(ByVal j As Long, ByVal isRuck As Boolean, _
 End Sub
 
 ' Parse Address/Subject1/Subject2 changes from a raw history segment
+' Supports both formats:
+'   - Legacy: Address: Was(X); Is(Y). Subject1: Was(X); Is(Y). Subject2: Was(X); Is(Y).
+'   - New: ADR(X->Y) SB1(X->Y) SB2(X->Y)
 Private Function ParseFieldChangesFromSegment(ByVal segment As String) As Object
     Dim result As Object
     Set result = CreateObject("Scripting.Dictionary")
@@ -228,9 +231,15 @@ Private Function ParseFieldChangesFromSegment(ByVal segment As String) As Object
         Exit Function
     End If
     
+    ' First try legacy format: FieldName: Was(X); Is(Y).
     Call AddFieldChangeToDict(segment, "Address", result)
     Call AddFieldChangeToDict(segment, "Subject1", result)
     Call AddFieldChangeToDict(segment, "Subject2", result)
+    
+    ' Then try new format: TAG(X->Y)
+    Call AddNewFormatFieldChangeToDict(segment, "ADR", "Address", result)
+    Call AddNewFormatFieldChangeToDict(segment, "SB1", "Subject1", result)
+    Call AddNewFormatFieldChangeToDict(segment, "SB2", "Subject2", result)
     
     Set ParseFieldChangesFromSegment = result
 End Function
@@ -250,7 +259,7 @@ Private Sub MergeFieldChangesIntoChanges(ByVal baseChanges As Object, ByVal fiel
     Next key
 End Sub
 
-' Helper: extract single "FieldName: Was(...); Is(...)." block into dictionary
+' Helper: extract single "FieldName: Was(...); Is(...)." block into dictionary (legacy format)
 Private Sub AddFieldChangeToDict(ByVal segment As String, ByVal fieldName As String, ByVal dict As Object)
     Dim marker As String
     marker = fieldName & ": Was("
@@ -302,6 +311,40 @@ Private Sub AddFieldChangeToDict(ByVal segment As String, ByVal fieldName As Str
     Else
         dict.Add fieldName, fieldDict
     End If
+End Sub
+
+' Helper: extract single TAG(OLD->NEW) block into dictionary (new format)
+Private Sub AddNewFormatFieldChangeToDict(ByVal segment As String, ByVal tag As String, ByVal fieldName As String, ByVal dict As Object)
+    ' If already parsed by legacy format, skip
+    If dict.Exists(fieldName) Then Exit Sub
+    
+    ' Use regex to find TAG(value->value)
+    Dim regex As Object
+    Set regex = CreateObject("VBScript.RegExp")
+    
+    With regex
+        .Pattern = tag & "\(([^)]*)->([^)]*)\)"
+        .IgnoreCase = True
+        .Global = False
+    End With
+    
+    Dim matches As Object
+    Set matches = regex.Execute(segment)
+    
+    If matches.Count = 0 Then Exit Sub
+    
+    Dim warVal As String
+    Dim istVal As String
+    
+    warVal = Trim$(matches(0).SubMatches(0))
+    istVal = Trim$(matches(0).SubMatches(1))
+    
+    Dim fieldDict As Object
+    Set fieldDict = CreateObject("Scripting.Dictionary")
+    fieldDict.Add "War", warVal
+    fieldDict.Add "Ist", istVal
+    
+    dict.Add fieldName, fieldDict
 End Sub
 
 Sub ConvertAndFormatCells()

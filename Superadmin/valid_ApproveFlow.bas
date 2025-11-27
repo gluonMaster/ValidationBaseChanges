@@ -3,9 +3,25 @@ Attribute VB_Name = "valid_ApproveFlow"
 '   Module: valid_ApproveFlow
 '   Purpose: Superadmin workflow for approving/declining pending changes
 '   Operations: Load pending, review GrossGeschichte, approve/decline decisions
+'   
+'   History Format Constants (must match Export_HistoryBuilder in Admin file):
+'     DCL - Decline entry tag
+'     || - Session separator
+'     -> - Value separator (old->new)
+'     /@ @/ - Comment delimiters
 '==========================
 
 Option Explicit
+
+' ========================================
+' History Format Constants (self-contained for Superadmin)
+' ========================================
+
+Private Const HT_DECLINE As String = "DCL"           ' Decline entry tag
+Private Const HD_SESSION As String = "||"            ' Session separator
+Private Const HD_VALUE As String = "->"              ' Old->New value separator
+Private Const HD_COMMENT_START As String = "/@"      ' Comment start marker
+Private Const HD_COMMENT_END As String = "@/"        ' Comment end marker
 
 ' Main workflow: Load pending changes and generate GrossGeschichte for review
 Public Sub LoadPendingChanges()
@@ -25,9 +41,9 @@ Public Sub LoadPendingChanges()
     
     MsgBox "Pending changes loaded successfully." & vbCrLf & vbCrLf & _
            "Please review the GrossGeschichte sheet and mark each change as:" & vbCrLf & _
-           "  - 'Approved' (column X) to accept and move to tblKartei" & vbCrLf & _
-           "  - 'Declined' (column X) to reject and move to decl_tblKartei" & vbCrLf & _
-           "  - For declined records, optionally enter comment in column Y" & vbCrLf & vbCrLf & _
+           "  - 'Approved' (column AC) to accept and move to tblKartei" & vbCrLf & _
+           "  - 'Declined' (column AC) to reject and move to decl_tblKartei" & vbCrLf & _
+           "  - For declined records, optionally enter comment in column AD" & vbCrLf & vbCrLf & _
            "Then run 'SyncDecisions' to process your decisions.", _
            vbInformation, "Load Pending Changes"
     
@@ -41,7 +57,7 @@ ErrorHandler:
     MsgBox "Error loading pending changes: " & Err.Description, vbCritical, "Load Error"
 End Sub
 
-' Prepare GrossGeschichte sheet with decision column (X) and decline comment column (Y)
+' Prepare GrossGeschichte sheet with decision column (AC) and decline comment column (AD)
 Private Sub PrepareGrossGeschichteForDecisions()
     Dim ws As Worksheet
     On Error Resume Next
@@ -50,22 +66,20 @@ Private Sub PrepareGrossGeschichteForDecisions()
     
     If ws Is Nothing Then Exit Sub
     
-    ' Add header in column X (Decision)
-    ws.Range("X2").Value = "Decision"
-    ws.Range("X2").Font.Bold = True
-    ws.Range("X2").HorizontalAlignment = xlCenter
-    ws.Range("X2").Interior.Color = RGB(255, 255, 153) ' Light yellow
+    ' Header for Decision is already created in CreateGrossGeschichteHeaders (column AC = 29)
+    ' Just ensure styling is applied
+    ws.Range("AC2").Interior.Color = RGB(255, 255, 153) ' Light yellow
     
     ' Add validation dropdown (Approved/Declined) to decision cells
     Dim lastRow As Long
     lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
     
     If lastRow > 2 Then
-        ' Find all "Ist" rows (every 3rd row starting from row 3: 3, 6, 9, ...)
+        ' Find all "Ist" rows (every 3rd row starting from row 4: 4, 7, 10, ...)
         Dim r As Long
         For r = 4 To lastRow Step 3 ' Ist rows are at positions 4, 7, 10, ...
-            ' Add dropdown validation to column X
-            With ws.Range("X" & r).Validation
+            ' Add dropdown validation to column AC (29)
+            With ws.Range("AC" & r).Validation
                 .Delete
                 .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
                      Formula1:="Approved,Declined"
@@ -73,10 +87,10 @@ Private Sub PrepareGrossGeschichteForDecisions()
                 .InCellDropdown = True
             End With
             
-            ws.Range("X" & r).Interior.Color = RGB(255, 255, 204) ' Lighter yellow
+            ws.Range("AC" & r).Interior.Color = RGB(255, 255, 204) ' Lighter yellow
             
-            ' Prepare column Y for decline comments (no validation, just styling)
-            ws.Range("Y" & r).Interior.Color = RGB(255, 230, 230) ' Light pink
+            ' Prepare column AD (30) for decline comments (no validation, just styling)
+            ws.Range("AD" & r).Interior.Color = RGB(255, 230, 230) ' Light pink
         Next r
     End If
 End Sub
@@ -104,14 +118,26 @@ Public Sub SyncDecisions()
     Set idDecisions = CreateObject("Scripting.Dictionary")
     
     ' Collect decisions by ID
+    ' Note: In new structure, we need to find the record ID somehow
+    ' The FamilyID is in column A, but we need the actual record ID from Kartei
+    ' For now, we'll store the row number and look up the ID from Kartei later
     Dim r As Long
     For r = 4 To lastRow Step 3 ' Process "Ist" rows (4, 7, 10, ...)
         Dim decision As String
-        decision = UCase(Trim(wsGross.Range("X" & r).Value))
+        decision = UCase(Trim(wsGross.Range("AC" & r).Value)) ' Column AC (29)
         
         If decision = "APPROVED" Or decision = "DECLINED" Then
+            ' We need to find the corresponding record ID
+            ' The FamilyID is in column A, but we need the actual Kartei row
+            ' Since GrossGeschichte is generated from Kartei, we need to match by FamilyID + other data
+            ' For simplicity, we'll store the Kartei ID if available, or use a lookup
+            
             Dim recordID As String
-            recordID = CStr(wsGross.Range("A" & r).Value)
+            ' Try to get ID from a hidden reference or calculate from row
+            ' In the current implementation, we stored ID in column A of old structure
+            ' Now FamilyID is in A - we need another way to track the record ID
+            ' Let's add a hidden column or use the Kartei sheet to find the ID
+            recordID = GetRecordIDForGrossRow(r)
             
             If recordID <> "" Then
                 ' Store decision with row number (to determine which is the last one for this ID)
@@ -120,9 +146,9 @@ Public Sub SyncDecisions()
                 If decision = "APPROVED" Then
                     decisionData = Array(r, "APPROVED", "")
                 Else
-                    ' For declined, get comment from column Y
+                    ' For declined, get comment from column AD (30)
                     Dim declComment As String
-                    declComment = Trim(wsGross.Range("Y" & r).Value)
+                    declComment = Trim(wsGross.Range("AD" & r).Value)
                     decisionData = Array(r, "DECLINED", declComment)
                 End If
                 
@@ -161,7 +187,7 @@ Public Sub SyncDecisions()
             ' If comment is still empty, prompt for it
             If finalComment = "" Then
                 finalComment = InputBox("Enter reason for declining ID " & idKey & ":" & vbCrLf & _
-                                      "(You can also enter comments directly in column Y of GrossGeschichte)", _
+                                      "(You can also enter comments directly in column AD of GrossGeschichte)", _
                                       "Decline Comment", "Superadmin declined this change")
             End If
             
@@ -174,7 +200,7 @@ Public Sub SyncDecisions()
     Next idKey
     
     If approvedIDs.Count = 0 And declinedIDs.Count = 0 Then
-        MsgBox "No decisions found. Please mark records as 'Approved' or 'Declined' in column X.", _
+        MsgBox "No decisions found. Please mark records as 'Approved' or 'Declined' in column AC.", _
                vbExclamation, "No Decisions"
         GoTo Cleanup
     End If
@@ -205,10 +231,35 @@ ErrorHandler:
     MsgBox "Error syncing decisions: " & Err.Description, vbCritical, "Sync Error"
 End Sub
 
+' Get record ID for a given GrossGeschichte row from hidden column AE (31)
+' Returns the ID or empty string if not found
+Private Function GetRecordIDForGrossRow(ByVal grossRow As Long) As String
+    On Error GoTo ErrHandler
+    
+    Dim wsGross As Worksheet
+    Set wsGross = ThisWorkbook.Worksheets("GrossGeschichte")
+    
+    ' RecordID is stored in hidden column AE (column 31)
+    Dim recordID As String
+    recordID = Trim(CStr(wsGross.Cells(grossRow, 31).Value))
+    
+    GetRecordIDForGrossRow = recordID
+    Exit Function
+    
+ErrHandler:
+    GetRecordIDForGrossRow = ""
+End Function
+
 ' Move approved records from pre_tblKartei to tblKartei
 Private Sub ProcessApprovedRecords(ByVal approvedIDs As Collection)
     Dim dbPath As String
     dbPath = GetDatabasePath()
+    
+    ' Check if user cancelled database selection
+    If dbPath = "" Then
+        MsgBox "Database path not set. Operation cancelled.", vbExclamation, "Error"
+        Exit Sub
+    End If
     
     Dim engine As DAO.DBEngine
     Set engine = New DAO.DBEngine
@@ -281,6 +332,12 @@ Private Sub ProcessDeclinedRecords(ByVal declinedIDs As Collection)
     Dim dbPath As String
     dbPath = GetDatabasePath()
     
+    ' Check if user cancelled database selection
+    If dbPath = "" Then
+        MsgBox "Database path not set. Operation cancelled.", vbExclamation, "Error"
+        Exit Sub
+    End If
+    
     ' Ensure decl_tblKartei exists
     If Not TableExists(dbPath, "decl_tblKartei") Then
         Call CreateDeclTable(dbPath)
@@ -340,14 +397,13 @@ Private Sub ProcessDeclinedRecords(ByVal declinedIDs As Collection)
             Dim currentHistory As String
             currentHistory = Nz(rsDecl.Fields("Value52").Value, "")
             
-            ' Count existing Decl_N entries
+            ' Count existing decline entries (both old Decl_N and new DCL format)
             Dim declNum As Long
             declNum = CountDeclEntries(currentHistory) + 1
             
-            ' Append decline comment in Was()/Is() format to match ParseSingleEvent regex
-            ' Format: Decl_N: Was(); Is(<comment + timestamp>).
+            ' Build decline entry using new format: DCL(<N>-><comment + timestamp>)||
             Dim declEntry As String
-            declEntry = "Decl_" & declNum & ": Was(); Is(" & declComment & " (Declined by Superadmin on " & Format(Date, "dd.mm.yyyy") & ")). || "
+            declEntry = BuildDeclineHistoryEntry(declNum, declComment)
             
             rsDecl.Fields("Value52").Value = currentHistory & declEntry
             
@@ -367,19 +423,65 @@ End Sub
 
 ' Count existing Decl_N entries in history string
 Private Function CountDeclEntries(ByVal historyStr As String) As Long
+    ' Counts both old format (Decl_N:) and new format (DCL(N->...))
     Dim count As Long
     count = 0
     
-    Dim regex As Object
-    Set regex = CreateObject("VBScript.RegExp")
-    regex.Global = True
-    regex.Pattern = "Decl_(\d+):"
+    ' Count new format: DCL(
+    Dim pos As Long
+    pos = 1
+    Do
+        pos = InStr(pos, historyStr, HT_DECLINE & "(")
+        If pos > 0 Then
+            count = count + 1
+            pos = pos + Len(HT_DECLINE) + 1
+        End If
+    Loop While pos > 0
     
-    Dim matches As Object
-    Set matches = regex.Execute(historyStr)
+    ' Count old format: Decl_
+    pos = 1
+    Do
+        pos = InStr(pos, historyStr, "Decl_")
+        If pos > 0 Then
+            count = count + 1
+            pos = pos + 5
+        End If
+    Loop While pos > 0
     
-    count = matches.Count
     CountDeclEntries = count
+End Function
+
+' Build a decline history entry using new format
+Private Function BuildDeclineHistoryEntry(ByVal declineNumber As Long, _
+                                          ByVal declineComment As String) As String
+    ' Format: DCL(<N>-><comment (Declined by Superadmin on DD.MM.YYYY)>)||
+    
+    Dim sanitizedComment As String
+    sanitizedComment = SanitizeHistoryValue(declineComment)
+    
+    Dim fullComment As String
+    fullComment = sanitizedComment & " (Declined by Superadmin on " & Format(Date, "dd.mm.yyyy") & ")"
+    
+    BuildDeclineHistoryEntry = HT_DECLINE & "(" & CStr(declineNumber) & HD_VALUE & fullComment & ")" & HD_SESSION
+End Function
+
+' Sanitize a value for inclusion in history string
+Private Function SanitizeHistoryValue(ByVal value As String) As String
+    Dim result As String
+    result = value
+    
+    ' Remove/replace problematic characters
+    result = Replace(result, HD_VALUE, "~>")       ' Escape arrow
+    result = Replace(result, HD_SESSION, "|")      ' Escape double pipe
+    result = Replace(result, "(", "[")             ' Escape open paren
+    result = Replace(result, ")", "]")             ' Escape close paren
+    result = Replace(result, HD_COMMENT_START, "/")
+    result = Replace(result, HD_COMMENT_END, "/")
+    result = Replace(result, vbCrLf, " ")          ' Remove line breaks
+    result = Replace(result, vbCr, " ")
+    result = Replace(result, vbLf, " ")
+    
+    SanitizeHistoryValue = Trim(result)
 End Function
 
 ' Helper: Check if collection contains value
@@ -402,18 +504,9 @@ Private Function CollectionContains(ByVal col As Collection, ByVal Value As Stri
     CollectionContains = False
 End Function
 
-' Helper: Get database path
+' Helper: Get database path with validation (prompts user if file not found)
 Private Function GetDatabasePath() As String
-    On Error Resume Next
-    Dim basePath As String
-    basePath = ThisWorkbook.Worksheets("Kartei").Range("X1").Value
-    
-    If basePath = "" Then
-        basePath = ThisWorkbook.Path
-    End If
-    
-    GetDatabasePath = basePath & "\Alarm\KindElternDaten_25_front.accdb"
-    On Error GoTo 0
+    GetDatabasePath = valid_DatabasePath.GetValidatedDatabasePath()
 End Function
 
 ' Helper: Check if table exists

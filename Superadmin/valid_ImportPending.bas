@@ -38,6 +38,9 @@ Public Sub LoadPendingChangesFromPre()
     ' Optionally load original values from tblKartei for comparison
     LoadOriginalValues wsKartei, dictPending
     
+    ' Set up date range on GrossGeschichte sheet (B1=start date, C1=today)
+    Call SetupGrossGeschichteDates
+    
     MsgBox "Successfully loaded " & dictPending.Count & " pending change(s) from pre_tblKartei.", vbInformation, "Load Pending"
     
 Cleanup:
@@ -58,6 +61,12 @@ Private Function ReadPreTableIntoDictionary() As Object
     
     Dim dbPath As String
     dbPath = GetDatabasePath()
+    
+    ' Check if user cancelled database selection
+    If dbPath = "" Then
+        Set ReadPreTableIntoDictionary = dict
+        Exit Function
+    End If
     
     ' Check if pre_tblKartei exists, create if needed
     If Not TableExists(dbPath, "pre_tblKartei") Then
@@ -206,19 +215,9 @@ Private Sub CreateKarteiHeaders(ByVal ws As Worksheet)
     Next i
 End Sub
 
-' Get database path from Kartei!X1 or use default
+' Get database path with validation (prompts user if file not found)
 Private Function GetDatabasePath() As String
-    On Error Resume Next
-    Dim basePath As String
-    basePath = ThisWorkbook.Worksheets("Kartei").Range("X1").Value
-    
-    If basePath = "" Then
-        ' Fallback: prompt user or use default
-        basePath = ThisWorkbook.Path
-    End If
-    
-    GetDatabasePath = basePath & "\Alarm\KindElternDaten_25_front.accdb"
-    On Error GoTo 0
+    GetDatabasePath = valid_DatabasePath.GetValidatedDatabasePath()
 End Function
 
 ' Check if table exists in database
@@ -303,3 +302,34 @@ Private Function NzToEmpty(ByVal v As Variant) As Variant
         NzToEmpty = v
     End If
 End Function
+
+' Set up date range on GrossGeschichte sheet for filtering
+' B1 = Start date (default: 30 days ago), C1 = End date (today)
+' Both cells formatted as DD.MM.YYYY
+Private Sub SetupGrossGeschichteDates()
+    On Error Resume Next
+    
+    Dim wsGross As Worksheet
+    Set wsGross = ThisWorkbook.Worksheets("GrossGeschichte")
+    
+    If wsGross Is Nothing Then
+        ' Create GrossGeschichte sheet if it doesn't exist
+        Set wsGross = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        wsGross.Name = "GrossGeschichte"
+        wsGross.Range("A1").Value = "Start Date:"
+        wsGross.Range("A1").Font.Bold = True
+    End If
+    
+    ' Set B1 to 30 days ago (if empty or not a valid date)
+    If Not IsDate(wsGross.Range("B1").Value) Or IsEmpty(wsGross.Range("B1").Value) Then
+        wsGross.Range("B1").Value = Date - 30
+    End If
+    
+    ' Always set C1 to current date
+    wsGross.Range("C1").Value = Date
+    
+    ' Apply date format dd.mm.yyyy AFTER setting values to ensure it sticks
+    wsGross.Range("B1:C1").NumberFormat = "dd.mm.yyyy"
+    
+    On Error GoTo 0
+End Sub

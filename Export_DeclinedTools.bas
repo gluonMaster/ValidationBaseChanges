@@ -1,4 +1,4 @@
-Attribute VB_Name = "Export_DeclinedTools"
+﻿Attribute VB_Name = "Export_DeclinedTools"
 '==========================
 '   Declined Records Management Tools
 '   Provides Admin interface to review and fix declined records
@@ -232,15 +232,19 @@ Private Function LoadDeclinedRecords() As Collection
 End Function
 
 Private Function CountDeclinations(ByVal historyText As String) As Integer
-    ' Counts how many times "Decl_" appears in history string
-    ' Each "Decl_n:" indicates a declination by Superadmin
+    ' Counts how many decline entries appear in history string
+    ' Supports both formats:
+    '   - Legacy: "Decl_N:" pattern
+    '   - New: "DCL(N->" pattern
+    ' Each pattern occurrence indicates a declination by Superadmin
     
     Dim count As Integer
     count = 0
     
     Dim pos As Long
-    pos = 1
     
+    ' Count legacy format: Decl_
+    pos = 1
     Do
         pos = InStr(pos, historyText, "Decl_", vbTextCompare)
         If pos > 0 Then
@@ -249,24 +253,44 @@ Private Function CountDeclinations(ByVal historyText As String) As Integer
         End If
     Loop While pos > 0
     
+    ' Count new format: DCL(
+    pos = 1
+    Do
+        pos = InStr(pos, historyText, "DCL(", vbTextCompare)
+        If pos > 0 Then
+            count = count + 1
+            pos = pos + 4
+        End If
+    Loop While pos > 0
+    
     CountDeclinations = count
 End Function
 
 Private Function ExtractLastDeclComment(ByVal historyText As String) As String
-    ' Extracts the text from the last Decl_n: Was(); Is(...). block in history string
-    ' Returns only the Is(...) content from the highest Decl_n marker
-    ' If no Decl_ marker found, returns empty string
+    ' Extracts the text from the last decline entry in history string
+    ' Supports both formats:
+    '   - Legacy: Decl_N: Was(); Is(...).
+    '   - New: DCL(N->...)
+    ' Returns only the comment content from the highest-numbered decline entry
+    ' If no decline marker found, returns empty string
     
     If Len(Trim(historyText)) = 0 Then
         ExtractLastDeclComment = ""
         Exit Function
     End If
     
-    ' Use regex to find all Decl_N: blocks with their numbers
-    Dim regex As Object
-    Set regex = CreateObject("VBScript.RegExp")
+    Dim maxN As Long
+    maxN = -1
+    Dim maxContent As String
+    maxContent = ""
     
-    With regex
+    ' ========================================
+    ' Parse legacy format: Decl_N: Was(); Is(...).
+    ' ========================================
+    Dim regexLegacy As Object
+    Set regexLegacy = CreateObject("VBScript.RegExp")
+    
+    With regexLegacy
         .Global = True
         .IgnoreCase = True
         ' Pattern: Decl_(\d+):\s*Was\([^)]*\);\s*Is\(([^)]*)\)
@@ -274,29 +298,43 @@ Private Function ExtractLastDeclComment(ByVal historyText As String) As String
         .Pattern = "Decl_(\d+):\s*Was\([^)]*\);\s*Is\(([^)]*)\)"
     End With
     
-    Dim matches As Object
-    Set matches = regex.Execute(historyText)
-    
-    If matches.count = 0 Then
-        ' No Decl_ markers found, return empty
-        ExtractLastDeclComment = ""
-        Exit Function
-    End If
-    
-    ' Find the match with the highest N
-    Dim maxN As Long
-    maxN = -1
-    Dim maxContent As String
-    maxContent = ""
+    Dim matchesLegacy As Object
+    Set matchesLegacy = regexLegacy.Execute(historyText)
     
     Dim match As Object
-    For Each match In matches
+    For Each match In matchesLegacy
         Dim currentN As Long
-        currentN = CLng(match.submatches(0))  ' First capture group = N
+        currentN = CLng(match.SubMatches(0))
         
         If currentN > maxN Then
             maxN = currentN
-            maxContent = match.submatches(1)  ' Second capture group = Is(...) content
+            maxContent = match.SubMatches(1)
+        End If
+    Next match
+    
+    ' ========================================
+    ' Parse new format: DCL(N->comment)
+    ' ========================================
+    Dim regexNew As Object
+    Set regexNew = CreateObject("VBScript.RegExp")
+    
+    With regexNew
+        .Global = True
+        .IgnoreCase = True
+        ' Pattern: DCL\((\d+)->([^)]+)\)
+        ' Captures: group 1 = N, group 2 = comment after ->
+        .Pattern = "DCL\((\d+)->([^)]+)\)"
+    End With
+    
+    Dim matchesNew As Object
+    Set matchesNew = regexNew.Execute(historyText)
+    
+    For Each match In matchesNew
+        currentN = CLng(match.SubMatches(0))
+        
+        If currentN > maxN Then
+            maxN = currentN
+            maxContent = match.SubMatches(1)
         End If
     Next match
     
@@ -981,50 +1019,75 @@ ErrorHandler:
 End Sub
 
 Private Function GetLastDeclineCommentFromHistory(ByVal historyText As String) As String
-    ' Extracts the text from the last Decl_n: block in history string
-    ' Returns the content from Is(...) of the highest-numbered Decl_n marker
-    ' Returns empty string if no Decl_ marker found
+    ' Extracts the text from the last decline entry in history string
+    ' Supports both formats:
+    '   - Legacy: Decl_N: Was(); Is(...).
+    '   - New: DCL(N->comment)||
+    ' Returns the content from the highest-numbered decline entry
+    ' Returns empty string if no decline marker found
     
     If Len(Trim(historyText)) = 0 Then
         GetLastDeclineCommentFromHistory = ""
         Exit Function
     End If
     
-    ' Use regex to find all Decl_N: blocks with their numbers
-    Dim regex As Object
-    Set regex = CreateObject("VBScript.RegExp")
-    
-    With regex
-        .Global = True
-        .IgnoreCase = True
-        ' Pattern: Decl_(\d+):\s*Was\([^)]*\);\s*Is\(([^)]+(?:\([^)]*\))?[^)]*)\)\.
-        ' This captures the Is(...) content, including nested parentheses for dates
-        .Pattern = "Decl_(\d+):\s*Was\([^)]*\);\s*Is\(((?:[^()]|\([^)]*\))+)\)\."
-    End With
-    
-    Dim matches As Object
-    Set matches = regex.Execute(historyText)
-    
-    If matches.Count = 0 Then
-        ' No Decl_ markers found, return empty
-        GetLastDeclineCommentFromHistory = ""
-        Exit Function
-    End If
-    
-    ' Find the match with the highest N
     Dim maxN As Long
     maxN = -1
     Dim maxContent As String
     maxContent = ""
+    Dim currentN As Long
+    
+    ' ========================================
+    ' Parse legacy format: Decl_N: Was(); Is(...).
+    ' ========================================
+    Dim regexLegacy As Object
+    Set regexLegacy = CreateObject("VBScript.RegExp")
+    
+    With regexLegacy
+        .Global = True
+        .IgnoreCase = True
+        ' VBScript.RegExp does NOT support (?:...) non-capturing groups
+        ' Use simpler pattern: capture everything up to the closing ).
+        ' Pattern: Decl_N: Was(...); Is(content).
+        .Pattern = "Decl_(\d+):\s*Was\([^)]*\);\s*Is\(([^)]+(\([^)]*\)[^)]*)*)\)\."
+    End With
+    
+    Dim matchesLegacy As Object
+    Set matchesLegacy = regexLegacy.Execute(historyText)
     
     Dim match As Object
-    For Each match In matches
-        Dim currentN As Long
-        currentN = CLng(match.SubMatches(0))  ' First capture group = N
+    For Each match In matchesLegacy
+        currentN = CLng(match.SubMatches(0))
         
         If currentN > maxN Then
             maxN = currentN
-            maxContent = match.SubMatches(1)  ' Second capture group = Is(...) content
+            maxContent = match.SubMatches(1)
+        End If
+    Next match
+    
+    ' ========================================
+    ' Parse new format: DCL(N->comment)
+    ' ========================================
+    Dim regexNew As Object
+    Set regexNew = CreateObject("VBScript.RegExp")
+    
+    With regexNew
+        .Global = True
+        .IgnoreCase = True
+        ' Pattern: DCL\((\d+)->([^)]+)\)
+        ' Captures: group 1 = N, group 2 = comment after ->
+        .Pattern = "DCL\((\d+)->([^)]+)\)"
+    End With
+    
+    Dim matchesNew As Object
+    Set matchesNew = regexNew.Execute(historyText)
+    
+    For Each match In matchesNew
+        currentN = CLng(match.SubMatches(0))
+        
+        If currentN > maxN Then
+            maxN = currentN
+            maxContent = match.SubMatches(1)
         End If
     Next match
     

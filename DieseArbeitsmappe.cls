@@ -113,7 +113,7 @@ End Sub
 '  Code Section: Import from Access to Excel
 '===========================================
 
-Sub ImportKarteiAndFormat_Optimized()
+Public Sub ImportKarteiAndFormat_Optimized()
     Dim db As DAO.Database
     Dim rs As DAO.Recordset
 
@@ -284,7 +284,7 @@ Sub ImportKarteiAndFormat_Optimized()
 End Sub
 
 
-Sub RebuildKarteiOriginalSheet(ByVal wsKartei As Worksheet)
+Public Sub RebuildKarteiOriginalSheet(ByVal wsKartei As Worksheet)
     ' Deletes the Kartei_Original sheet if it exists,
     ' copies wsKartei, and renames the new sheet to Kartei_Original.
 

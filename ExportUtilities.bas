@@ -225,7 +225,7 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                 Dim hasPastMonthChanges As Boolean
                 hasPastMonthChanges = False
                 
-                ' Check if there are changes in past months (requiring "Ruck:" prefix)
+                ' Check if there are changes in past months (requiring "RUCK:" prefix)
                 If Not IsOperatorAllowedToChange(dataYear) And forbiddenStartCol <= forbiddenEndCol Then
                     Dim i As Integer
                     Dim mo As Integer
@@ -236,37 +236,43 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                     Dim allChangedArr() As Integer
                     ReDim allChangedArr(1 To 12)
                     
-                    ' First, detect ALL changed months (columns 21-32)
-                    For i = 21 To 32
-                        mo = i - 20
-                        If Not SafeCompare(sh.Cells(r, i), shOriginal.Cells(r, i)) Then
-                            allChangedArr(mo) = 1
-                        End If
+                    ' Use Export_HistoryBuilder to detect past month changes
+                    Dim pastMonthsArr() As Integer
+                    hasPastMonthChanges = Export_HistoryBuilder.HasPastMonthChanges( _
+                        sh, shOriginal, r, forbiddenStartCol, forbiddenEndCol, pastMonthsArr)
+                    
+                    ' Also get all changed months for Notitzen display
+                    Dim hasAnyMonthChanges As Boolean
+                    hasAnyMonthChanges = Export_HistoryBuilder.GetAllChangedMonths(sh, shOriginal, r, allChangedArr)
+                    
+                    ' Copy past months to changesArr for tracking
+                    For i = 1 To 12
+                        changesArr(i) = pastMonthsArr(i)
                     Next i
                     
-                    ' Then, check if any of the past months changed
-                    For i = forbiddenStartCol To forbiddenEndCol
-                        mo = i - 20
-                        If Not SafeCompare(sh.Cells(r, i), shOriginal.Cells(r, i)) Then
-                            hasPastMonthChanges = True
-                            changesArr(mo) = 1
-                            dataChanged = True
-                        End If
-                    Next i
-                    
-                    ' If past months changed, add "Ruck:" prefix with ALL changed months
                     If hasPastMonthChanges Then
-                        sh.Cells(r, 52).value = sh.Cells(r, 52).value & "Ruck: "
+                        dataChanged = True
                         
-                        ' Include ALL changed months (past and current/future) in the Ruck: block
-                        For i = 21 To 32
-                            mo = i - 20
-                            If allChangedArr(mo) = 1 Then
-                                sh.Cells(r, 52).value = sh.Cells(r, 52).value & "Mnt." & CStr(mo) & ": War(" & _
-                                                        CStr(shOriginal.Cells(r, i).value) & "); Ist(" & _
-                                                        CStr(sh.Cells(r, i).value) & "). "
-                            End If
-                        Next i
+                        ' Build RUCK history entry using new format
+                        Dim ruckEntry As String
+                        Dim ruckHasChanges As Boolean
+                        Dim ruckMonthsArr() As Integer
+                        
+                        ruckEntry = Export_HistoryBuilder.BuildHistoryEntry( _
+                            sh, shOriginal, r, True, "", ruckHasChanges, ruckMonthsArr)
+                        
+                        ' Store original history length for potential rollback
+                        Dim originalHistoryLen As Long
+                        originalHistoryLen = Len(sh.Cells(r, 52).value)
+                        
+                        ' Temporarily append entry (without comment yet)
+                        Dim tempEntry As String
+                        tempEntry = ruckEntry
+                        
+                        ' Remove trailing separator and empty comment for now
+                        If Right(tempEntry, Len(Export_HistoryBuilder.HD_SESSION)) = Export_HistoryBuilder.HD_SESSION Then
+                            tempEntry = Left(tempEntry, Len(tempEntry) - Len(Export_HistoryBuilder.HD_SESSION))
+                        End If
                         
                         Call CreateOrClearNotitzenSheet
                         ' Show all changed months in Notitzen window
@@ -274,20 +280,6 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                         
                         ' Check if user canceled the input
                         If Notitzen.UserCanceled Then
-                            ' User canceled, remove "Ruck: " prefix and month entries added above
-                            ' Restore AZ to its state before Ruck block
-                            Dim ruckStart As String
-                            ruckStart = "Ruck: "
-                            If InStr(sh.Cells(r, 52).value, ruckStart) > 0 Then
-                                ' Find position where "Ruck: " was added
-                                Dim ruckPos As Long
-                                ruckPos = InStrRev(sh.Cells(r, 52).value, ruckStart)
-                                If ruckPos > 0 Then
-                                    ' Remove everything from "Ruck: " to end
-                                    sh.Cells(r, 52).value = Left(sh.Cells(r, 52).value, ruckPos - 1)
-                                End If
-                            End If
-                            
                             ' User canceled, exit the function without updating
                             Application.Calculation = xlCalculationAutomatic
                             Application.ScreenUpdating = True
@@ -295,27 +287,39 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                             Exit Function
                         End If
                         
+                        ' Get user comment and finalize history entry
                         Dim Notitz As String
                         Notitz = ThisWorkbook.Worksheets("Notitzen").Cells(5, 17).value
-                        sh.Cells(r, 52).value = sh.Cells(r, 52).value & "/" & Notitz & "/ " & CStr(Date) & " || "
-                    End If
-                    
-                    ' Clean up empty "Ruck: " if no changes were actually added
-                    If Right(sh.Cells(r, 52).value, Len("Ruck: ")) = "Ruck: " Then
-                        sh.Cells(r, 52).value = Left(sh.Cells(r, 52).value, Len(sh.Cells(r, 52).value) - Len("Ruck: "))
+                        
+                        ' Replace empty comment placeholder with actual comment
+                        Dim emptyComment As String
+                        emptyComment = Export_HistoryBuilder.HD_COMMENT_START & Export_HistoryBuilder.HD_COMMENT_END
+                        
+                        If InStr(ruckEntry, emptyComment) > 0 Then
+                            ruckEntry = Replace(ruckEntry, emptyComment, _
+                                Export_HistoryBuilder.HD_COMMENT_START & Notitz & Export_HistoryBuilder.HD_COMMENT_END)
+                        End If
+                        
+                        ' Append finalized entry to history
+                        sh.Cells(r, 52).value = Export_HistoryBuilder.AppendHistoryEntry( _
+                            CStr(sh.Cells(r, 52).value), ruckEntry)
                     End If
                 End If
                 
-                ' Process all other changes (future months, F/J/O fields)
-                ' If Ruck block was processed (dataChanged=True), call without Notitzen
-                ' If no Ruck block, call with Notitzen as usual
+                ' Process all other changes (non-month fields if Ruck was processed, or all fields otherwise)
+                ' CRITICAL FIX: If Ruck block was processed (dataChanged=True), DON'T call UpdateHistoryString
+                ' because ruckEntry already contains ALL changes (months + other fields)
+                ' Only call UpdateHistoryString if no Ruck block was processed
                 Dim historyResult As String
                 If dataChanged Then
-                    ' Already handled Notitzen in Ruck block, just append F/J/O without new comment
-                    historyResult = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, dataChanged, requestNotitzen:=False)
+                    ' Ruck block already processed ALL fields including non-month ones
+                    ' History is already complete in sh.Cells(r, 52).value
+                    ' Just return the current value to signal success
+                    historyResult = sh.Cells(r, 52).Value
                 Else
-                    ' No Ruck block, normal flow with Notitzen
-                    historyResult = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, dataChanged, requestNotitzen:=True)
+                    ' No Ruck block, normal flow with Notitzen for all changes
+                    historyResult = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, dataChanged, _
+                                                        requestNotitzen:=True, isRuckBlock:=False)
                 End If
                 
                 ' Check if user canceled (empty string returned)
@@ -333,7 +337,8 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
             Else
                 ' Operator: process standard history updates
                 Dim historyResultOp As String
-                historyResultOp = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, False, requestNotitzen:=True)
+                historyResultOp = UpdateHistoryString(sh, shOriginal, r, strID, maxIDOriginal, False, _
+                                                      requestNotitzen:=True, isRuckBlock:=False)
                 
                 ' Check if user canceled
                 If historyResultOp = "" Then
@@ -453,9 +458,11 @@ End Sub
 Function UpdateHistoryString(sh As Worksheet, shOriginal As Worksheet, row As Long, _
                                     strID As String, maxIDOriginal As Long, _
                                     ByRef dataChanged As Boolean, _
-                                    Optional ByVal requestNotitzen As Boolean = True) As String
-    Dim i As Integer
-    Dim monat As Integer
+                                    Optional ByVal requestNotitzen As Boolean = True, _
+                                    Optional ByVal isRuckBlock As Boolean = False) As String
+    ' Updated function using Export_HistoryBuilder for extended field tracking
+    ' Tracks changes in: A, B, D, E, F, G, H, I, J, M, O, R, U-AF, AK, AL, AM
+    
     Dim updateString As String
     Dim changesArr() As Integer
     ReDim changesArr(1 To 12)
@@ -467,49 +474,30 @@ Function UpdateHistoryString(sh As Worksheet, shOriginal As Worksheet, row As Lo
     updateString = sh.Cells(row, 52).Value
     
     ' Check if this is an existing record (not new)
-    If CInt(strID) <= maxIDOriginal Then
+    If CLng(strID) <= maxIDOriginal Then
         
-        ' Check changes in months U-AF (columns 21-32)
-        ' Only process if dataChanged=False (to avoid duplication after Ruck block)
+        ' Use Export_HistoryBuilder to build history entry for all tracked fields
+        Dim historyEntry As String
+        Dim hasChanges As Boolean
+        hasChanges = False
+        
+        ' Build history entry using new format (skip if already processed in Ruck block)
         If Not dataChanged Then
-            For i = 21 To 32
-                monat = i - 20
-                If Not SafeCompare(sh.Cells(row, i), shOriginal.Cells(row, i)) Then
-                    updateString = updateString & "Mnt." & CStr(monat) & ": War(" & _
-                                   CStr(shOriginal.Cells(row, i).Value) & "); Ist(" & _
-                                   CStr(sh.Cells(row, i).Value) & "). "
-                    changesArr(monat) = 1
-                    localChanges = True
-                    dataChanged = True
-                End If
-            Next i
-        End If
-        
-        ' Check changes in Address (F, column 6) - always check, independent of dataChanged
-        If Not SafeCompare(sh.Cells(row, 6), shOriginal.Cells(row, 6)) Then
-            updateString = updateString & "Address: Was(" & _
-                           PreserveHyphens(CStr(shOriginal.Cells(row, 6).Value)) & "); Is(" & _
-                           PreserveHyphens(CStr(sh.Cells(row, 6).Value)) & "). "
-            localChanges = True
-            dataChanged = True
-        End If
-        
-        ' Check changes in Subject1 (J, column 10) - always check
-        If Not SafeCompare(sh.Cells(row, 10), shOriginal.Cells(row, 10)) Then
-            updateString = updateString & "Subject1: Was(" & _
-                           PreserveHyphens(CStr(shOriginal.Cells(row, 10).Value)) & "); Is(" & _
-                           PreserveHyphens(CStr(sh.Cells(row, 10).Value)) & "). "
-            localChanges = True
-            dataChanged = True
-        End If
-        
-        ' Check changes in Subject2 (O, column 15) - always check
-        If Not SafeCompare(sh.Cells(row, 15), shOriginal.Cells(row, 15)) Then
-            updateString = updateString & "Subject2: Was(" & _
-                           PreserveHyphens(CStr(shOriginal.Cells(row, 15).Value)) & "); Is(" & _
-                           PreserveHyphens(CStr(sh.Cells(row, 15).Value)) & "). "
-            localChanges = True
-            dataChanged = True
+            historyEntry = Export_HistoryBuilder.BuildHistoryEntry( _
+                sh, shOriginal, row, isRuckBlock, "", hasChanges, changesArr)
+            
+            If hasChanges Then
+                localChanges = True
+                dataChanged = True
+            End If
+        Else
+            ' Ruck block already processed months, but we still need to check other fields
+            ' Build entry without months (they were already added in Ruck block)
+            historyEntry = BuildNonMonthHistoryEntry(sh, shOriginal, row, hasChanges)
+            
+            If hasChanges Then
+                localChanges = True
+            End If
         End If
         
         ' Request comment via Notitzen only if requestNotitzen=True and localChanges exist
@@ -526,12 +514,140 @@ Function UpdateHistoryString(sh As Worksheet, shOriginal As Worksheet, row As Lo
             
             Dim Notitz As String
             Notitz = ThisWorkbook.Worksheets("Notitzen").Cells(5, 17).Value
-            updateString = updateString & "/" & Notitz & "/ " & CStr(Date) & " || "
+            
+            ' Append history entry with comment
+            If Len(historyEntry) > 0 Then
+                ' Remove trailing session separator if present (we'll add it with comment)
+                If Right(historyEntry, Len(Export_HistoryBuilder.HD_SESSION)) = Export_HistoryBuilder.HD_SESSION Then
+                    historyEntry = Left(historyEntry, Len(historyEntry) - Len(Export_HistoryBuilder.HD_SESSION))
+                End If
+                
+                ' Find and replace empty comment placeholder with actual comment
+                Dim emptyComment As String
+                emptyComment = Export_HistoryBuilder.HD_COMMENT_START & Export_HistoryBuilder.HD_COMMENT_END
+                
+                If InStr(historyEntry, emptyComment) > 0 Then
+                    historyEntry = Replace(historyEntry, emptyComment, _
+                        Export_HistoryBuilder.HD_COMMENT_START & Notitz & Export_HistoryBuilder.HD_COMMENT_END)
+                End If
+                
+                updateString = updateString & historyEntry & Export_HistoryBuilder.HD_SESSION
+            Else
+                ' No structured entry, just add comment in old format for compatibility
+                updateString = updateString & Export_HistoryBuilder.HD_COMMENT_START & Notitz & _
+                               Export_HistoryBuilder.HD_COMMENT_END & Format(Date, "dd.mm.yyyy") & _
+                               Export_HistoryBuilder.HD_SESSION
+            End If
+        ElseIf localChanges And Not requestNotitzen Then
+            ' Changes exist but no comment requested (already handled in Ruck block)
+            If Len(historyEntry) > 0 Then
+                updateString = updateString & historyEntry
+            End If
         End If
     End If
     
     ' Return updated history string or empty string on cancellation
     UpdateHistoryString = updateString
+End Function
+
+Private Function BuildNonMonthHistoryEntry(ByVal sh As Worksheet, _
+                                           ByVal shOriginal As Worksheet, _
+                                           ByVal row As Long, _
+                                           ByRef hasChanges As Boolean) As String
+    ' Builds history entry for non-month fields only (when months were already processed in Ruck block)
+    ' Checks: A, B, D, E, F, G, H, I, J, M, O, R, AK, AL, AM
+    
+    Dim entryParts As Collection
+    Set entryParts = New Collection
+    
+    hasChanges = False
+    
+    ' Column mappings for non-month fields
+    Dim fieldCols As Variant
+    Dim fieldTags As Variant
+    
+    fieldCols = Array(1, 2, 4, 5, 6, 7, 8, 9, 10, 13, 15, 18, 37, 38, 39)
+    fieldTags = Array(Export_HistoryBuilder.HT_FAMILY_ID, Export_HistoryBuilder.HT_PARENT, _
+                      Export_HistoryBuilder.HT_CHILD, Export_HistoryBuilder.HT_BIRTHDATE, _
+                      Export_HistoryBuilder.HT_ADDRESS, Export_HistoryBuilder.HT_PHONE, _
+                      Export_HistoryBuilder.HT_MOBILE, Export_HistoryBuilder.HT_EMAIL, _
+                      Export_HistoryBuilder.HT_SUBJECT1, Export_HistoryBuilder.HT_PRICE1, _
+                      Export_HistoryBuilder.HT_SUBJECT2, Export_HistoryBuilder.HT_PRICE2, _
+                      Export_HistoryBuilder.HT_EXTRA1, Export_HistoryBuilder.HT_EXTRA2, _
+                      Export_HistoryBuilder.HT_EXTRA3)
+    
+    Dim idx As Long
+    For idx = LBound(fieldCols) To UBound(fieldCols)
+        Dim col As Integer
+        col = CInt(fieldCols(idx))
+        
+        If Not SafeCompare(sh.Cells(row, col), shOriginal.Cells(row, col)) Then
+            Dim oldVal As String
+            Dim newVal As String
+            
+            oldVal = SanitizeForHistory(CStr(GetCellValueOrEmpty(shOriginal.Cells(row, col))))
+            newVal = SanitizeForHistory(CStr(GetCellValueOrEmpty(sh.Cells(row, col))))
+            
+            Dim fieldEntry As String
+            fieldEntry = CStr(fieldTags(idx)) & "(" & oldVal & Export_HistoryBuilder.HD_VALUE & newVal & ")"
+            
+            entryParts.Add fieldEntry
+            hasChanges = True
+        End If
+    Next idx
+    
+    ' Build result string
+    If entryParts.Count = 0 Then
+        BuildNonMonthHistoryEntry = ""
+        Exit Function
+    End If
+    
+    Dim result As String
+    result = ""
+    
+    Dim i As Long
+    For i = 1 To entryParts.Count
+        If i > 1 Then
+            result = result & Export_HistoryBuilder.HD_FIELD
+        End If
+        result = result & entryParts(i)
+    Next i
+    
+    ' Add empty comment placeholder and date
+    result = result & Export_HistoryBuilder.HD_COMMENT_START & Export_HistoryBuilder.HD_COMMENT_END & _
+             Format(Date, "dd.mm.yyyy") & Export_HistoryBuilder.HD_SESSION
+    
+    BuildNonMonthHistoryEntry = result
+End Function
+
+Private Function SanitizeForHistory(ByVal value As String) As String
+    ' Sanitizes a value for inclusion in history string
+    Dim result As String
+    result = value
+    
+    result = Replace(result, Export_HistoryBuilder.HD_VALUE, "~>")
+    result = Replace(result, Export_HistoryBuilder.HD_FIELD, ",")
+    result = Replace(result, Export_HistoryBuilder.HD_SESSION, "|")
+    result = Replace(result, "(", "[")
+    result = Replace(result, ")", "]")
+    result = Replace(result, vbCrLf, " ")
+    result = Replace(result, vbCr, " ")
+    result = Replace(result, vbLf, " ")
+    
+    SanitizeForHistory = Trim(result)
+End Function
+
+Private Function GetCellValueOrEmpty(ByVal cell As Range) As Variant
+    ' Gets cell value safely, converting errors and nulls to empty string
+    On Error Resume Next
+    If IsError(cell.Value) Then
+        GetCellValueOrEmpty = ""
+    ElseIf IsNull(cell.Value) Or IsEmpty(cell.Value) Then
+        GetCellValueOrEmpty = ""
+    Else
+        GetCellValueOrEmpty = cell.Value
+    End If
+    On Error GoTo 0
 End Function
 
 Private Function PreserveHyphens(ByVal text As String) As String

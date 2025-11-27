@@ -20,12 +20,15 @@ This VBA project manages a validation workflow for pending changes between Admin
 - `Notitzen.bas` - Mandatory comment mechanism for changes
 - `ImportData.bas` - Import data from Access to Kartei sheet
 
-**Risk Classification Modules:**
+**History & Risk Classification Modules:**
 
+- `Export_HistoryBuilder.bas` - ✅ Extended history string builder with structured format
+- `Export_HistoryConverter.bas` - ✅ Converts legacy history strings to new format (batch conversion for Kartei and Access tables)
 - `Export_RiskClassification.bas` - ✅ Classifies changes as risky (Scenario A/B)
 - `Export_OverlayPending.bas` - ✅ Overlays pre*/decl* records onto Kartei with color coding
 - `Export_DeclinedTools.bas` - ✅ Tools for Admin to view/edit declined records (improved UX: positioned after Kartei, consistent headers/widths, last Decl_n comment only, AutoFilter, auto-cleanup)
 - `Export_DeclinedHelpers.bas` - ✅ Helper functions for declined records management (comparison, copying, table creation)
+- `Export_ManualImport.bas` - ✅ Manual database import (refresh Kartei from Access without reopening file)
 
 **Utility Modules:**
 
@@ -50,6 +53,7 @@ This VBA project manages a validation workflow for pending changes between Admin
 - `valid_ApproveFlow.bas` - ✅ Approve/Decline workflow and sync decisions (supports Mode A/B)
 - `valid_ParseHistory.bas` - ✅ Tested history parser (from alt/Parceing.bas, DO NOT MODIFY REGEX)
 - `valid_FormatMonths.bas` - ✅ Format monthly columns U-AF (21-32) to numeric with proper decimal separators
+- `valid_TransposeForm.bas` - ✅ Transposed view for single record review (creates temp sheet geschichteForm)
 - `Geschichte.bas` - ✅ Individual record history display (uses valid_ParseHistory)
 - `grossGeschichte.bas` - ✅ Comprehensive history report generation (Mode A: all events, Mode B: last change per ID)
 
@@ -94,17 +98,87 @@ decl_tblKartei    → Declined changes (rejected by Superadmin)
 
 ### 5. History Format (Column AZ)
 
+**New Structured Format (Export_HistoryBuilder):**
+
+```
+[RUCK:]<TAG>(<OLD>-><NEW>);<TAG>(<OLD>-><NEW>);.../@<COMMENT>@/<DATE>||
+```
+
+**Field Tags:**
+
+| Tag          | Column       | Description                          |
+| ------------ | ------------ | ------------------------------------ |
+| `FID`        | A (1)        | Family ID                            |
+| `PAR`        | B (2)        | Parent Name                          |
+| `CHD`        | D (4)        | Child Name                           |
+| `DOB`        | E (5)        | Date of Birth                        |
+| `ADR`        | F (6)        | Address                              |
+| `TEL`        | G (7)        | Phone                                |
+| `MOB`        | H (8)        | Mobile                               |
+| `EML`        | I (9)        | Email                                |
+| `SB1`        | J (10)       | Subject (Months 1-6)                 |
+| `PR1`        | M (13)       | Price (Months 1-6)                   |
+| `SB2`        | O (15)       | Subject (Months 7-12)                |
+| `PR2`        | R (18)       | Price (Months 7-12)                  |
+| `M01`..`M12` | U-AF (21-32) | Monthly Charges                      |
+| `EX1`        | AK (37)      | Extra Subject 1                      |
+| `EX2`        | AL (38)      | Extra Subject 2                      |
+| `EX3`        | AM (39)      | Extra Subject 3                      |
+| `DCL`        | -            | Decline Entry (Superadmin rejection) |
+
+**Delimiters:**
+
+- `||` → Session separator (between change events)
+- `;` → Field separator (within one session)
+- `->` → Value separator (old value → new value)
+- `/@` ... `@/` → Comment delimiters
+- `RUCK:` → Prefix for retroactive (past month) changes
+
+**Example:**
+
+```
+RUCK:M01(100.00->120.00);M02(80.00->90.00);ADR(Hauptstr. 1->Nebenstr. 2)/@Korrektur@/25.11.2025||FID(123->124);CHD(Hans->Franz)/@Fix@/20.11.2025||DCL(1->Record rejected [reason])||
+```
+
+**Backward Compatibility:**
+
+Old format records (before migration) remain as-is. Parsers detect format by presence of `->`.
+
+**Old Format (for reference):**
+
 ```
 [Ruck: ]Mnt.N: War(X); Ist(Y). [FieldName: Was(X); Is(Y). ]/Comment/ dd.mm.yyyy ||
 ```
 
-**Supported fields:**
+**History Conversion (Export_HistoryConverter):**
 
-- `Mnt.1-12` → Monthly charges (columns U-AF)
-- `Address` → Column F
-- `Subject1` → Column J
-- `Subject2` → Column O
-- `Decl_N` → Decline comments from Superadmin
+To convert existing legacy history strings to new format:
+
+```vba
+' Convert all histories in Kartei sheet
+Call Export_HistoryConverter.ConvertAllHistoriesInKartei
+
+' Convert histories in specific Access table
+Call Export_HistoryConverter.ConvertHistoriesInAccessTable("tblKartei")
+
+' Convert all (Kartei + all Access tables)
+Call Export_HistoryConverter.ConvertAllHistoriesEverywhere
+
+' Preview conversion without modifying data
+Debug.Print Export_HistoryConverter.PreviewConversion("Mnt.8: War(12); Ist(24,6). /Comment/ 11.06.2025 ||")
+```
+
+Conversion mapping:
+
+| Old Format                     | New Format                  |
+| ------------------------------ | --------------------------- |
+| `Mnt.8: War(12); Ist(24,6).`   | `M08(12->24,6)`             |
+| `Address: Was(old); Is(new).`  | `ADR(old->new)`             |
+| `Subject1: Was(old); Is(new).` | `SB1(old->new)`             |
+| `Subject2: Was(old); Is(new).` | `SB2(old->new)`             |
+| `Ruck: Mnt.9: War(X); Ist(Y).` | `RUCK:M09(X->Y)`            |
+| `Decl_1: Was(); Is(comment).`  | `DCL(1->comment)`           |
+| `/Comment/ 11.06.2025 \|\|`    | `/@Comment@/11.06.2025\|\|` |
 
 ---
 
@@ -126,12 +200,39 @@ decl_tblKartei    → Declined changes (rejected by Superadmin)
    - **Mode A:** Show all history events in date range
    - **Mode B:** Show only last change per ID in date range
 4. Reviews changes in GrossGeschichte sheet
-5. Marks each record in column X:
+5. **Option A - Direct marking:** Marks each record in column AC (Decision):
    - `Approved` → Move to tblKartei
-   - `Declined` → Move to decl_tblKartei (with comment in column Y)
-6. Runs `SyncDecisions` → Processes all decisions
+   - `Declined` → Move to decl_tblKartei (with comment in column AD)
+6. **Option B - Transpose form:** Runs `ShowTransposeForm` for detailed single-record view:
+   - Creates temporary sheet `geschichteForm` with vertical layout
+   - Select Decision, optionally add Decline Comment
+   - Click "Apply & Close" to save decision and return to GrossGeschichte
+7. Runs `SyncDecisions` → Processes all decisions
    - In Mode A: If multiple blocks exist for same ID, only the decision from the last event is applied
    - In Mode B: Only one block per ID exists by design
+
+### GrossGeschichte Column Structure (A-AE)
+
+| Column | Field           | Format                    |
+| ------ | --------------- | ------------------------- |
+| A      | FamilyID        | Text                      |
+| B      | Parent          | Text                      |
+| C      | Child           | Text                      |
+| D      | Birthdate       | Text (dd.mm.yyyy)         |
+| E      | Address         | Text                      |
+| F      | Phone           | Text                      |
+| G      | Mobile          | Text                      |
+| H      | Email           | Text                      |
+| I      | Subject1        | Text                      |
+| J      | Price1          | Text                      |
+| K      | Subject2        | Text                      |
+| L      | Price2          | Text                      |
+| M-X    | Months 1-12     | Numeric (0.00)            |
+| Y-AA   | Extra 1-3       | Text                      |
+| AB     | Comments        | Text                      |
+| AC     | Decision        | Approved/Declined         |
+| AD     | Decline Comment | Text                      |
+| AE     | RecordID        | Hidden (for internal use) |
 
 ---
 

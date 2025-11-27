@@ -164,8 +164,14 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
     Dim effectiveRiskyIDs As New Collection
     
     ' Process safe changes
+    Dim historyUpdate As String
+    Dim isNewRecord As Boolean
+    
     For Each changedID In safeIDs
         arrLocal = dictLocal(changedID)
+        
+        ' Determine if this is a new record (ID not in Kartei_Original)
+        isNewRecord = Not dictOriginal.Exists(changedID)
         
         ' Update AW,AX,AY => userRole, Date, Time
         arrLocal(1, 49) = userRole
@@ -173,20 +179,49 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
         arrLocal(1, 51) = Format(Time, "HH:MM")
         
         ' Overwrite local sheet row so AW,AX,AY are updated visually
-        Dim historyUpdate As String
         historyUpdate = UpdateLocalSheetRowByID(wsLocal, wsOriginal, CStr(changedID), arrLocal, maxIDOriginal)
         
-        ' Check if user canceled (empty string returned)
-        If historyUpdate <> "" Then
-            ' Update successful, save to dict and add to effective collection
-            arrLocal(1, 52) = historyUpdate
+        ' For NEW records: empty historyUpdate is normal (no changes to track yet)
+        ' For EXISTING records: need to distinguish between "no tracked field changes" and "user canceled Notitzen"
+        If isNewRecord Then
+            ' New record - always process, even with empty history
+            If historyUpdate <> "" Then
+                arrLocal(1, 52) = historyUpdate
+            End If
+            ' Keep existing history (or empty) for new records
             dictLocal(changedID) = arrLocal
             effectiveSafeIDs.Add changedID
+        Else
+            ' Existing record
+            ' Check if there are changes in tracked fields (those that go into history)
+            Dim arrOriginalForCheck As Variant
+            arrOriginalForCheck = dictOriginal(changedID)
+            Dim hasTracked As Boolean
+            hasTracked = HasTrackedFieldChanges(arrLocal, arrOriginalForCheck)
+            
+            If hasTracked Then
+                ' Has changes in history fields - empty historyUpdate means user canceled Notitzen
+                If historyUpdate <> "" Then
+                    arrLocal(1, 52) = historyUpdate
+                    dictLocal(changedID) = arrLocal
+                    effectiveSafeIDs.Add changedID
+                End If
+                ' If historyUpdate = "", user canceled - skip this record
+            Else
+                ' Only NON-tracked fields changed (e.g., SEPA marker in AU)
+                ' No history update needed, but change MUST be written to database
+                If historyUpdate <> "" Then
+                    arrLocal(1, 52) = historyUpdate
+                End If
+                dictLocal(changedID) = arrLocal
+                effectiveSafeIDs.Add changedID
+            End If
         End If
-        ' If canceled (empty string), skip this ID - don't update dict, don't sync to Access
     Next changedID
     
     ' Process risky changes (update history/Notitzen on sheet, but don't write to tblKartei)
+    ' NOTE: With TRACKED_FIELDS policy, risky changes always have tracked field changes,
+    '       so they should always require Notitzen. But we add the same check for consistency.
     For Each changedID In riskyIDs
         arrLocal = dictLocal(changedID)
         
@@ -198,14 +233,29 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
         ' Update local sheet row with history
         historyUpdate = UpdateLocalSheetRowByID(wsLocal, wsOriginal, CStr(changedID), arrLocal, maxIDOriginal)
         
-        ' Check if user canceled
-        If historyUpdate <> "" Then
-            ' Update successful, save to dict and add to effective collection
-            arrLocal(1, 52) = historyUpdate
+        ' Check if there are changes in tracked fields
+        Dim arrOrigRisky As Variant
+        arrOrigRisky = dictOriginal(changedID)
+        Dim hasTrackedRisky As Boolean
+        hasTrackedRisky = HasTrackedFieldChanges(arrLocal, arrOrigRisky)
+        
+        If hasTrackedRisky Then
+            ' Has tracked field changes - empty historyUpdate means user canceled Notitzen
+            If historyUpdate <> "" Then
+                arrLocal(1, 52) = historyUpdate
+                dictLocal(changedID) = arrLocal
+                effectiveRiskyIDs.Add changedID
+            End If
+            ' If canceled, skip this ID
+        Else
+            ' Only non-tracked fields changed - should not happen with TRACKED_FIELDS policy
+            ' but handle gracefully: write without requiring Notitzen
+            If historyUpdate <> "" Then
+                arrLocal(1, 52) = historyUpdate
+            End If
             dictLocal(changedID) = arrLocal
             effectiveRiskyIDs.Add changedID
         End If
-        ' If canceled, skip this ID
     Next changedID
     
     ' Write safe changes to Access tblKartei (only IDs that weren't canceled)
