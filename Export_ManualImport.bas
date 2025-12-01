@@ -22,20 +22,20 @@ Public Sub ManualImportFromDatabase()
     
     ' Step 1: Check for unsaved changes
     If HasUnsavedChanges(wsKartei) Then
-        MsgBox "There are unsaved changes on the Kartei sheet." & vbCrLf & vbCrLf & _
-               "Please save your changes first by clicking the 'zuBase' button " & _
-               "before importing data from the database.", _
-               vbExclamation, "Unsaved Changes Detected"
+        MsgBox "Es gibt ungespeicherte Aenderungen auf dem Kartei-Blatt." & vbCrLf & vbCrLf & _
+               "Bitte speichern Sie Ihre Aenderungen zuerst durch Klicken auf die 'zuBase'-Schaltflaeche, " & _
+               "bevor Sie Daten aus der Datenbank importieren.", _
+               vbExclamation, "Ungespeicherte Aenderungen erkannt"
         Exit Sub
     End If
     
     ' Step 2: Confirm import action
     Dim userResponse As VbMsgBoxResult
-    userResponse = MsgBox("This will reload all data from the Access database." & vbCrLf & vbCrLf & _
-                          "Any local display will be replaced with the current database state " & _
-                          "(including pending and declined records from Superadmin)." & vbCrLf & vbCrLf & _
-                          "Do you want to continue?", _
-                          vbQuestion + vbYesNo, "Confirm Database Import")
+    userResponse = MsgBox("Dies laedt alle Daten aus der Access-Datenbank neu." & vbCrLf & vbCrLf & _
+                          "Die lokale Anzeige wird durch den aktuellen Datenbankzustand ersetzt " & _
+                          "(einschliesslich ausstehender und abgelehnter Datensaetze vom Superadmin)." & vbCrLf & vbCrLf & _
+                          "Moechten Sie fortfahren?", _
+                          vbQuestion + vbYesNo, "Datenbankimport bestaetigen")
     
     If userResponse <> vbYes Then
         Exit Sub
@@ -44,9 +44,9 @@ Public Sub ManualImportFromDatabase()
     ' Step 3: Perform import
     Call PerformDatabaseImport(wsKartei)
     
-    MsgBox "Database import completed successfully." & vbCrLf & vbCrLf & _
-           "The Kartei sheet now reflects the current state of the database.", _
-           vbInformation, "Import Complete"
+    MsgBox "Datenbankimport erfolgreich abgeschlossen." & vbCrLf & vbCrLf & _
+           "Das Kartei-Blatt zeigt jetzt den aktuellen Stand der Datenbank.", _
+           vbInformation, "Import abgeschlossen"
     
     ' Navigate to Kartei sheet
     wsKartei.Activate
@@ -59,9 +59,9 @@ ErrorHandler:
     Application.ScreenUpdating = True
     Application.EnableEvents = True
     
-    MsgBox "An error occurred during database import:" & vbCrLf & vbCrLf & _
-           "Error " & Err.Number & ": " & Err.Description, _
-           vbCritical, "Import Error"
+    MsgBox "Beim Datenbankimport ist ein Fehler aufgetreten:" & vbCrLf & vbCrLf & _
+           "Fehler " & Err.Number & ": " & Err.Description, _
+           vbCritical, "Importfehler"
 End Sub
 
 ' ========================================

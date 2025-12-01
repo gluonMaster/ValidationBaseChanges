@@ -385,6 +385,11 @@ Public Sub CompareAndSyncKartei(Optional ByVal manualRun As Boolean = False)
     ' Rebuild Kartei_Original
     Call RebuildKarteiOriginal
     
+    ' Reset bulk comment mode after sync completes
+    If BulkComment.IsBulkCommentModeActive() Then
+        Call BulkComment.ResetBulkCommentMode
+    End If
+    
 '    ' Call the initialization for protection
 '    Call InitializeWorkbookPubl
 
@@ -625,6 +630,11 @@ Private Sub MoveDeclinedToPending(ByVal dictLocal As Scripting.Dictionary, _
                 For c = 1 To 52
                     arrRow(1, c) = wsLocal.Cells(karteiRow, c).value
                 Next c
+                
+                ' Phone (col 7) and Mobile (col 8): Use .Text to preserve leading zeros.
+                ' See comment in ExportUtilities.ReadSheetIntoDictionary_ID for explanation.
+                arrRow(1, 7) = CStr(wsLocal.Cells(karteiRow, 7).Text)
+                arrRow(1, 8) = CStr(wsLocal.Cells(karteiRow, 8).Text)
                 
                 ' Re-read fresh formats
                 ReDim arrFormats(1 To 1, 1 To 53)

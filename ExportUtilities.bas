@@ -31,6 +31,19 @@ Public Function ReadSheetIntoDictionary_ID(ByVal sh As Worksheet, _
         Dim rowData As Variant
         rowData = sh.Range(sh.Cells(i, 1), sh.Cells(i, endCol)).Value2  ' 1..51
         
+        ' Phone (col 7) and Mobile (col 8): Use .Text to preserve leading zeros.
+        ' Excel may store phone numbers as numeric values with custom format (e.g. "00000000000"),
+        ' displaying "0176..." but internally holding 176... as a number.
+        ' Using .Value2 would return the numeric value, losing leading zeros.
+        ' Using .Text returns the displayed string, preserving the format.
+        ' This ensures the database receives "0176..." instead of "176...".
+        If endCol >= 7 Then
+            rowData(1, 7) = CStr(sh.Cells(i, 7).Text)
+        End If
+        If endCol >= 8 Then
+            rowData(1, 8) = CStr(sh.Cells(i, 8).Text)
+        End If
+        
         ' col 48 => ID
         Dim vID As Variant
         vID = rowData(1, 48)
@@ -274,22 +287,31 @@ Public Function UpdateLocalSheetRowByID(ByVal sh As Worksheet, ByVal shOriginal 
                             tempEntry = Left(tempEntry, Len(tempEntry) - Len(Export_HistoryBuilder.HD_SESSION))
                         End If
                         
-                        Call CreateOrClearNotitzenSheet
-                        ' Show all changed months in Notitzen window
-                        Call FillNotitzenSheet(allChangedArr, r)
-                        
-                        ' Check if user canceled the input
-                        If Notitzen.UserCanceled Then
-                            ' User canceled, exit the function without updating
-                            Application.Calculation = xlCalculationAutomatic
-                            Application.ScreenUpdating = True
-                            UpdateLocalSheetRowByID = ""
-                            Exit Function
-                        End If
-                        
                         ' Get user comment and finalize history entry
                         Dim Notitz As String
-                        Notitz = ThisWorkbook.Worksheets("Notitzen").Cells(5, 17).value
+                        
+                        ' Check if bulk comment mode is active
+                        If BulkComment.IsBulkCommentModeActive() Then
+                            ' Use bulk comment instead of prompting user
+                            Notitz = BulkComment.GetBulkCommentText()
+                            BulkComment.IncrementBulkCommentCounter
+                        Else
+                            ' Normal flow: prompt user for comment via Notitzen
+                            Call CreateOrClearNotitzenSheet
+                            ' Show all changed months in Notitzen window
+                            Call FillNotitzenSheet(allChangedArr, r)
+                            
+                            ' Check if user canceled the input
+                            If Notitzen.UserCanceled Then
+                                ' User canceled, exit the function without updating
+                                Application.Calculation = xlCalculationAutomatic
+                                Application.ScreenUpdating = True
+                                UpdateLocalSheetRowByID = ""
+                                Exit Function
+                            End If
+                            
+                            Notitz = ThisWorkbook.Worksheets("Notitzen").Cells(5, 17).value
+                        End If
                         
                         ' Replace empty comment placeholder with actual comment
                         Dim emptyComment As String
@@ -502,18 +524,27 @@ Function UpdateHistoryString(sh As Worksheet, shOriginal As Worksheet, row As Lo
         
         ' Request comment via Notitzen only if requestNotitzen=True and localChanges exist
         If requestNotitzen And localChanges Then
-            Call CreateOrClearNotitzenSheet
-            Call FillNotitzenSheet(changesArr, row)
-            
-            ' Check if user canceled the input
-            If Notitzen.UserCanceled Then
-                ' User canceled, return empty string to indicate cancellation
-                UpdateHistoryString = ""
-                Exit Function
-            End If
-            
+            ' Check if bulk comment mode is active
             Dim Notitz As String
-            Notitz = ThisWorkbook.Worksheets("Notitzen").Cells(5, 17).Value
+            
+            If BulkComment.IsBulkCommentModeActive() Then
+                ' Use bulk comment instead of prompting user
+                Notitz = BulkComment.GetBulkCommentText()
+                BulkComment.IncrementBulkCommentCounter
+            Else
+                ' Normal flow: prompt user for comment via Notitzen
+                Call CreateOrClearNotitzenSheet
+                Call FillNotitzenSheet(changesArr, row)
+                
+                ' Check if user canceled the input
+                If Notitzen.UserCanceled Then
+                    ' User canceled, return empty string to indicate cancellation
+                    UpdateHistoryString = ""
+                    Exit Function
+                End If
+                
+                Notitz = ThisWorkbook.Worksheets("Notitzen").Cells(5, 17).Value
+            End If
             
             ' Append history entry with comment
             If Len(historyEntry) > 0 Then

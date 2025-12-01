@@ -25,7 +25,7 @@ Public Sub LoadPendingChangesFromPre()
     Set dictPending = ReadPreTableIntoDictionary()
     
     If dictPending.Count = 0 Then
-        MsgBox "No pending changes found in pre_tblKartei.", vbInformation, "Load Pending"
+        MsgBox "Keine ausstehenden Aenderungen in pre_tblKartei gefunden.", vbInformation, "Ausstehende laden"
         GoTo Cleanup
     End If
     
@@ -41,7 +41,7 @@ Public Sub LoadPendingChangesFromPre()
     ' Set up date range on GrossGeschichte sheet (B1=start date, C1=today)
     Call SetupGrossGeschichteDates
     
-    MsgBox "Successfully loaded " & dictPending.Count & " pending change(s) from pre_tblKartei.", vbInformation, "Load Pending"
+    MsgBox "Erfolgreich " & dictPending.Count & " ausstehende Aenderung(en) aus pre_tblKartei geladen.", vbInformation, "Ausstehende laden"
     
 Cleanup:
     Application.Calculation = xlCalculationAutomatic
@@ -51,7 +51,7 @@ Cleanup:
 ErrorHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "Error loading pending changes: " & Err.Description, vbCritical, "Load Error"
+    MsgBox "Fehler beim Laden der ausstehenden Aenderungen: " & Err.Description, vbCritical, "Ladefehler"
 End Sub
 
 ' Read all records from pre_tblKartei into dictionary (key = ID)
@@ -140,7 +140,18 @@ Private Sub WritePendingToKartei(ByVal ws As Worksheet, ByVal dictPending As Obj
         ' Write columns A-AY (1-51)
         Dim c As Long
         For c = 1 To 51
-            ws.Cells(currentRow, c).Value = arrRow(1, c)
+            ' Columns G (7) = Phone, H (8) = Mobile: must be written as TEXT to preserve
+            ' leading zeros (e.g. "0176..." should not become 176...).
+            ' Without text format, Excel interprets numeric-looking strings as numbers,
+            ' which causes false differences in GrossGeschichte War/Ist comparison.
+            If c = 7 Or c = 8 Then
+                With ws.Cells(currentRow, c)
+                    .NumberFormat = "@"
+                    .Value = CStr(arrRow(1, c))
+                End With
+            Else
+                ws.Cells(currentRow, c).Value = arrRow(1, c)
+            End If
         Next c
         
         ' Write AZ (column 52 = history)

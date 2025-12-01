@@ -65,7 +65,7 @@ Public Sub RefreshNeuList()
         rs.Close
         db.Close
         ClearNeuData wsNeu
-        MsgBox "No new records found (ID > " & lastSeenID & ").", vbInformation, "Refresh Neu List"
+        MsgBox "Keine neuen Eintraege gefunden (ID > " & lastSeenID & ").", vbInformation, "Neu-Liste aktualisieren"
         GoTo Cleanup
     End If
     
@@ -84,7 +84,7 @@ Public Sub RefreshNeuList()
     
     If rowCount = 0 Then
         ClearNeuData wsNeu
-        MsgBox "No new records found (ID > " & lastSeenID & ").", vbInformation, "Refresh Neu List"
+        MsgBox "Keine neuen Eintraege gefunden (ID > " & lastSeenID & ").", vbInformation, "Neu-Liste aktualisieren"
         GoTo Cleanup
     End If
     
@@ -160,7 +160,7 @@ Public Sub RefreshNeuList()
     ' Sort by name
     SortNeuByName wsNeu
     
-    MsgBox "Loaded " & rowCount & " new record(s) with ID > " & lastSeenID & ".", vbInformation, "Refresh Neu List"
+    MsgBox rowCount & " neue(n) Eintrag/Eintraege mit ID > " & lastSeenID & " geladen.", vbInformation, "Neu-Liste aktualisieren"
     
 Cleanup:
     Application.Calculation = xlCalculationAutomatic
@@ -170,7 +170,7 @@ Cleanup:
 ErrorHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "Error refreshing Neu list: " & Err.Description, vbCritical, "Refresh Error"
+    MsgBox "Fehler beim Aktualisieren der Neu-Liste: " & Err.Description, vbCritical, "Aktualisierungsfehler"
 End Sub
 
 ' Mark all records as "seen" by setting LastSeenID to current max ID in database
@@ -214,7 +214,7 @@ Public Sub GetOffNeu()
     db.Close
     
     If maxID = 0 Then
-        MsgBox "No records found in tblKartei.", vbExclamation, "GetOffNeu"
+        MsgBox "Keine Eintraege in tblKartei gefunden.", vbExclamation, "GetOffNeu"
         Exit Sub
     End If
     
@@ -231,13 +231,13 @@ Public Sub GetOffNeu()
     ' Save workbook to persist LastSeenID
     ThisWorkbook.Save
     
-    MsgBox "Neu cleared, LastSeenID updated from " & oldLastSeenID & " to " & maxID & ".", _
+    MsgBox "Neu geloescht, LastSeenID aktualisiert von " & oldLastSeenID & " auf " & maxID & ".", _
            vbInformation, "GetOffNeu"
     
     Exit Sub
     
 ErrorHandler:
-    MsgBox "Error in GetOffNeu: " & Err.Description, vbCritical, "GetOffNeu Error"
+    MsgBox "Fehler in GetOffNeu: " & Err.Description, vbCritical, "GetOffNeu Fehler"
 End Sub
 
 '===========================================

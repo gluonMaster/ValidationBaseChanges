@@ -70,8 +70,8 @@ Public Sub OverlayPendingAndDeclined(ByVal ws As Worksheet)
     ' Notify user if there are conflicts (same ID in both pre_ and decl_)
     If conflictIDs.count > 0 Then
         Dim conflictMsg As String
-        conflictMsg = "Data consistency error detected:" & vbCrLf & _
-                      "The following IDs exist in both pending and declined tables:" & vbCrLf & vbCrLf
+        conflictMsg = "Datenkonsistenzfehler erkannt:" & vbCrLf & _
+                      "Die folgenden IDs existieren sowohl in ausstehenden als auch in abgelehnten Tabellen:" & vbCrLf & vbCrLf
         
         Dim conflictID As Variant
         For Each conflictID In conflictIDs
@@ -79,22 +79,22 @@ Public Sub OverlayPendingAndDeclined(ByVal ws As Worksheet)
         Next conflictID
         
         conflictMsg = conflictMsg & vbCrLf & _
-                      "Declined version takes priority and is displayed." & vbCrLf & _
-                      "Please contact Superadmin to resolve this inconsistency."
+                      "Die abgelehnte Version hat Prioritaet und wird angezeigt." & vbCrLf & _
+                      "Bitte kontaktieren Sie den Superadmin, um diese Inkonsistenz zu beheben."
         
-        MsgBox conflictMsg, vbExclamation, "Data Consistency Error"
+        MsgBox conflictMsg, vbExclamation, "Datenkonsistenzfehler"
     End If
     
     ' Notify user if there are pending or declined records
     If pendingIDs.count > 0 Or declinedIDs.count > 0 Then
         Dim summaryMsg As String
-        summaryMsg = "The Kartei sheet contains records requiring attention:" & vbCrLf & vbCrLf & _
-                     "Pending (awaiting approval): " & pendingIDs.count & " record(s)" & vbCrLf & _
-                     "Declined (rejected): " & declinedIDs.count & " record(s)" & vbCrLf & vbCrLf & _
-                     "Pending records are highlighted in light blue." & vbCrLf & _
-                     "Declined records are highlighted in light red."
+        summaryMsg = "Das Kartei-Blatt enthaelt Datensaetze, die Aufmerksamkeit erfordern:" & vbCrLf & vbCrLf & _
+                     "Ausstehend (warten auf Genehmigung): " & pendingIDs.count & " Datensatz(e)" & vbCrLf & _
+                     "Abgelehnt (zurueckgewiesen): " & declinedIDs.count & " Datensatz(e)" & vbCrLf & vbCrLf & _
+                     "Ausstehende Datensaetze sind hellblau hervorgehoben." & vbCrLf & _
+                     "Abgelehnte Datensaetze sind hellrot hervorgehoben."
         
-        MsgBox summaryMsg, vbInformation, "Pending/Declined Records"
+        MsgBox summaryMsg, vbInformation, "Ausstehende/Abgelehnte Datensaetze"
     End If
     
 Cleanup:
@@ -103,7 +103,7 @@ Cleanup:
     Exit Sub
     
 ErrorHandler:
-    MsgBox "Error during overlay operation: " & Err.Description, vbCritical, "Overlay Error"
+    MsgBox "Fehler bei der Overlay-Operation: " & Err.Description, vbCritical, "Overlay-Fehler"
     Resume Cleanup
 End Sub
 
@@ -241,13 +241,23 @@ Private Sub OverlayRecordData(ByVal ws As Worksheet, _
     
     Dim c As Long
     
+    ' Pre-set text format for Phone (col 7) and Mobile (col 8) to prevent
+    ' Excel from auto-converting numeric-looking strings and losing leading zeros.
+    ws.Cells(targetRow, 7).NumberFormat = "@"
+    ws.Cells(targetRow, 8).NumberFormat = "@"
+    
     ' Overlay values and interior colors for columns 1-51
     For c = 1 To 51
         Dim fieldValue As Variant
         fieldValue = rs.Fields("Value" & c).value
         
         If Not IsNull(fieldValue) Then
-            ws.Cells(targetRow, c).value = fieldValue
+            ' For Phone (col 7) and Mobile (col 8), ensure value is written as string
+            If c = 7 Or c = 8 Then
+                ws.Cells(targetRow, c).value = CStr(fieldValue)
+            Else
+                ws.Cells(targetRow, c).value = fieldValue
+            End If
         Else
             ws.Cells(targetRow, c).value = ""
         End If

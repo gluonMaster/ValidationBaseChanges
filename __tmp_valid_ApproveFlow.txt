@@ -23,8 +23,7 @@ Private Const HD_VALUE As String = "->"              ' Old->New value separator
 Private Const HD_COMMENT_START As String = "/@"      ' Comment start marker
 Private Const HD_COMMENT_END As String = "@/"        ' Comment end marker
 
-' Main workflow: Load pending changes and generate GrossGeschichte decision sheet for review
-' This workflow always builds a War/Ist comparison sheet for pending IDs (no mode selection prompt).
+' Main workflow: Load pending changes and generate GrossGeschichte for review
 Public Sub LoadPendingChanges()
     On Error GoTo ErrorHandler
     
@@ -32,25 +31,16 @@ Public Sub LoadPendingChanges()
     Application.Calculation = xlCalculationManual
     
     ' Step 1: Load data from pre_tblKartei into Kartei sheet
-    ' Note: SetupGrossGeschichteDates is called internally by LoadPendingChangesFromPre
-    '       to set B1/C1 dates on GrossGeschichte sheet
     Call valid_ImportPending.LoadPendingChangesFromPre
     
-    ' Step 2: Build the War/Ist decision sheet for pending IDs
-    ' This replaces the old grossGeschichte.GrossGeshichteMachen call.
-    ' BuildPendingDecisionSheet compares pending data (Kartei/pre_tblKartei) with
-    ' original data (tblKartei), highlights differences, and aggregates comments.
-    Call valid_GrossGeschichteDecision.BuildPendingDecisionSheet
+    ' Step 2: Generate GrossGeschichte report for review
+    Call grossGeschichte.GrossGeshichteMachen
     
-    ' Step 3: Add decision dropdowns and styling to GrossGeschichte
+    ' Step 3: Add decision column to GrossGeschichte if not exists
     Call PrepareGrossGeschichteForDecisions
     
     MsgBox "Ausstehende Aenderungen erfolgreich geladen." & vbCrLf & vbCrLf & _
-           "Das GrossGeschichte-Blatt zeigt nun War/Ist-Vergleiche fuer alle Pending-IDs:" & vbCrLf & _
-           "  - War-Zeile: Originalwerte aus tblKartei (oder leer bei neuen Eintraegen)" & vbCrLf & _
-           "  - Ist-Zeile: Aktuelle Pending-Werte aus pre_tblKartei" & vbCrLf & _
-           "  - Unterschiede sind farblich hervorgehoben" & vbCrLf & vbCrLf & _
-           "Bitte markieren Sie jede Aenderung als:" & vbCrLf & _
+           "Bitte ueberpruefen Sie das GrossGeschichte-Blatt und markieren Sie jede Aenderung als:" & vbCrLf & _
            "  - 'Approved' (Spalte AC) um zu akzeptieren und nach tblKartei zu verschieben" & vbCrLf & _
            "  - 'Declined' (Spalte AC) um abzulehnen und nach decl_tblKartei zu verschieben" & vbCrLf & _
            "  - Fuer abgelehnte Eintraege optional einen Kommentar in Spalte AD eingeben" & vbCrLf & vbCrLf & _
@@ -71,7 +61,7 @@ End Sub
 Private Sub PrepareGrossGeschichteForDecisions()
     Dim ws As Worksheet
     On Error Resume Next
-    Set ws = ThisWorkbook.Worksheets("grossGeschichte")
+    Set ws = ThisWorkbook.Worksheets("GrossGeschichte")
     On Error GoTo 0
     
     If ws Is Nothing Then Exit Sub
@@ -106,10 +96,6 @@ Private Sub PrepareGrossGeschichteForDecisions()
 End Sub
 
 ' Process all decisions from GrossGeschichte sheet
-' GrossGeschichte now contains exactly ONE War/Ist block per pending ID
-' (built by valid_GrossGeschichteDecision.BuildPendingDecisionSheet).
-' The idDecisions dictionary is kept as a defensive measure in case
-' future changes introduce multiple blocks per ID.
 Public Sub SyncDecisions()
     On Error GoTo ErrorHandler
     
@@ -117,7 +103,7 @@ Public Sub SyncDecisions()
     Application.Calculation = xlCalculationManual
     
     Dim wsGross As Worksheet
-    Set wsGross = ThisWorkbook.Worksheets("grossGeschichte")
+    Set wsGross = ThisWorkbook.Worksheets("GrossGeschichte")
     
     Dim lastRow As Long
     lastRow = wsGross.Cells(wsGross.Rows.Count, 1).End(xlUp).Row
@@ -127,32 +113,34 @@ Public Sub SyncDecisions()
     Set approvedIDs = New Collection
     Set declinedIDs = New Collection
     
-    ' Dictionary to track decisions per ID
-    ' Current implementation: exactly one block per ID, so no conflicts expected.
-    ' Dictionary serves as defensive aggregation in case of future multi-block scenarios.
+    ' Dictionary to track the latest decision per ID (to handle Mode A with multiple blocks per ID)
     Dim idDecisions As Object
     Set idDecisions = CreateObject("Scripting.Dictionary")
     
-    ' Track IDs with conflicting decisions (for warning)
-    Dim conflictIDs As Collection
-    Set conflictIDs = New Collection
-    
     ' Collect decisions by ID
-    ' Structure: GrossGeschichte has War/Ist/Separator rows in groups of 3
-    ' Ist rows are at positions 4, 7, 10, ... (every 3rd row starting from 4)
-    ' RecordID is stored in hidden column AE (31)
+    ' Note: In new structure, we need to find the record ID somehow
+    ' The FamilyID is in column A, but we need the actual record ID from Kartei
+    ' For now, we'll store the row number and look up the ID from Kartei later
     Dim r As Long
-    For r = 4 To lastRow Step 3 ' Process "Ist" rows only
+    For r = 4 To lastRow Step 3 ' Process "Ist" rows (4, 7, 10, ...)
         Dim decision As String
-        decision = UCase(Trim(wsGross.Range("AC" & r).Value)) ' Column AC (29) = Decision
+        decision = UCase(Trim(wsGross.Range("AC" & r).Value)) ' Column AC (29)
         
         If decision = "APPROVED" Or decision = "DECLINED" Then
-            ' Get RecordID from hidden column AE (31)
+            ' We need to find the corresponding record ID
+            ' The FamilyID is in column A, but we need the actual Kartei row
+            ' Since GrossGeschichte is generated from Kartei, we need to match by FamilyID + other data
+            ' For simplicity, we'll store the Kartei ID if available, or use a lookup
+            
             Dim recordID As String
+            ' Try to get ID from a hidden reference or calculate from row
+            ' In the current implementation, we stored ID in column A of old structure
+            ' Now FamilyID is in A - we need another way to track the record ID
+            ' Let's add a hidden column or use the Kartei sheet to find the ID
             recordID = GetRecordIDForGrossRow(r)
             
             If recordID <> "" Then
-                ' Build decision data: (row, decision type, comment)
+                ' Store decision with row number (to determine which is the last one for this ID)
                 Dim decisionData As Variant
                 
                 If decision = "APPROVED" Then
@@ -164,24 +152,16 @@ Public Sub SyncDecisions()
                     decisionData = Array(r, "DECLINED", declComment)
                 End If
                 
-                ' Store in dictionary; if ID already exists, check for conflict
-                ' (Should not happen with current implementation - one block per ID)
+                ' Store in dictionary; if ID already exists, keep the one with higher row number (later block)
                 If idDecisions.Exists(recordID) Then
                     Dim existingData As Variant
                     existingData = idDecisions(recordID)
                     
-                    ' Check for conflicting decisions on same ID
-                    If CStr(existingData(1)) <> CStr(decisionData(1)) Then
-                        ' Conflict: same ID has both Approved and Declined
-                        On Error Resume Next
-                        conflictIDs.Add recordID, recordID
-                        On Error GoTo ErrorHandler
-                    End If
-                    
-                    ' Keep the one with higher row number (later block takes precedence)
+                    ' Compare row numbers; keep the later one (higher row = later event)
                     If CLng(decisionData(0)) > CLng(existingData(0)) Then
                         idDecisions(recordID) = decisionData
                     End If
+                    ' If same row or earlier, keep existing decision
                 Else
                     idDecisions.Add recordID, decisionData
                 End If
@@ -189,19 +169,7 @@ Public Sub SyncDecisions()
         End If
     Next r
     
-    ' Warn about conflicting decisions (same ID marked both Approved and Declined)
-    If conflictIDs.Count > 0 Then
-        Dim conflictMsg As String
-        conflictMsg = "Warnung: Fuer folgende IDs wurden widersprüchliche Entscheidungen gefunden:" & vbCrLf
-        Dim conflictID As Variant
-        For Each conflictID In conflictIDs
-            conflictMsg = conflictMsg & "  - ID " & conflictID & vbCrLf
-        Next conflictID
-        conflictMsg = conflictMsg & vbCrLf & "Es wird jeweils die letzte Entscheidung (hoehere Zeile) verwendet."
-        MsgBox conflictMsg, vbExclamation, "Widersprüchliche Entscheidungen"
-    End If
-    
-    ' Process unique decisions per ID
+    ' Now process unique decisions per ID
     Dim idKey As Variant
     For Each idKey In idDecisions.Keys
         Dim finalDecision As Variant
@@ -269,7 +237,7 @@ Private Function GetRecordIDForGrossRow(ByVal grossRow As Long) As String
     On Error GoTo ErrHandler
     
     Dim wsGross As Worksheet
-    Set wsGross = ThisWorkbook.Worksheets("grossGeschichte")
+    Set wsGross = ThisWorkbook.Worksheets("GrossGeschichte")
     
     ' RecordID is stored in hidden column AE (column 31)
     Dim recordID As String

@@ -65,11 +65,11 @@ Private Function PromptForDatabaseFolder(ByVal currentPath As String) As String
     
     ' Show message explaining the problem
     Dim msgResult As VbMsgBoxResult
-    msgResult = MsgBox("Database file not found:" & vbCrLf & vbCrLf & _
+    msgResult = MsgBox("Datenbankdatei nicht gefunden:" & vbCrLf & vbCrLf & _
                        currentPath & vbCrLf & vbCrLf & _
-                       "Would you like to select the folder containing the database?" & vbCrLf & _
-                       "(The folder should contain '" & DB_SUBFOLDER & "\" & DB_FILENAME & "')", _
-                       vbYesNo + vbQuestion, "Database Not Found")
+                       "Moechten Sie den Ordner mit der Datenbank auswaehlen?" & vbCrLf & _
+                       "(Der Ordner sollte '" & DB_SUBFOLDER & "\" & DB_FILENAME & "' enthalten)", _
+                       vbYesNo + vbQuestion, "Datenbank nicht gefunden")
     
     If msgResult = vbNo Then
         Exit Function
@@ -77,10 +77,10 @@ Private Function PromptForDatabaseFolder(ByVal currentPath As String) As String
     
     ' Show folder picker dialog
     Dim folderPath As String
-    folderPath = BrowseForFolder("Select the folder containing the database (parent of " & DB_SUBFOLDER & " folder)")
+    folderPath = BrowseForFolder("Waehlen Sie den Ordner mit der Datenbank (uebergeordneter Ordner von " & DB_SUBFOLDER & ")")
     
     If folderPath = "" Then
-        MsgBox "No folder selected. Operation cancelled.", vbInformation, "Cancelled"
+        MsgBox "Kein Ordner ausgewaehlt. Vorgang abgebrochen.", vbInformation, "Abgebrochen"
         Exit Function
     End If
     
@@ -89,18 +89,18 @@ Private Function PromptForDatabaseFolder(ByVal currentPath As String) As String
     newDbPath = folderPath & "\" & DB_SUBFOLDER & "\" & DB_FILENAME
     
     If Not FileExists(newDbPath) Then
-        MsgBox "Database file still not found at:" & vbCrLf & vbCrLf & _
+        MsgBox "Datenbankdatei immer noch nicht gefunden unter:" & vbCrLf & vbCrLf & _
                newDbPath & vbCrLf & vbCrLf & _
-               "Please make sure the selected folder contains '" & DB_SUBFOLDER & "\" & DB_FILENAME & "'.", _
-               vbExclamation, "Database Not Found"
+               "Bitte stellen Sie sicher, dass der ausgewaehlte Ordner '" & DB_SUBFOLDER & "\" & DB_FILENAME & "' enthaelt.", _
+               vbExclamation, "Datenbank nicht gefunden"
         Exit Function
     End If
     
     ' Save the selected path to Kartei!X1
     SaveDatabaseBasePath folderPath
     
-    MsgBox "Database path updated successfully!" & vbCrLf & vbCrLf & _
-           "New path: " & newDbPath, vbInformation, "Path Updated"
+    MsgBox "Datenbankpfad erfolgreich aktualisiert!" & vbCrLf & vbCrLf & _
+           "Neuer Pfad: " & newDbPath, vbInformation, "Pfad aktualisiert"
     
     PromptForDatabaseFolder = newDbPath
 End Function
@@ -155,6 +155,6 @@ Public Sub SelectDatabaseFolder()
     newPath = PromptForDatabaseFolder(currentPath)
     
     If newPath <> "" Then
-        MsgBox "Database path is now set to:" & vbCrLf & vbCrLf & newPath, vbInformation, "Database Path"
+        MsgBox "Datenbankpfad ist jetzt gesetzt auf:" & vbCrLf & vbCrLf & newPath, vbInformation, "Datenbankpfad"
     End If
 End Sub

@@ -30,7 +30,7 @@ Sub GeshichteMachen()
     recordID = CStr(ws.Cells(currentRow, 48).Value) ' Get ID from column AV (48)
     
     If strGeshichte = "" Then
-        MsgBox "There is no history of changes detected for this record (ID: " & recordID & ")", vbInformation
+        MsgBox "Keine Aenderungshistorie fuer diesen Eintrag gefunden (ID: " & recordID & ")", vbInformation
         GoTo Cleanup
     End If
     
@@ -81,7 +81,7 @@ Cleanup:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     If Err.Number <> 0 Then
-        MsgBox "There is an error: " & Err.Description, vbCritical
+        MsgBox "Es ist ein Fehler aufgetreten: " & Err.Description, vbCritical
     End If
 End Sub
 

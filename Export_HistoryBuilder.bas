@@ -188,7 +188,7 @@ End Function
 Public Function BuildDeclineEntry(ByVal declineNumber As Long, _
                                   ByVal declineComment As String) As String
     ' Builds a decline history entry in the new format
-    ' Format: DCL(<N>-><comment (Declined by Superadmin on DD.MM.YYYY)>)||
+    ' Format: DCL(<N>-><comment (Abgelehnt von Superadmin am DD.MM.YYYY)>)||
     '
     ' Parameters:
     '   declineNumber  - Sequential decline number (Decl_N)
@@ -198,7 +198,7 @@ Public Function BuildDeclineEntry(ByVal declineNumber As Long, _
     '   Formatted decline entry string
     
     Dim fullComment As String
-    fullComment = SanitizeComment(declineComment) & " (Declined by Superadmin on " & Format(Date, "dd.mm.yyyy") & ")"
+    fullComment = SanitizeComment(declineComment) & " (Abgelehnt von Superadmin am " & Format(Date, "dd.mm.yyyy") & ")"
     
     BuildDeclineEntry = HT_DECLINE & "(" & CStr(declineNumber) & HD_VALUE & fullComment & ")" & HD_SESSION
 End Function
@@ -481,22 +481,22 @@ Public Function GetTagDescription(ByVal tag As String) As String
     ' Returns human-readable description for a tag
     
     Select Case tag
-        Case HT_FAMILY_ID: GetTagDescription = "Family ID"
-        Case HT_PARENT: GetTagDescription = "Parent Name"
-        Case HT_CHILD: GetTagDescription = "Child Name"
-        Case HT_BIRTHDATE: GetTagDescription = "Date of Birth"
-        Case HT_ADDRESS: GetTagDescription = "Address"
-        Case HT_PHONE: GetTagDescription = "Phone"
-        Case HT_MOBILE: GetTagDescription = "Mobile"
-        Case HT_EMAIL: GetTagDescription = "Email"
-        Case HT_SUBJECT1: GetTagDescription = "Subject (Months 1-6)"
-        Case HT_PRICE1: GetTagDescription = "Price (Months 1-6)"
-        Case HT_SUBJECT2: GetTagDescription = "Subject (Months 7-12)"
-        Case HT_PRICE2: GetTagDescription = "Price (Months 7-12)"
-        Case HT_EXTRA1: GetTagDescription = "Extra Subject 1"
-        Case HT_EXTRA2: GetTagDescription = "Extra Subject 2"
-        Case HT_EXTRA3: GetTagDescription = "Extra Subject 3"
-        Case HT_DECLINE: GetTagDescription = "Decline Entry"
+        Case HT_FAMILY_ID: GetTagDescription = "Familien-ID"
+        Case HT_PARENT: GetTagDescription = "Elternname"
+        Case HT_CHILD: GetTagDescription = "Kindname"
+        Case HT_BIRTHDATE: GetTagDescription = "Geburtsdatum"
+        Case HT_ADDRESS: GetTagDescription = "Adresse"
+        Case HT_PHONE: GetTagDescription = "Telefon"
+        Case HT_MOBILE: GetTagDescription = "Mobil"
+        Case HT_EMAIL: GetTagDescription = "E-Mail"
+        Case HT_SUBJECT1: GetTagDescription = "Fach (Monate 1-6)"
+        Case HT_PRICE1: GetTagDescription = "Preis (Monate 1-6)"
+        Case HT_SUBJECT2: GetTagDescription = "Fach (Monate 7-12)"
+        Case HT_PRICE2: GetTagDescription = "Preis (Monate 7-12)"
+        Case HT_EXTRA1: GetTagDescription = "Zusatzfach 1"
+        Case HT_EXTRA2: GetTagDescription = "Zusatzfach 2"
+        Case HT_EXTRA3: GetTagDescription = "Zusatzfach 3"
+        Case HT_DECLINE: GetTagDescription = "Ablehnungseintrag"
         Case Else
             ' Check for month tags
             If Left(tag, 1) = HT_MONTH_PREFIX And Len(tag) = 3 Then
@@ -507,14 +507,14 @@ Public Function GetTagDescription(ByVal tag As String) As String
                 
                 If monthNum >= 1 And monthNum <= 12 Then
                     Dim monthNames As Variant
-                    monthNames = Array("January", "February", "March", "April", "May", "June", _
-                                       "July", "August", "September", "October", "November", "December")
-                    GetTagDescription = "Month " & monthNum & " (" & monthNames(monthNum - 1) & ")"
+                    monthNames = Array("Januar", "Februar", "Maerz", "April", "Mai", "Juni", _
+                                       "Juli", "August", "September", "Oktober", "November", "Dezember")
+                    GetTagDescription = "Monat " & monthNum & " (" & monthNames(monthNum - 1) & ")"
                 Else
-                    GetTagDescription = "Unknown"
+                    GetTagDescription = "Unbekannt"
                 End If
             Else
-                GetTagDescription = "Unknown"
+                GetTagDescription = "Unbekannt"
             End If
     End Select
 End Function

@@ -27,7 +27,7 @@ Public Sub ShowDeclinedOverview()
     Set declinedRecords = LoadDeclinedRecords()
     
     If declinedRecords.Count = 0 Then
-        MsgBox "No declined records found in the database.", vbInformation, "Declined Overview"
+        MsgBox "Keine abgelehnten Datensaetze in der Datenbank gefunden.", vbInformation, "Abgelehnte Uebersicht"
         GoTo Cleanup
     End If
     
@@ -42,9 +42,9 @@ Public Sub ShowDeclinedOverview()
     ws.Activate
     ws.Range("A1").Select
     
-    MsgBox "Declined overview created with " & declinedRecords.Count & " record(s)." & vbCrLf & vbCrLf & _
-           "Review the records, make corrections, and click 'Apply Fixes' to move them to pending approval.", _
-           vbInformation, "Declined Overview"
+    MsgBox "Abgelehnte Uebersicht erstellt mit " & declinedRecords.Count & " Datensatz(en)." & vbCrLf & vbCrLf & _
+           "Ueberpruefen Sie die Datensaetze, nehmen Sie Korrekturen vor und klicken Sie auf 'Korrekturen anwenden', um sie zur Genehmigung zu verschieben.", _
+           vbInformation, "Abgelehnte Uebersicht"
     
 Cleanup:
     Application.Calculation = xlCalculationAutomatic
@@ -52,7 +52,7 @@ Cleanup:
     Exit Sub
     
 ErrorHandler:
-    MsgBox "Error creating declined overview: " & Err.Description, vbCritical, "Error"
+    MsgBox "Fehler beim Erstellen der abgelehnten Uebersicht: " & Err.Description, vbCritical, "Fehler"
     Resume Cleanup
 End Sub
 
@@ -72,18 +72,18 @@ Public Sub ApplyDeclinedFixes()
     On Error GoTo ErrorHandler
     
     If wsOverview Is Nothing Then
-        MsgBox "DeclinedOverview sheet not found. Please run 'Show Declined Overview' first.", _
-               vbExclamation, "Sheet Not Found"
+        MsgBox "DeclinedOverview-Blatt nicht gefunden. Bitte fuehren Sie zuerst 'Abgelehnte Uebersicht anzeigen' aus.", _
+               vbExclamation, "Blatt nicht gefunden"
         Exit Sub
     End If
     
     ' Confirm action
     Dim response As VbMsgBoxResult
-    response = MsgBox("This will move selected/all declined records to pending approval (pre_tblKartei)." & vbCrLf & _
-                      "Records will be removed from declined status." & vbCrLf & vbCrLf & _
-                      "Corrections will be taken from DeclinedOverview if changed there," & vbCrLf & _
-                      "otherwise from corresponding rows on Kartei sheet." & vbCrLf & vbCrLf & _
-                      "Continue?", vbYesNo + vbQuestion, "Confirm Apply Fixes")
+    response = MsgBox("Dies verschiebt ausgewaehlte/alle abgelehnten Datensaetze zur Genehmigung (pre_tblKartei)." & vbCrLf & _
+                      "Datensaetze werden vom abgelehnten Status entfernt." & vbCrLf & vbCrLf & _
+                      "Korrekturen werden von DeclinedOverview uebernommen, wenn dort geaendert," & vbCrLf & _
+                      "andernfalls von entsprechenden Zeilen auf dem Kartei-Blatt." & vbCrLf & vbCrLf & _
+                      "Fortfahren?", vbYesNo + vbQuestion, "Korrekturen anwenden bestaetigen")
     
     If response <> vbYes Then
         Exit Sub
@@ -97,7 +97,7 @@ Public Sub ApplyDeclinedFixes()
     Set idsToProcess = CollectIDsFromOverview(wsOverview)
     
     If idsToProcess.Count = 0 Then
-        MsgBox "No valid IDs found on DeclinedOverview sheet.", vbExclamation, "No Data"
+        MsgBox "Keine gueltigen IDs auf dem DeclinedOverview-Blatt gefunden.", vbExclamation, "Keine Daten"
         GoTo Cleanup
     End If
     
@@ -110,31 +110,31 @@ Public Sub ApplyDeclinedFixes()
     ' Show results
     Dim msg As String
     If movedCount > 0 Then
-        msg = "Successfully moved " & movedCount & " record(s) from declined to pending approval." & vbCrLf & _
-              "Records are now in pre_tblKartei awaiting Superadmin review."
+        msg = "Erfolgreich " & movedCount & " Datensatz(e) von abgelehnt zu wartend verschoben." & vbCrLf & _
+              "Datensaetze sind jetzt in pre_tblKartei und warten auf Superadmin-Pruefung."
         
         If unchangedCount > 0 Then
-            msg = msg & vbCrLf & vbCrLf & "Unchanged: " & unchangedCount & " record(s) (no corrections detected)."
+            msg = msg & vbCrLf & vbCrLf & "Unveraendert: " & unchangedCount & " Datensatz(e) (keine Korrekturen erkannt)."
         End If
         
         If skippedCount > 0 Then
-            msg = msg & vbCrLf & vbCrLf & "Skipped: " & skippedCount & " record(s) (not found or user canceled)."
+            msg = msg & vbCrLf & vbCrLf & "Uebersprungen: " & skippedCount & " Datensatz(e) (nicht gefunden oder Benutzer hat abgebrochen)."
         End If
         
-        msg = msg & vbCrLf & vbCrLf & "DeclinedOverview sheet will be deleted."
+        msg = msg & vbCrLf & vbCrLf & "DeclinedOverview-Blatt wird geloescht."
         
-        MsgBox msg, vbInformation, "Fixes Applied"
+        MsgBox msg, vbInformation, "Korrekturen angewendet"
     Else
-        msg = "No records were processed."
+        msg = "Keine Datensaetze wurden verarbeitet."
         If unchangedCount > 0 Then
-            msg = msg & vbCrLf & "Unchanged: " & unchangedCount
+            msg = msg & vbCrLf & "Unveraendert: " & unchangedCount
         End If
         If skippedCount > 0 Then
-            msg = msg & vbCrLf & "Skipped: " & skippedCount
+            msg = msg & vbCrLf & "Uebersprungen: " & skippedCount
         End If
-        msg = msg & vbCrLf & vbCrLf & "DeclinedOverview sheet will be deleted."
+        msg = msg & vbCrLf & vbCrLf & "DeclinedOverview-Blatt wird geloescht."
         
-        MsgBox msg, vbInformation, "Apply Fixes"
+        MsgBox msg, vbInformation, "Korrekturen anwenden"
     End If
     
     ' Delete DeclinedOverview sheet after processing (successful or not)
@@ -150,7 +150,7 @@ Cleanup:
 ErrorHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "Error applying fixes: " & Err.Description, vbCritical, "Error"
+    MsgBox "Fehler beim Anwenden der Korrekturen: " & Err.Description, vbCritical, "Fehler"
 End Sub
 
 ' ========================================
@@ -433,8 +433,8 @@ Private Sub BuildDeclinedOverview(ByVal ws As Worksheet, ByVal records As Collec
             .Cells(1, 7 + m).value = wsKartei.Cells(2, 20 + m).value
         Next m
         
-        .Range("T1").value = "Declined Times"
-        .Range("U1").value = "Last Decline Comment"  ' Changed from full history
+        .Range("T1").value = "Ablehnungen"
+        .Range("U1").value = "Letzter Ablehnungskommentar"  ' Changed from full history
         
         ' Format header row
         .Range("A1:U1").Font.Bold = True
@@ -484,7 +484,7 @@ Private Sub BuildDeclinedOverview(ByVal ws As Worksheet, ByVal records As Collec
     
     ' Configure button
     With btnApply
-        .Caption = "Apply Fixes"
+        .Caption = "Korrekturen anwenden"
         .OnAction = "Export_DeclinedTools.ApplyDeclinedFixes"
         .Font.Name = "Segoe UI"
         .Font.Size = 9
@@ -710,6 +710,11 @@ Private Function ProcessDeclinedFixes(ByVal wsOverview As Worksheet, _
         ' Read updated data from Kartei (including updated AZ history)
         Dim finalRowData As Variant
         finalRowData = wsKartei.Range(wsKartei.Cells(karteiRow, 1), wsKartei.Cells(karteiRow, 52)).Value2
+        
+        ' Phone (col 7) and Mobile (col 8): Use .Text to preserve leading zeros.
+        ' See comment in ExportUtilities.ReadSheetIntoDictionary_ID for explanation.
+        finalRowData(1, 7) = CStr(wsKartei.Cells(karteiRow, 7).Text)
+        finalRowData(1, 8) = CStr(wsKartei.Cells(karteiRow, 8).Text)
         
         ' Read formats
         Dim rowFormats() As Variant
@@ -943,9 +948,9 @@ Public Sub ShowLastDeclineCommentForCurrentRow()
     
     ' Verify we're on the Kartei sheet
     If ActiveSheet.Name <> "Kartei" Then
-        MsgBox "This tool only works on the Kartei sheet." & vbCrLf & _
-               "Please activate the Kartei sheet and select a declined row.", _
-               vbExclamation, "Wrong Sheet"
+        MsgBox "Dieses Werkzeug funktioniert nur auf dem Kartei-Blatt." & vbCrLf & _
+               "Bitte aktivieren Sie das Kartei-Blatt und waehlen Sie eine abgelehnte Zeile aus.", _
+               vbExclamation, "Falsches Blatt"
         Exit Sub
     End If
     
@@ -957,7 +962,7 @@ Public Sub ShowLastDeclineCommentForCurrentRow()
     
     ' Check if row is valid (not header rows)
     If rowIndex < 3 Then
-        MsgBox "Please select a data row (row 3 or below).", vbExclamation, "Invalid Row"
+        MsgBox "Bitte waehlen Sie eine Datenzeile aus (Zeile 3 oder hoeher).", vbExclamation, "Ungueltige Zeile"
         Exit Sub
     End If
     
@@ -966,7 +971,7 @@ Public Sub ShowLastDeclineCommentForCurrentRow()
     recordID = wsKartei.Cells(rowIndex, 48).Value
     
     If IsEmpty(recordID) Or Not IsNumeric(recordID) Then
-        MsgBox "Current row does not have a valid ID in column AV.", vbExclamation, "No ID"
+        MsgBox "Die aktuelle Zeile hat keine gueltige ID in Spalte AV.", vbExclamation, "Keine ID"
         Exit Sub
     End If
     
@@ -979,10 +984,10 @@ Public Sub ShowLastDeclineCommentForCurrentRow()
     
     ' Check if row is DECLINED
     If rowStatus <> "DECLINED" Then
-        MsgBox "Current row does not have DECLINED status." & vbCrLf & vbCrLf & _
+        MsgBox "Die aktuelle Zeile hat keinen DECLINED-Status." & vbCrLf & vbCrLf & _
                "ID: " & strID & vbCrLf & _
-               "Status: " & IIf(rowStatus = "", "(none)", rowStatus), _
-               vbInformation, "Not Declined"
+               "Status: " & IIf(rowStatus = "", "(keiner)", rowStatus), _
+               vbInformation, "Nicht abgelehnt"
         Exit Sub
     End If
     
@@ -991,9 +996,9 @@ Public Sub ShowLastDeclineCommentForCurrentRow()
     historyText = CStr(wsKartei.Cells(rowIndex, 52).Value)
     
     If Len(Trim(historyText)) = 0 Then
-        MsgBox "No history data found for this declined record." & vbCrLf & vbCrLf & _
+        MsgBox "Keine Verlaufsdaten fuer diesen abgelehnten Datensatz gefunden." & vbCrLf & vbCrLf & _
                "ID: " & strID, _
-               vbInformation, "No History"
+               vbInformation, "Kein Verlauf"
         Exit Sub
     End If
     
@@ -1002,20 +1007,20 @@ Public Sub ShowLastDeclineCommentForCurrentRow()
     lastComment = GetLastDeclineCommentFromHistory(historyText)
     
     If Len(lastComment) = 0 Then
-        MsgBox "No Decl_n blocks found in history for this record." & vbCrLf & vbCrLf & _
+        MsgBox "Keine Decl_n-Bloecke im Verlauf fuer diesen Datensatz gefunden." & vbCrLf & vbCrLf & _
                "ID: " & strID & vbCrLf & vbCrLf & _
-               "This may indicate a data inconsistency.", _
-               vbExclamation, "No Decline Comments"
+               "Dies kann auf eine Dateninkonsistenz hinweisen.", _
+               vbExclamation, "Keine Ablehnungskommentare"
         Exit Sub
     End If
     
     ' Display the comment
-    MsgBox lastComment, vbInformation, "Last Decline Comment (ID: " & strID & ")"
+    MsgBox lastComment, vbInformation, "Letzter Ablehnungskommentar (ID: " & strID & ")"
     
     Exit Sub
     
 ErrorHandler:
-    MsgBox "Error displaying decline comment: " & Err.Description, vbCritical, "Error"
+    MsgBox "Fehler beim Anzeigen des Ablehnungskommentars: " & Err.Description, vbCritical, "Fehler"
 End Sub
 
 Private Function GetLastDeclineCommentFromHistory(ByVal historyText As String) As String

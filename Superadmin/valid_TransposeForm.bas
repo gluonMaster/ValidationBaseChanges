@@ -42,14 +42,14 @@ Public Sub ShowTransposeForm()
     On Error GoTo ErrorHandler
     
     If wsGross Is Nothing Then
-        MsgBox "GrossGeschichte sheet not found. Please generate the history report first.", _
-               vbExclamation, "Sheet Not Found"
+        MsgBox "GrossGeschichte-Blatt nicht gefunden. Bitte zuerst den Verlaufsbericht generieren.", _
+               vbExclamation, "Blatt nicht gefunden"
         GoTo Cleanup
     End If
     
     If ActiveSheet.Name <> "GrossGeschichte" Then
-        MsgBox "Please navigate to GrossGeschichte sheet first.", _
-               vbExclamation, "Wrong Sheet"
+        MsgBox "Bitte zuerst zum GrossGeschichte-Blatt wechseln.", _
+               vbExclamation, "Falsches Blatt"
         GoTo Cleanup
     End If
     
@@ -59,7 +59,7 @@ Public Sub ShowTransposeForm()
     
     ' Validate row is in data area (row 3+)
     If currentRow < 3 Then
-        MsgBox "Please select a data row (row 3 or below).", vbExclamation, "Invalid Selection"
+        MsgBox "Bitte eine Datenzeile auswaehlen (Zeile 3 oder darunter).", vbExclamation, "Ungueltige Auswahl"
         GoTo Cleanup
     End If
     
@@ -79,7 +79,7 @@ Public Sub ShowTransposeForm()
     
     ' Validate we have data in this block
     If Trim(wsGross.Range("A" & rowWar).Value) = "" Then
-        MsgBox "No data found in this record block.", vbExclamation, "Empty Record"
+        MsgBox "Keine Daten in diesem Eintragsblock gefunden.", vbExclamation, "Leerer Eintrag"
         GoTo Cleanup
     End If
     
@@ -106,7 +106,7 @@ Cleanup:
     
 ErrorHandler:
     Application.ScreenUpdating = True
-    MsgBox "Error creating transpose form: " & Err.Description, vbCritical, "Error"
+    MsgBox "Fehler beim Erstellen des Transponierungsformulars: " & Err.Description, vbCritical, "Fehler"
 End Sub
 
 ' Calculate the starting row of the block containing the given row
@@ -256,14 +256,14 @@ Private Sub AddApplyButton(ByVal wsForm As Worksheet)
     
     With btn
         .Name = "btnApplyClose"
-        .Caption = "Apply && Close"
+        .Caption = "Anwenden && Schliessen"
         .OnAction = "valid_TransposeForm.ApplyDecisionAndClose"
         .Font.Size = 11
         .Font.Bold = True
     End With
     
     ' Add instruction label
-    wsForm.Cells(lastRow + 2, 1).Value = "Select Decision:"
+    wsForm.Cells(lastRow + 2, 1).Value = "Entscheidung waehlen:"
     wsForm.Cells(lastRow + 2, 1).Font.Bold = True
 End Sub
 
@@ -308,15 +308,15 @@ Public Sub ApplyDecisionAndClose()
     
     ' Validate decision
     If decision = "" Then
-        MsgBox "Please select a Decision (Approved or Declined) before applying.", _
-               vbExclamation, "Decision Required"
+        MsgBox "Bitte eine Entscheidung (Approved oder Declined) vor dem Anwenden auswaehlen.", _
+               vbExclamation, "Entscheidung erforderlich"
         Application.ScreenUpdating = True
         Exit Sub
     End If
     
     If UCase(decision) <> "APPROVED" And UCase(decision) <> "DECLINED" Then
-        MsgBox "Decision must be 'Approved' or 'Declined'.", _
-               vbExclamation, "Invalid Decision"
+        MsgBox "Entscheidung muss 'Approved' oder 'Declined' sein.", _
+               vbExclamation, "Ungueltige Entscheidung"
         Application.ScreenUpdating = True
         Exit Sub
     End If
@@ -324,8 +324,8 @@ Public Sub ApplyDecisionAndClose()
     ' For Declined, check if comment is provided
     If UCase(decision) = "DECLINED" And declineComment = "" Then
         Dim resp As VbMsgBoxResult
-        resp = MsgBox("No decline comment provided. Continue anyway?", _
-                     vbYesNo + vbQuestion, "Missing Comment")
+        resp = MsgBox("Kein Ablehnungskommentar angegeben. Trotzdem fortfahren?", _
+                     vbYesNo + vbQuestion, "Fehlender Kommentar")
         If resp = vbNo Then
             Application.ScreenUpdating = True
             Exit Sub
@@ -348,16 +348,16 @@ Public Sub ApplyDecisionAndClose()
     
     Application.ScreenUpdating = True
     
-    MsgBox "Decision applied successfully." & vbCrLf & vbCrLf & _
-           "Decision: " & decision & vbCrLf & _
-           IIf(declineComment <> "", "Comment: " & declineComment, ""), _
-           vbInformation, "Applied"
+    MsgBox "Entscheidung erfolgreich angewendet." & vbCrLf & vbCrLf & _
+           "Entscheidung: " & decision & vbCrLf & _
+           IIf(declineComment <> "", "Kommentar: " & declineComment, ""), _
+           vbInformation, "Angewendet"
     
     Exit Sub
     
 ErrorHandler:
     Application.ScreenUpdating = True
-    MsgBox "Error applying decision: " & Err.Description, vbCritical, "Error"
+    MsgBox "Fehler beim Anwenden der Entscheidung: " & Err.Description, vbCritical, "Fehler"
 End Sub
 
 ' Close the transpose form without applying changes

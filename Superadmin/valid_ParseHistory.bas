@@ -244,7 +244,12 @@ Private Function ParseNewFormat(ByVal segment As String) As Object
         singleChange.Add "War", oldVal
         singleChange.Add "Ist", newVal
         
-        changesDict.Add unifiedKey, singleChange
+        ' Use assignment instead of Add to handle duplicate keys (last value wins)
+        If changesDict.Exists(unifiedKey) Then
+            Set changesDict(unifiedKey) = singleChange
+        Else
+            changesDict.Add unifiedKey, singleChange
+        End If
         matchIndex = matchIndex + 1
     Next fieldMatch
     
@@ -424,7 +429,12 @@ Private Function ParseLegacyFormat(ByVal segment As String) As Object
         singleMonthChanges.Add "War", warVal
         singleMonthChanges.Add "Ist", istVal
         
-        changesDict.Add monthNum, singleMonthChanges
+        ' Use assignment instead of Add to handle duplicate keys (last value wins)
+        If changesDict.Exists(monthNum) Then
+            Set changesDict(monthNum) = singleMonthChanges
+        Else
+            changesDict.Add monthNum, singleMonthChanges
+        End If
         mntIndex = mntIndex + 1
     Next matchItem
     

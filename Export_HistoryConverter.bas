@@ -371,7 +371,7 @@ Public Sub ConvertAllHistoriesInKartei()
     lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
     
     If lastRow < 3 Then
-        MsgBox "No data rows found in Kartei sheet.", vbInformation, "Conversion"
+        MsgBox "Keine Datenzeilen auf dem Kartei-Blatt gefunden.", vbInformation, "Konvertierung"
         GoTo Cleanup
     End If
     
@@ -416,11 +416,11 @@ Public Sub ConvertAllHistoriesInKartei()
         End If
     Next r
     
-    MsgBox "History conversion complete:" & vbCrLf & vbCrLf & _
-           "  Converted: " & convertedCount & vbCrLf & _
-           "  Skipped (already new format or empty): " & skippedCount & vbCrLf & _
-           "  Errors: " & errorCount, _
-           vbInformation, "Conversion Complete"
+    MsgBox "Verlaufskonvertierung abgeschlossen:" & vbCrLf & vbCrLf & _
+           "  Konvertiert: " & convertedCount & vbCrLf & _
+           "  Uebersprungen (bereits neues Format oder leer): " & skippedCount & vbCrLf & _
+           "  Fehler: " & errorCount, _
+           vbInformation, "Konvertierung abgeschlossen"
     
 Cleanup:
     Application.Calculation = xlCalculationAutomatic
@@ -428,7 +428,7 @@ Cleanup:
     Exit Sub
     
 ErrorHandler:
-    MsgBox "Error during conversion: " & Err.Description, vbCritical, "Conversion Error"
+    MsgBox "Fehler bei der Konvertierung: " & Err.Description, vbCritical, "Konvertierungsfehler"
     Resume Cleanup
 End Sub
 
@@ -469,7 +469,7 @@ Public Sub ConvertHistoriesInAccessTable(ByVal tableName As String)
     Next tbl
     
     If Not tblExists Then
-        MsgBox "Table '" & tableName & "' does not exist.", vbExclamation, "Table Not Found"
+        MsgBox "Tabelle '" & tableName & "' existiert nicht.", vbExclamation, "Tabelle nicht gefunden"
         db.Close
         Exit Sub
     End If
@@ -531,11 +531,11 @@ Public Sub ConvertHistoriesInAccessTable(ByVal tableName As String)
     rs.Close
     db.Close
     
-    MsgBox "History conversion in '" & tableName & "' complete:" & vbCrLf & vbCrLf & _
-           "  Converted: " & convertedCount & vbCrLf & _
-           "  Skipped (already new format or empty): " & skippedCount & vbCrLf & _
-           "  Errors: " & errorCount, _
-           vbInformation, "Conversion Complete"
+    MsgBox "Verlaufskonvertierung in '" & tableName & "' abgeschlossen:" & vbCrLf & vbCrLf & _
+           "  Konvertiert: " & convertedCount & vbCrLf & _
+           "  Uebersprungen (bereits neues Format oder leer): " & skippedCount & vbCrLf & _
+           "  Fehler: " & errorCount, _
+           vbInformation, "Konvertierung abgeschlossen"
     
     Application.ScreenUpdating = True
     Exit Sub
@@ -546,7 +546,7 @@ ErrorHandler:
     rs.Close
     db.Close
     Application.ScreenUpdating = True
-    MsgBox "Error during Access table conversion: " & Err.Description, vbCritical, "Conversion Error"
+    MsgBox "Fehler bei der Access-Tabellenkonvertierung: " & Err.Description, vbCritical, "Konvertierungsfehler"
 End Sub
 
 Public Sub ConvertAllHistoriesEverywhere()
@@ -557,37 +557,37 @@ Public Sub ConvertAllHistoriesEverywhere()
     ' 4. decl_tblKartei in Access (if exists)
     
     Dim result As VbMsgBoxResult
-    result = MsgBox("This will convert all history strings to the new format in:" & vbCrLf & vbCrLf & _
-                    "  - Kartei sheet (current workbook)" & vbCrLf & _
-                    "  - tblKartei (Access database)" & vbCrLf & _
-                    "  - pre_tblKartei (if exists)" & vbCrLf & _
-                    "  - decl_tblKartei (if exists)" & vbCrLf & vbCrLf & _
-                    "This operation cannot be undone. Continue?", _
-                    vbYesNo + vbQuestion, "Convert All Histories")
+    result = MsgBox("Dies konvertiert alle Verlaufseintraege ins neue Format in:" & vbCrLf & vbCrLf & _
+                    "  - Kartei-Blatt (aktuelle Arbeitsmappe)" & vbCrLf & _
+                    "  - tblKartei (Access-Datenbank)" & vbCrLf & _
+                    "  - pre_tblKartei (falls vorhanden)" & vbCrLf & _
+                    "  - decl_tblKartei (falls vorhanden)" & vbCrLf & vbCrLf & _
+                    "Diese Operation kann nicht rueckgaengig gemacht werden. Fortfahren?", _
+                    vbYesNo + vbQuestion, "Alle Verlaeufe konvertieren")
     
     If result <> vbYes Then Exit Sub
     
     ' Convert Kartei sheet
-    MsgBox "Step 1/4: Converting Kartei sheet...", vbInformation, "Progress"
+    MsgBox "Schritt 1/4: Konvertiere Kartei-Blatt...", vbInformation, "Fortschritt"
     Call ConvertAllHistoriesInKartei
     
     ' Convert tblKartei
-    MsgBox "Step 2/4: Converting tblKartei...", vbInformation, "Progress"
+    MsgBox "Schritt 2/4: Konvertiere tblKartei...", vbInformation, "Fortschritt"
     Call ConvertHistoriesInAccessTable("tblKartei")
     
     ' Convert pre_tblKartei
-    MsgBox "Step 3/4: Converting pre_tblKartei...", vbInformation, "Progress"
+    MsgBox "Schritt 3/4: Konvertiere pre_tblKartei...", vbInformation, "Fortschritt"
     On Error Resume Next
     Call ConvertHistoriesInAccessTable("pre_tblKartei")
     On Error GoTo 0
     
     ' Convert decl_tblKartei
-    MsgBox "Step 4/4: Converting decl_tblKartei...", vbInformation, "Progress"
+    MsgBox "Schritt 4/4: Konvertiere decl_tblKartei...", vbInformation, "Fortschritt"
     On Error Resume Next
     Call ConvertHistoriesInAccessTable("decl_tblKartei")
     On Error GoTo 0
     
-    MsgBox "All history conversions complete!", vbInformation, "Done"
+    MsgBox "Alle Verlaufskonvertierungen abgeschlossen!", vbInformation, "Fertig"
 End Sub
 
 ' ========================================
@@ -651,10 +651,10 @@ Public Sub TestConversionWithSample()
     converted = ConvertHistoryToNewFormat(sample)
     
     Debug.Print "=== ORIGINAL ===" & vbCrLf & sample
-    Debug.Print vbCrLf & "=== CONVERTED ===" & vbCrLf & converted
+    Debug.Print vbCrLf & "=== KONVERTIERT ===" & vbCrLf & converted
     
     MsgBox "Original:" & vbCrLf & sample & vbCrLf & vbCrLf & _
-           "Converted:" & vbCrLf & converted, _
-           vbInformation, "Conversion Test"
+           "Konvertiert:" & vbCrLf & converted, _
+           vbInformation, "Konvertierungstest"
 End Sub
 
