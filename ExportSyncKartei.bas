@@ -5,10 +5,22 @@ Attribute VB_Name = "ExportSyncKartei"
 Option Explicit
 
 Public Sub CompareAndSyncKartei_OnSave()
+    ' Reset global validation flag at the start
+    g_KarteiValidationFailed = False
+    
     Dim canProceed As Boolean
     canProceed = ValidateAndFixPastMonths()
     If Not canProceed Then
         ' user got message, cancel
+        Exit Sub
+    End If
+    
+    ' Validate Kartei data (duplicate FamilyIDs, empty FamilyID with Parent)
+    Dim karteiValid As Boolean
+    karteiValid = ValidateKarteiBeforeSync()
+    If Not karteiValid Then
+        ' Set global flag to signal Workbook_BeforeClose to cancel closing
+        g_KarteiValidationFailed = True
         Exit Sub
     End If
     
@@ -21,6 +33,14 @@ Public Sub CompareAndSyncKartei_OnBtn()
     canProceed = ValidateAndFixPastMonths()
     If Not canProceed Then
         ' user got message, cancel
+        Exit Sub
+    End If
+    
+    ' Validate Kartei data (duplicate FamilyIDs, empty FamilyID with Parent)
+    Dim karteiValid As Boolean
+    karteiValid = ValidateKarteiBeforeSync()
+    If Not karteiValid Then
+        ' Validation failed, user got message, cancel sync
         Exit Sub
     End If
     

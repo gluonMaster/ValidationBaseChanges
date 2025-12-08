@@ -18,6 +18,25 @@ Dim wbMain As Workbook
 ' Module-level variable to preserve SEPA checkbox state during speich/bearbeit calls
 Dim m_SepaStatusPreserved As Boolean
 
+' Normalizes SW value: converts invalid or non-numeric inputs (dates, times, text) to "0"
+Private Function NormalizeSummetSWValue(ByVal rawValue As Variant) As String
+    Dim s As String
+    s = Trim(CStr(rawValue))
+    
+    If s = "" Then
+        NormalizeSummetSWValue = "0"
+        Exit Function
+    End If
+    
+    s = Replace(s, ".", ",")
+    
+    If IsNumeric(s) Then
+        NormalizeSummetSWValue = CStr(CDbl(s))
+    Else
+        NormalizeSummetSWValue = "0"
+    End If
+End Function
+
 Private Sub OptimizeStart()
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -378,11 +397,7 @@ Sub bearbeit()
         Me.Controls("Bmk" & (32 + i)).Visible = True
         Me.Controls("Bmk" & (32 + i)).text = Worksheets("Kartei").Cells(nrRow + i, 14)
         Me.Controls("txtBox_SummetSW" & (32 + i)).Visible = True
-        If Worksheets("Kartei").Cells(nrRow + i, "AH") = "" Then
-          Me.Controls("txtBox_SummetSW" & (32 + i)).text = 0
-        Else
-          Me.Controls("txtBox_SummetSW" & (32 + i)).text = Worksheets("Kartei").Cells(nrRow + i, "AH")
-        End If
+        Me.Controls("txtBox_SummetSW" & (32 + i)).text = NormalizeSummetSWValue(Worksheets("Kartei").Cells(nrRow + i, "AH").value)
         If Worksheets("Kartei").Cells(nrRow + i, "T") <> "KN" Then
            Me.Controls("CommandButton" & i).Visible = True
            Me.Controls("btnKN" & i).Visible = True
@@ -403,11 +418,7 @@ Sub bearbeit()
         Me.Controls("Bmk" & (32 + i)).text = Worksheets("Kartei").Cells(nrRow + i, 19)
         
         Me.Controls("txtBox_SummetSW" & (32 + i)).Visible = True
-        If Worksheets("Kartei").Cells(nrRow + i, "AJ") = "" Then
-          Me.Controls("txtBox_SummetSW" & (32 + i)).text = 0
-        Else
-          Me.Controls("txtBox_SummetSW" & (32 + i)).text = Worksheets("Kartei").Cells(nrRow + i, "AJ")
-        End If
+        Me.Controls("txtBox_SummetSW" & (32 + i)).text = NormalizeSummetSWValue(Worksheets("Kartei").Cells(nrRow + i, "AJ").value)
        '  valueSW(i) = CDbl(Me.Controls("txtBox_SummetSW" & (32 + i)).text)
         
         If Worksheets("Kartei").Cells(nrRow + i, "T") <> "KN" Then
@@ -517,10 +528,10 @@ Sub speich(lin As Integer)
 '    Call SW_Speichern(lin)
     
     Worksheets("Kartei").Cells(nrRow + lin, "AH").NumberFormat = "0.00"
-    If Me.Controls("txtBox_SummetSW" & (lin + 32)).text = "" Then
-      Me.Controls("txtBox_SummetSW" & (lin + 32)).text = 0
-    End If
-    Worksheets("Kartei").Cells(nrRow + lin, "AH") = CDbl(Me.Controls("txtBox_SummetSW" & (lin + 32)).text)
+    Dim swNormAH As String
+    swNormAH = NormalizeSummetSWValue(Me.Controls("txtBox_SummetSW" & (lin + 32)).text)
+    Me.Controls("txtBox_SummetSW" & (lin + 32)).text = swNormAH
+    Worksheets("Kartei").Cells(nrRow + lin, "AH") = CDbl(swNormAH)
     
   Else
     '15  -  "O"
@@ -548,10 +559,10 @@ Sub speich(lin As Integer)
 '     End If
 
      Worksheets("Kartei").Cells(nrRow + lin, "AJ").NumberFormat = "0.00"
-     If Me.Controls("txtBox_SummetSW" & (lin + 32)).text = "" Then
-       Me.Controls("txtBox_SummetSW" & (lin + 32)).text = 0
-     End If
-     Worksheets("Kartei").Cells(nrRow + lin, "AJ") = CDbl(Me.Controls("txtBox_SummetSW" & (lin + 32)).text)
+     Dim swNormAJ As String
+     swNormAJ = NormalizeSummetSWValue(Me.Controls("txtBox_SummetSW" & (lin + 32)).text)
+     Me.Controls("txtBox_SummetSW" & (lin + 32)).text = swNormAJ
+     Worksheets("Kartei").Cells(nrRow + lin, "AJ") = CDbl(swNormAJ)
    End If
   End If
   

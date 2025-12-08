@@ -76,7 +76,7 @@ Private Sub Workbook_BeforeClose(Cancel As Boolean)
     ws.Activate
     
     Dim lastRow As Integer
-    lastRow = ws.Cells(ws.Rows.count, 46).End(xlUp).row
+    lastRow = ws.Cells(ws.Rows.Count, 46).End(xlUp).Row
     
     If lastRow > 2 Then
         ws.Range(ws.Cells(3, 53), ws.Cells(lastRow, 53)).Copy
@@ -91,7 +91,19 @@ Private Sub Workbook_BeforeClose(Cancel As Boolean)
     Call DeleteDeclinedOverviewIfExists
     
     Call StopHourlyMessage
+    
+    ' Reset validation flag before sync attempt
+    g_KarteiValidationFailed = False
+    
     Call CompareAndSyncKartei_OnSave
+    
+    ' If Kartei validation failed, cancel workbook close to force user to fix data
+    If g_KarteiValidationFailed Then
+        Cancel = True
+        MsgBox "Das Schliessen der Arbeitsmappe wurde abgebrochen." & vbCrLf & _
+               "Bitte korrigieren Sie die markierten Fehler im Blatt Kartei und versuchen Sie es erneut.", _
+               vbExclamation, "Schliessen abgebrochen"
+    End If
 End Sub
 
 Private Sub DeleteDeclinedOverviewIfExists()

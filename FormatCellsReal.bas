@@ -30,6 +30,9 @@ Public Sub ConvertAndFormatCellsOptimized()
         
         ' Remove extra spaces
         rng.Replace What:=" ", Replacement:="", LookAt:=xlPart
+        ' Remove non-breaking spaces and tabs before numeric conversion
+        rng.Replace What:=Chr(160), Replacement:="", LookAt:=xlPart
+        rng.Replace What:=vbTab, Replacement:="", LookAt:=xlPart
         
         ' Unify decimal separators so Excel can parse them correctly
         If decimalSeparator = "," Then
