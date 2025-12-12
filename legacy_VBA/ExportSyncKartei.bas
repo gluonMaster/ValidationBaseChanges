@@ -881,5 +881,28 @@ Private Sub MarkRiskyRowsAsPending(ByVal ws As Worksheet, ByVal riskyIDs As Coll
     Next varID
 End Sub
 
+Public Sub Export_ResendDeclinedRecordsByIDs(ByVal declinedIDs As Collection)
+    ' Public helper to resend declined records to pre_tblKartei by ID list.
+    ' Builds local dictionaries from Kartei sheet and delegates to MoveDeclinedToPending.
+    ' This does NOT perform any change detection; it simply reuses existing move logic.
+    
+    Dim wsLocal As Worksheet
+    Set wsLocal = ThisWorkbook.Worksheets("Kartei")
+    
+    ' If no IDs provided, nothing to do
+    If declinedIDs Is Nothing Then Exit Sub
+    If declinedIDs.Count = 0 Then Exit Sub
+    
+    Dim dictLocal As Scripting.Dictionary
+    Dim dictLocalFormats As Scripting.Dictionary
+    
+    ' Read current Kartei into dictionaries (same structure as in CompareAndSyncKartei)
+    Set dictLocal = ReadSheetIntoDictionary_ID(wsLocal, 3, 52)
+    Set dictLocalFormats = ReadLocalFormatsIntoDictionary_ID(wsLocal, 3, 51)
+    
+    ' Delegate to existing move logic
+    Call MoveDeclinedToPending(dictLocal, dictLocalFormats, declinedIDs, wsLocal)
+End Sub
+
 
 

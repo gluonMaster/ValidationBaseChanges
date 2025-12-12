@@ -1,0 +1,98 @@
+{% extends "base.html" %} {% comment %} Template for Pending Change detail view.
+Shows what changes are proposed. {% endcomment %} {% block title %}Wartende
+Änderung - {{ record.id }}{% endblock %} {% block content %}
+<div class="container-fluid py-4">
+  <!-- Header -->
+  <div class="row mb-4">
+    <div class="col">
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+          <li class="breadcrumb-item">
+            <a href="{% url 'approvals:pending_list' %}">Wartend</a>
+          </li>
+          <li class="breadcrumb-item active">Datensatz {{ record.id }}</li>
+        </ol>
+      </nav>
+      <h1>
+        <i class="bi bi-hourglass-split text-primary"></i>
+        Wartende Änderung
+      </h1>
+      <p class="text-muted">
+        Datensatz ID: {{ record.id }} | Familie: {{ record.family_id }} | {{
+        record.child_name|default:"(Kein Name)" }}
+      </p>
+    </div>
+    <div class="col-auto">
+      <a
+        href="{% url 'karteien:record_detail' record.pk %}"
+        class="btn btn-outline-secondary"
+      >
+        <i class="bi bi-person-badge"></i>
+        Datensatz anzeigen
+      </a>
+    </div>
+  </div>
+
+  <!-- Info -->
+  <div class="alert alert-primary mb-4">
+    <i class="bi bi-hourglass-split"></i>
+    <strong>Wartend:</strong>
+    Diese Änderung wartet auf die Genehmigung durch einen Superadmin.
+    <br />
+    <small class="text-muted">
+      Erstellt: {{ pending_change.created_at|date:"d.m.Y H:i" }} | Aktualisiert:
+      {{ pending_change.updated_at|date:"d.m.Y H:i" }}
+    </small>
+  </div>
+
+  <!-- Comparison Table -->
+  <div class="card mb-4">
+    <div class="card-header">
+      <i class="bi bi-arrows-expand"></i>
+      Vergleich: Aktuell vs. Vorgeschlagen
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-striped mb-0">
+          <thead class="table-light">
+            <tr>
+              <th style="width: 30%">Feld</th>
+              <th style="width: 35%">Aktueller Wert</th>
+              <th style="width: 35%">Vorgeschlagener Wert</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for comp in comparisons %}
+            <tr class="{% if comp.changed %}table-info{% endif %}">
+              <td>
+                <strong>{{ comp.field }}</strong>
+                {% if comp.changed %}
+                <i class="bi bi-arrow-right text-primary"></i>
+                {% endif %}
+              </td>
+              <td>{{ comp.current|default:"-" }}</td>
+              <td>
+                {% if comp.changed %}
+                <strong>{{ comp.pending|default:"-" }}</strong>
+                {% else %} {{ comp.pending|default:"-" }} {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Back Button -->
+  <div class="text-center">
+    <a
+      href="{% url 'approvals:pending_list' %}"
+      class="btn btn-outline-secondary"
+    >
+      <i class="bi bi-arrow-left"></i>
+      Zurück zur Übersicht
+    </a>
+  </div>
+</div>
+{% endblock %}

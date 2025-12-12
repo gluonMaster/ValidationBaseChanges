@@ -1,0 +1,267 @@
+{% extends "base.html" %} {% comment %} Template for Kartei record detail view.
+Shows all fields of a single KarteiRecord. {% endcomment %} {% block title
+%}Kartei - Datensatz {{ record.id }}{% endblock %} {% block content %}
+<div class="container-fluid py-4">
+  <!-- Header -->
+  <div class="row mb-4">
+    <div class="col">
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+          <li class="breadcrumb-item">
+            <a href="{% url 'karteien:record_list' %}">Kartei</a>
+          </li>
+          <li class="breadcrumb-item active">Datensatz {{ record.id }}</li>
+        </ol>
+      </nav>
+      <h1>
+        <i class="bi bi-person-badge"></i>
+        {{ record.child_name|default:"(Kein Name)" }} {% if record.status ==
+        "PENDING" %}
+        <span class="badge bg-primary fs-6">Wartend</span>
+        {% elif record.status == "DECLINED" %}
+        <span class="badge bg-danger fs-6">Abgelehnt</span>
+        {% endif %}
+      </h1>
+      <p class="text-muted">
+        ID: {{ record.id }} | Jahr: {{ record.year }} | Familie: {{
+        record.family_id }}
+      </p>
+    </div>
+    <div class="col-auto">
+      {% if record.status == "NORMAL" %}
+      <a
+        href="{% url 'karteien:record_update' record.pk %}"
+        class="btn btn-primary"
+      >
+        <i class="bi bi-pencil"></i>
+        Bearbeiten
+      </a>
+      {% elif record.status == "PENDING" %}
+      <span
+        class="btn btn-secondary disabled"
+        title="Bearbeitung gesperrt – wartet auf Freigabe"
+      >
+        <i class="bi bi-hourglass-split"></i>
+        Wartend
+      </span>
+      {% elif record.status == "DECLINED" %}
+      <a
+        href="{% url 'approvals:declined_overview' %}?family_id={{ record.family_id }}"
+        class="btn btn-outline-danger"
+        title="Zur Abgelehnt-Übersicht, um Korrekturen einzureichen"
+      >
+        <i class="bi bi-x-circle"></i>
+        Korrektur einreichen
+      </a>
+      {% endif %} {% if user.is_admin_role %}
+      <a
+        href="{% url 'karteien:record_delete' record.pk %}"
+        class="btn btn-outline-danger"
+      >
+        <i class="bi bi-trash"></i>
+        Löschen
+      </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Status Alerts -->
+  {% if record.status == "PENDING" %}
+  <div class="alert alert-primary" role="alert">
+    <i class="bi bi-hourglass-split"></i>
+    <strong>Wartend auf Genehmigung:</strong>
+    Änderungen an diesem Datensatz warten auf Superadmin-Prüfung.
+  </div>
+  {% endif %} {% if record.status == "DECLINED" %}
+  <div class="alert alert-danger" role="alert">
+    <i class="bi bi-x-circle"></i>
+    <strong>Abgelehnt:</strong>
+    Änderungen wurden abgelehnt. Bitte korrigieren Sie die Daten.
+    <a href="{% url 'approvals:declined_overview' %}" class="alert-link">
+      Zur Abgelehnt-Übersicht
+    </a>
+  </div>
+  {% endif %} {% if is_sepa_record and user_has_sepa_restrictions %}
+  <div class="alert alert-warning" role="alert">
+    <i class="bi bi-shield-exclamation"></i>
+    <strong>SEPA-Einschränkung:</strong>
+    Als Operator können Sie die Monatsfelder dieses SEPA-Datensatzes nicht
+    ändern.
+  </div>
+  {% endif %}
+
+  <div class="row">
+    <!-- Basic Info -->
+    <div class="col-md-6">
+      <div class="card mb-4">
+        <div class="card-header">
+          <i class="bi bi-person"></i>
+          Grunddaten
+        </div>
+        <div class="card-body">
+          <dl class="row mb-0">
+            <dt class="col-sm-4">FamilyID</dt>
+            <dd class="col-sm-8">{{ record.family_id|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Eltern</dt>
+            <dd class="col-sm-8">{{ record.parent_name|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Kind</dt>
+            <dd class="col-sm-8">{{ record.child_name|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Geburtsdatum</dt>
+            <dd class="col-sm-8">
+              {{ record.birthdate|default:"-"|date:"d.m.Y" }}
+            </dd>
+
+            <dt class="col-sm-4">Adresse</dt>
+            <dd class="col-sm-8">{{ record.address|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Telefon</dt>
+            <dd class="col-sm-8">{{ record.phone|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Mobil</dt>
+            <dd class="col-sm-8">{{ record.mobile|default:"-" }}</dd>
+
+            <dt class="col-sm-4">E-Mail</dt>
+            <dd class="col-sm-8">
+              {% if record.email %}
+              <a href="mailto:{{ record.email }}">{{ record.email }}</a>
+              {% else %} - {% endif %}
+            </dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+
+    <!-- Subjects and Extras -->
+    <div class="col-md-6">
+      <div class="card mb-4">
+        <div class="card-header">
+          <i class="bi bi-book"></i>
+          Fächer & Preise
+        </div>
+        <div class="card-body">
+          <dl class="row mb-0">
+            <dt class="col-sm-4">Fach 1</dt>
+            <dd class="col-sm-8">{{ record.subject1|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Preis 1</dt>
+            <dd class="col-sm-8">
+              {% if record.price1 %} {{ record.price1 }} € {% else %} - {% endif
+              %}
+            </dd>
+
+            <dt class="col-sm-4">Fach 2</dt>
+            <dd class="col-sm-8">{{ record.subject2|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Preis 2</dt>
+            <dd class="col-sm-8">
+              {% if record.price2 %} {{ record.price2 }} € {% else %} - {% endif
+              %}
+            </dd>
+
+            <dt class="col-sm-4">Extra 1</dt>
+            <dd class="col-sm-8">{{ record.extra1|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Extra 2</dt>
+            <dd class="col-sm-8">{{ record.extra2|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Extra 3</dt>
+            <dd class="col-sm-8">{{ record.extra3|default:"-" }}</dd>
+
+            <dt class="col-sm-4">SEPA</dt>
+            <dd class="col-sm-8">
+              {% if record.is_sepa %}
+              <span class="badge bg-warning text-dark">SEPA</span>
+              {% else %} - {% endif %}
+            </dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Months -->
+  <div class="card mb-4">
+    <div class="card-header">
+      <i class="bi bi-calendar-month"></i>
+      Monatsdaten
+    </div>
+    <div class="card-body">
+      <div class="row">
+        {% for i in "123456789012"|make_list %}
+        <div class="col-md-2 col-sm-4 col-6 mb-2">
+          <div class="p-2 border rounded text-center">
+            <small class="text-muted">Monat {{ forloop.counter }}</small>
+            <div class="fw-bold">
+              {% with month_val=record|getattr:"month_"|add:forloop.counter %}
+              {{ month_val|default:"-" }} {% endwith %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Metadata -->
+  <div class="card mb-4">
+    <div class="card-header">
+      <i class="bi bi-info-circle"></i>
+      Metadaten
+    </div>
+    <div class="card-body">
+      <dl class="row mb-0">
+        <dt class="col-sm-3">Letzte Änderung durch</dt>
+        <dd class="col-sm-9">{{ record.last_change_role|default:"-" }}</dd>
+
+        <dt class="col-sm-3">Datum</dt>
+        <dd class="col-sm-9">
+          {{ record.last_change_date|default:"-"|date:"d.m.Y" }}
+        </dd>
+
+        <dt class="col-sm-3">Zeit</dt>
+        <dd class="col-sm-9">{{ record.last_change_time|default:"-" }}</dd>
+      </dl>
+    </div>
+  </div>
+
+  <!-- History (collapsed by default) -->
+  <div class="card mb-4">
+    <div class="card-header">
+      <button
+        class="btn btn-link text-decoration-none"
+        type="button"
+        data-bs-toggle="collapse"
+        data-bs-target="#historyCollapse"
+      >
+        <i class="bi bi-clock-history"></i>
+        Historie
+      </button>
+    </div>
+    <div id="historyCollapse" class="collapse">
+      <div class="card-body">
+        {% if record.history_raw %}
+        <pre class="mb-0" style="white-space: pre-wrap; font-size: 0.85rem">
+{{ record.history_raw }}</pre
+        >
+        {% else %}
+        <p class="text-muted mb-0">Keine Historie vorhanden.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Back Button -->
+  <div class="text-center">
+    <a
+      href="{% url 'karteien:record_list' %}?year={{ record.year }}"
+      class="btn btn-outline-secondary"
+    >
+      <i class="bi bi-arrow-left"></i>
+      Zurück zur Übersicht
+    </a>
+  </div>
+</div>
+{% endblock %}

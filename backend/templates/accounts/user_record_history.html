@@ -1,0 +1,250 @@
+{% extends "base.html" %} {% comment %} User Record History - Read-only history
+view (like Geschichte). Displays: - Record basic info - Chronological list of
+history events - For each event: date/time, user, changed fields (old → new),
+comment This is a read-only interface. Users cannot modify any data. {%
+endcomment %} {% block title %}Historie - Datensatz {{ record.id }} -
+KindEltern{% endblock %} {% block extra_css %}
+<style>
+  .history-timeline {
+    position: relative;
+    padding-left: 30px;
+  }
+
+  .history-timeline::before {
+    content: "";
+    position: absolute;
+    left: 10px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background-color: #dee2e6;
+  }
+
+  .history-event {
+    position: relative;
+    margin-bottom: 1.5rem;
+  }
+
+  .history-event::before {
+    content: "";
+    position: absolute;
+    left: -24px;
+    top: 0.5rem;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: #6c757d;
+    border: 2px solid #fff;
+  }
+
+  .history-event.event-change::before {
+    background-color: #0dcaf0;
+  }
+
+  .history-event.event-create::before {
+    background-color: #198754;
+  }
+
+  .history-event.event-approve::before {
+    background-color: #198754;
+  }
+
+  .history-event.event-decline::before {
+    background-color: #dc3545;
+  }
+
+  .history-event.event-ruck::before {
+    background-color: #ffc107;
+  }
+
+  .history-event.event-import::before {
+    background-color: #6c757d;
+  }
+
+  .change-arrow {
+    color: #6c757d;
+    margin: 0 0.25rem;
+  }
+
+  .old-value {
+    text-decoration: line-through;
+    color: #dc3545;
+  }
+
+  .new-value {
+    color: #198754;
+    font-weight: 500;
+  }
+</style>
+{% endblock %} {% block content %}
+<div class="container-fluid py-4">
+  <!-- Header -->
+  <div class="row mb-4">
+    <div class="col">
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+          <li class="breadcrumb-item">
+            <a href="{% url 'accounts:user_dashboard' %}">Übersicht</a>
+          </li>
+          <li class="breadcrumb-item">
+            <a href="{% url 'accounts:user_search' %}">Suche</a>
+          </li>
+          <li class="breadcrumb-item">
+            <a href="{% url 'accounts:user_record_detail' record.pk %}"
+              >Datensatz {{ record.id }}</a
+            >
+          </li>
+          <li class="breadcrumb-item active">Historie</li>
+        </ol>
+      </nav>
+      <h1>
+        <i class="bi bi-clock-history"></i>
+        Änderungshistorie
+      </h1>
+      <p class="text-muted">
+        Datensatz: {{ record.child_name|default:"(Kein Name)" }} | ID: {{
+        record.id }} | Familie: {{ record.family_id }}
+      </p>
+    </div>
+    <div class="col-auto">
+      <a
+        href="{% url 'accounts:user_record_detail' record.pk %}"
+        class="btn btn-outline-primary"
+      >
+        <i class="bi bi-arrow-left"></i>
+        Zurück zum Datensatz
+      </a>
+    </div>
+  </div>
+
+  <!-- Record Summary Card -->
+  <div class="row mb-4">
+    <div class="col">
+      <div class="card bg-light">
+        <div class="card-body">
+          <div class="row">
+            <div class="col-md-3">
+              <strong>Kind:</strong> {{ record.child_name|default:"-" }}
+            </div>
+            <div class="col-md-3">
+              <strong>Eltern:</strong> {{ record.parent_name|default:"-" }}
+            </div>
+            <div class="col-md-3">
+              <strong>FamilyID:</strong> {{ record.family_id|default:"-" }}
+            </div>
+            <div class="col-md-3"><strong>Jahr:</strong> {{ record.year }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- History Events -->
+  <div class="row">
+    <div class="col">
+      <div class="card">
+        <div
+          class="card-header d-flex justify-content-between align-items-center"
+        >
+          <span>
+            <i class="bi bi-list-ul"></i>
+            Ereignisse
+          </span>
+          <span class="badge bg-secondary">
+            {{ total_events }} Ereignisse
+          </span>
+        </div>
+        <div class="card-body">
+          {% if history_events %}
+          <div class="history-timeline">
+            {% for event in history_events %}
+            <div class="history-event event-{{ event.type|lower }}">
+              <div class="card">
+                <div class="card-header py-2">
+                  <div
+                    class="d-flex justify-content-between align-items-center"
+                  >
+                    <div>
+                      <span class="badge {{ event.type_class }}">
+                        {{ event.type_display }}
+                      </span>
+                      <span class="ms-2 text-muted small">
+                        <i class="bi bi-person"></i>
+                        {{ event.user }}
+                      </span>
+                    </div>
+                    <div class="text-muted small">
+                      <i class="bi bi-calendar"></i>
+                      {% if event.time %} {{ event.time|date:"d.m.Y H:i" }} {%
+                      else %} (Kein Datum) {% endif %}
+                    </div>
+                  </div>
+                </div>
+                <div class="card-body py-2">
+                  {% if event.changes %}
+                  <ul class="list-unstyled mb-0">
+                    {% for change in event.changes %}
+                    <li class="mb-1">
+                      <strong>{{ change.field }}:</strong>
+                      {% if change.old %}
+                      <span class="old-value">{{ change.old }}</span>
+                      {% else %}
+                      <span class="text-muted">(leer)</span>
+                      {% endif %}
+                      <span class="change-arrow">→</span>
+                      {% if change.new %}
+                      <span class="new-value">{{ change.new }}</span>
+                      {% else %}
+                      <span class="text-muted">(leer)</span>
+                      {% endif %}
+                    </li>
+                    {% endfor %}
+                  </ul>
+                  {% else %}
+                  <span class="text-muted"
+                    >Keine Feldänderungen aufgezeichnet.</span
+                  >
+                  {% endif %} {% if event.comment %}
+                  <div class="mt-2 p-2 bg-light rounded">
+                    <i class="bi bi-chat-left-text"></i>
+                    <em>{{ event.comment }}</em>
+                  </div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="text-center py-4 text-muted">
+            <i class="bi bi-clock-history fs-1"></i>
+            <p class="mt-2 mb-0">Keine Änderungshistorie vorhanden.</p>
+            {% if has_raw_history %}
+            <p class="small">
+              Es gibt eine rohe Historie, die noch nicht verarbeitet wurde.
+            </p>
+            {% endif %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div class="row mt-4">
+    <div class="col">
+      <div class="card bg-light">
+        <div class="card-body py-2">
+          <strong class="me-3">Legende:</strong>
+          <span class="badge bg-info me-2">Änderung</span>
+          <span class="badge bg-success me-2">Erstellt/Genehmigt</span>
+          <span class="badge bg-danger me-2">Abgelehnt</span>
+          <span class="badge bg-warning me-2">Rückwirkend</span>
+          <span class="badge bg-secondary me-2">Importiert</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

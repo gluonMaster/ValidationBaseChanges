@@ -1,0 +1,70 @@
+{% extends "base.html" %} {% comment %} Login page template. {% endcomment %} {%
+block title %}Anmelden - KindEltern{% endblock %} {% block content %}
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-md-5">
+      <div class="card shadow">
+        <div class="card-header text-center bg-primary text-white">
+          <h4 class="mb-0">
+            <i class="bi bi-person-circle"></i>
+            KindEltern Anmeldung
+          </h4>
+        </div>
+        <div class="card-body p-4">
+          {% if form.errors %}
+          <div class="alert alert-danger" role="alert">
+            <i class="bi bi-exclamation-triangle"></i>
+            Benutzername oder Passwort ist falsch.
+          </div>
+          {% endif %}
+
+          <form method="post" novalidate>
+            {% csrf_token %}
+
+            <div class="mb-3">
+              <label for="id_username" class="form-label">
+                <i class="bi bi-person"></i>
+                Benutzername
+              </label>
+              <input
+                type="text"
+                name="username"
+                id="id_username"
+                class="form-control {% if form.errors %}is-invalid{% endif %}"
+                autofocus
+                required
+              />
+            </div>
+
+            <div class="mb-4">
+              <label for="id_password" class="form-label">
+                <i class="bi bi-lock"></i>
+                Passwort
+              </label>
+              <input
+                type="password"
+                name="password"
+                id="id_password"
+                class="form-control {% if form.errors %}is-invalid{% endif %}"
+                required
+              />
+            </div>
+
+            <input type="hidden" name="next" value="{{ next }}" />
+
+            <div class="d-grid">
+              <button type="submit" class="btn btn-primary btn-lg">
+                <i class="bi bi-box-arrow-in-right"></i>
+                Anmelden
+              </button>
+            </div>
+          </form>
+        </div>
+        <div class="card-footer text-center text-muted">
+          <small> Bei Problemen wenden Sie sich an den Administrator. </small>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% comment %}
+Template for Declined Overview - Admin view of all declined records.
+Mirrors VBA: Export_DeclinedTools.ShowDeclinedOverview
+{% endcomment %}
+
+{% block title %}Abgelehnte Datensätze{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <h1>
+                <i class="bi bi-x-circle text-danger"></i>
+                Abgelehnte Datensätze
+            </h1>
+            <p class="text-muted">
+                Jahr: {{ current_year }} |
+                {{ declined_count }} abgelehnt |
+                {{ pending_count }} wartend
+            </p>
+        </div>
+        <div class="col-auto">
+            <a href="{% url 'karteien:record_list' %}?year={{ current_year }}" 
+               class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i>
+                Zur Kartei
+            </a>
+        </div>
+    </div>
+
+    <!-- Year Filter -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-center">
+                <div class="col-auto">
+                    <label for="year" class="col-form-label">Jahr:</label>
+                </div>
+                <div class="col-auto">
+                    <select name="year" id="year" class="form-select" onchange="this.form.submit()">
+                        {% for y in available_years %}
+                        <option value="{{ y }}" {% if y|stringformat:"s" == current_year|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-auto">
+                    {% if declined_changes %}
+                    <form method="post" action="{% url 'approvals:apply_all_fixes' %}" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="year" value="{{ current_year }}">
+                        <button type="submit" class="btn btn-success"
+                                onclick="return confirm('Alle abgelehnten Datensätze zur erneuten Genehmigung einreichen?')">
+                            <i class="bi bi-check-all"></i>
+                            Alle Korrekturen anwenden
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Explanation -->
+    <div class="alert alert-info mb-4">
+        <i class="bi bi-info-circle"></i>
+        <strong>Hinweis:</strong>
+        Abgelehnte Datensätze wurden von einem Superadmin zurückgewiesen. 
+        Sie können die Daten auf der Kartei-Seite korrigieren und dann 
+        "Korrektur anwenden" klicken, um sie erneut zur Genehmigung einzureichen.
+    </div>
+
+    <!-- Results -->
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-table"></i>
+            Abgelehnte Datensätze ({{ page_obj.paginator.count }})
+        </div>
+        <div class="card-body p-0">
+            {% if declined_changes %}
+            <div class="table-responsive">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>ID</th>
+                            <th>FamilyID</th>
+                            <th>Eltern</th>
+                            <th>Kind</th>
+                            <th>Ablehnungsgrund</th>
+                            <th>Abgelehnt von</th>
+                            <th>Datum</th>
+                            <th>Aktionen</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for dc in declined_changes %}
+                        <tr>
+                            <td>{{ dc.record.id }}</td>
+                            <td>{{ dc.record.family_id }}</td>
+                            <td>{{ dc.record.parent_name|default:"-" }}</td>
+                            <td>{{ dc.record.child_name|default:"-" }}</td>
+                            <td>
+                                {% if dc.decline_reason %}
+                                <span class="text-truncate d-inline-block" 
+                                      style="max-width: 200px;"
+                                      title="{{ dc.decline_reason }}">
+                                    {{ dc.decline_reason }}
+                                </span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ dc.declined_by.username|default:"-" }}</td>
+                            <td>{{ dc.created_at|date:"d.m.Y H:i" }}</td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <a href="{% url 'approvals:declined_detail' dc.pk %}" 
+                                       class="btn btn-outline-primary"
+                                       title="Details anzeigen">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                    <a href="{% url 'karteien:record_update' dc.record.pk %}" 
+                                       class="btn btn-outline-secondary"
+                                       title="Datensatz bearbeiten">
+                                        <i class="bi bi-pencil"></i>
+                                    </a>
+                                    <form method="post" 
+                                          action="{% url 'approvals:apply_fix' dc.pk %}" 
+                                          class="d-inline">
+                                        {% csrf_token %}
+                                        <button type="submit" 
+                                                class="btn btn-outline-success"
+                                                title="Korrektur anwenden"
+                                                onclick="return confirm('Datensatz zur erneuten Genehmigung einreichen?')">
+                                            <i class="bi bi-check-lg"></i>
+                                        </button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                <p class="text-muted mt-3">Keine abgelehnten Datensätze vorhanden.</p>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Pagination -->
+        {% if page_obj.has_other_pages %}
+        <div class="card-footer">
+            <nav aria-label="Seitennavigation">
+                <ul class="pagination justify-content-center mb-0">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}&year={{ current_year }}">
+                            <i class="bi bi-chevron-left"></i>
+                        </a>
+                    </li>
+                    {% endif %}
+                    
+                    <li class="page-item disabled">
+                        <span class="page-link">
+                            Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}
+                        </span>
+                    </li>
+                    
+                    {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.next_page_number }}&year={{ current_year }}">
+                            <i class="bi bi-chevron-right"></i>
+                        </a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

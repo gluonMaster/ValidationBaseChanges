@@ -140,24 +140,40 @@ Sub kundig(lin As Integer)
 End Sub
 
 Private Sub btnKuendig_Click()
+    ' Full cancellation for entire child block.
+    ' Marks all children in the family block as cancelled using existing kundig() logic.
+    ' Does NOT delete rows or move them to another sheet.
+    
     OptimizeStart
-'vollstandige
-  Dim im As Integer, letKn As Integer
-  Dim letKni As Integer
-
-  For letKni = 3 To 10000
-    If Worksheets("KundigungN").Range("A" & letKni) = "" Then
-      letKn = letKni
-      letKni = 11000
+    
+    ' Validate that a family block is selected
+    If nrRow = 0 Or kindAnzahl <= 0 Then
+        OptimizeEnd
+        MsgBox "Bitte waehlen Sie zuerst eine Familie auf dem Blatt 'Kartei' aus.", vbExclamation, "Kuendigung"
+        Exit Sub
     End If
-  Next letKni
-
-  Worksheets("Kartei").Range("A" & nrRow & ":AF" & (nrRow + kindAnzahl)).Cut Worksheets("KundigungN").Range("A" & letKn)
-  Worksheets("Kartei").Range("A" & nrRow & ":AF" & (nrRow + kindAnzahl)).Delete Shift:=xlUp
-  For im = 1 To kindAnzahl + 1
-    Worksheets("KundigungN").Range("T" & (letKn + im - 1)) = Date
-  Next im
-  OptimizeEnd
+    
+    Dim lin As Integer
+    
+    ' Process each child in the block using existing kundig() logic
+    ' Note: kundig() handles its own OptimizeStart/End, so we end ours first
+    OptimizeEnd
+    
+    For lin = 1 To kindAnzahl
+        ' Call existing kundig procedure for each child row
+        Call kundig(lin)
+    Next lin
+    
+    ' Hide all KN/command buttons for the current family block after full cancellation
+    ' Check T column for "KN" marker to stay consistent with bearbeit() logic
+    Dim i As Integer
+    For i = 1 To kindAnzahl
+        If Trim$(CStr(Worksheets("Kartei").Cells(nrRow + i, "T").Value)) = "KN" Then
+            Me.Controls("CommandButton" & i).Visible = False
+            Me.Controls("btnKN" & i).Visible = False
+        End If
+    Next i
+    
 End Sub
 
 Private Sub KorrekturKorKind(nrRowX As Integer, skipX As Integer)
@@ -862,6 +878,20 @@ End Sub
 
 Private Sub UserForm_Activate()
     OptimizeStart
+    
+    ' Reset Kartei sheet view to ensure no filters/hidden rows affect form logic
+    Dim wsKartei As Worksheet
+    Dim wsKarteiOriginal As Worksheet
+    
+    On Error Resume Next
+    Set wsKartei = ThisWorkbook.Worksheets("Kartei")
+    Set wsKarteiOriginal = ThisWorkbook.Worksheets("Kartei_Original")
+    On Error GoTo 0
+    
+    If Not wsKartei Is Nothing And Not wsKarteiOriginal Is Nothing Then
+        Call ResetSheetView(wsKartei, wsKarteiOriginal)
+    End If
+    
  Dim i As Integer, j As Integer
  Dim p As Integer, p1 As Integer
  Dim kind As String

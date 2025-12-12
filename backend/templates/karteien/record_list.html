@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% comment %}
+Template for Kartei record list view.
+Admin/Operator UI for browsing and filtering Kartei records.
+{% endcomment %}
+
+{% block title %}Kartei - Übersicht{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <h1>
+                <i class="bi bi-card-list"></i>
+                Kartei Übersicht
+            </h1>
+            <p class="text-muted">Jahr: {{ current_year }}</p>
+        </div>
+        <div class="col-auto">
+            <a href="{% url 'karteien:record_create' %}?year={{ current_year }}" 
+               class="btn btn-success">
+                <i class="bi bi-plus-lg"></i>
+                Neuer Datensatz
+            </a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-funnel"></i>
+            Filter
+        </div>
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-2">
+                    <label for="year" class="form-label">Jahr</label>
+                    <select name="year" id="year" class="form-select">
+                        {% for y in available_years %}
+                        <option value="{{ y }}" {% if y|stringformat:"s" == current_year|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="family_id" class="form-label">FamilyID</label>
+                    <input type="text" name="family_id" id="family_id" 
+                           class="form-control" value="{{ current_filters.family_id }}"
+                           placeholder="Suche...">
+                </div>
+                <div class="col-md-2">
+                    <label for="parent" class="form-label">Eltern</label>
+                    <input type="text" name="parent" id="parent" 
+                           class="form-control" value="{{ current_filters.parent }}"
+                           placeholder="Suche...">
+                </div>
+                <div class="col-md-2">
+                    <label for="child" class="form-label">Kind</label>
+                    <input type="text" name="child" id="child" 
+                           class="form-control" value="{{ current_filters.child }}"
+                           placeholder="Suche...">
+                </div>
+                <div class="col-md-2">
+                    <label for="status" class="form-label">Status</label>
+                    <select name="status" id="status" class="form-select">
+                        <option value="">Alle</option>
+                        <option value="NORMAL" {% if current_filters.status == "NORMAL" %}selected{% endif %}>Normal</option>
+                        <option value="PENDING" {% if current_filters.status == "PENDING" %}selected{% endif %}>Wartend</option>
+                        <option value="DECLINED" {% if current_filters.status == "DECLINED" %}selected{% endif %}>Abgelehnt</option>
+                    </select>
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary me-2">
+                        <i class="bi bi-search"></i>
+                        Suchen
+                    </button>
+                    <a href="{% url 'karteien:record_list' %}?year={{ current_year }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-x-lg"></i>
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Results -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>
+                <i class="bi bi-table"></i>
+                Ergebnisse ({{ page_obj.paginator.count }} Datensätze)
+            </span>
+            <div>
+                <a href="{% url 'approvals:pending_list' %}?year={{ current_year }}" 
+                   class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-hourglass-split"></i>
+                    Wartend
+                </a>
+                <a href="{% url 'approvals:declined_overview' %}?year={{ current_year }}" 
+                   class="btn btn-sm btn-outline-danger">
+                    <i class="bi bi-x-circle"></i>
+                    Abgelehnt
+                </a>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            {% if records %}
+            <div class="table-responsive">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>ID</th>
+                            <th>FamilyID</th>
+                            <th>Eltern</th>
+                            <th>Kind</th>
+                            <th>Fach 1</th>
+                            <th>Fach 2</th>
+                            <th>Status</th>
+                            <th>SEPA</th>
+                            <th>Aktionen</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in records %}
+                        <tr>
+                            <td>{{ record.id }}</td>
+                            <td>{{ record.family_id }}</td>
+                            <td>{{ record.parent_name }}</td>
+                            <td>{{ record.child_name }}</td>
+                            <td>{{ record.subject1|default:"-" }}</td>
+                            <td>{{ record.subject2|default:"-" }}</td>
+                            <td>
+                                {% if record.status == "PENDING" %}
+                                <span class="badge bg-primary">
+                                    <i class="bi bi-hourglass-split"></i>
+                                    Wartend
+                                </span>
+                                {% elif record.status == "DECLINED" %}
+                                <span class="badge bg-danger">
+                                    <i class="bi bi-x-circle"></i>
+                                    Abgelehnt
+                                </span>
+                                {% else %}
+                                <span class="badge bg-success">
+                                    <i class="bi bi-check-circle"></i>
+                                    Normal
+                                </span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if record.is_sepa %}
+                                <span class="badge bg-warning text-dark">SEPA</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{% url 'karteien:record_detail' record.pk %}" 
+                                   class="btn btn-sm btn-outline-primary"
+                                   title="Anzeigen">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                {% if record.status == "NORMAL" %}
+                                <a href="{% url 'karteien:record_update' record.pk %}" 
+                                   class="btn btn-sm btn-outline-secondary"
+                                   title="Bearbeiten">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                {% elif record.status == "PENDING" %}
+                                <span class="btn btn-sm btn-outline-secondary disabled"
+                                      title="Bearbeitung gesperrt – wartet auf Freigabe">
+                                    <i class="bi bi-hourglass-split"></i>
+                                </span>
+                                {% elif record.status == "DECLINED" %}
+                                <a href="{% url 'approvals:declined_overview' %}?family_id={{ record.family_id }}" 
+                                   class="btn btn-sm btn-outline-danger"
+                                   title="Zur Abgelehnt-Übersicht">
+                                    <i class="bi bi-x-circle"></i>
+                                </a>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
+                <p class="text-muted mt-3">Keine Datensätze gefunden.</p>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Pagination -->
+        {% if page_obj.has_other_pages %}
+        <div class="card-footer">
+            <nav aria-label="Seitennavigation">
+                <ul class="pagination justify-content-center mb-0">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}&year={{ current_year }}&family_id={{ current_filters.family_id }}&parent={{ current_filters.parent }}&child={{ current_filters.child }}&status={{ current_filters.status }}">
+                            <i class="bi bi-chevron-left"></i>
+                        </a>
+                    </li>
+                    {% endif %}
+                    
+                    <li class="page-item disabled">
+                        <span class="page-link">
+                            Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}
+                        </span>
+                    </li>
+                    
+                    {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.next_page_number }}&year={{ current_year }}&family_id={{ current_filters.family_id }}&parent={{ current_filters.parent }}&child={{ current_filters.child }}&status={{ current_filters.status }}">
+                            <i class="bi bi-chevron-right"></i>
+                        </a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

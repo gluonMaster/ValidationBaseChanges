@@ -1,0 +1,52 @@
+# Docker Compose configuration for KindEltern Web
+# Works for both local development and VPS deployment
+#
+# Usage:
+#   Development: docker compose up --build
+#   Production:  docker compose up -d --build
+#
+# Make sure to copy .env.example to .env and configure values before running.
+
+services:
+  web:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kindeltern_web
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount source code for development (hot reload)
+      # Comment out for production if not needed
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      # Override POSTGRES_HOST to use docker service name
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    container_name: kindeltern_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - .env
+    ports:
+      # Expose for local debugging; consider removing on production
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: kindeltern_postgres_data

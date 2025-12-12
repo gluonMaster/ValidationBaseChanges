@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% comment %}
+Superadmin: Pending Changes Overview
+
+Mirrors VBA: valid_ImportPending.LoadPendingChangesFromPre
+
+Shows all unprocessed pending changes with filters and links to War/Ist view.
+{% endcomment %}
+
+{% block title %}Superadmin - Ausstehende Änderungen{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <h1>
+                <i class="bi bi-shield-check text-warning"></i>
+                Superadmin - Ausstehende Änderungen
+            </h1>
+            <p class="text-muted">
+                Jahr: {{ current_year }} |
+                {{ pending_count }} Änderung(en) warten auf Ihre Entscheidung
+            </p>
+        </div>
+        <div class="col-auto">
+            <div class="btn-group">
+                <a href="{% url 'approvals:superadmin_neu_list' %}?year={{ current_year }}" 
+                   class="btn btn-outline-info">
+                    <i class="bi bi-star-fill"></i>
+                    NeuList
+                    {% if new_records_count > 0 %}
+                    <span class="badge bg-info">{{ new_records_count }}</span>
+                    {% endif %}
+                </a>
+                <a href="{% url 'karteien:record_list' %}?year={{ current_year }}" 
+                   class="btn btn-outline-secondary">
+                    <i class="bi bi-list"></i>
+                    Kartei
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-funnel"></i> Filter
+        </div>
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-end">
+                <div class="col-md-2">
+                    <label for="year" class="form-label">Jahr:</label>
+                    <select name="year" id="year" class="form-select">
+                        {% for y in available_years %}
+                        <option value="{{ y }}" {% if y == current_year %}selected{% endif %}>{{ y }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="family_id" class="form-label">FamilyID:</label>
+                    <input type="text" name="family_id" id="family_id" 
+                           class="form-control" value="{{ filter_family_id }}"
+                           placeholder="Suche...">
+                </div>
+                <div class="col-md-2">
+                    <label for="parent" class="form-label">Eltern:</label>
+                    <input type="text" name="parent" id="parent" 
+                           class="form-control" value="{{ filter_parent }}"
+                           placeholder="Suche...">
+                </div>
+                <div class="col-md-2">
+                    <label for="child" class="form-label">Kind:</label>
+                    <input type="text" name="child" id="child" 
+                           class="form-control" value="{{ filter_child }}"
+                           placeholder="Suche...">
+                </div>
+                <div class="col-md-4">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-search"></i> Filtern
+                    </button>
+                    <a href="{% url 'approvals:superadmin_pending_overview' %}?year={{ current_year }}" 
+                       class="btn btn-outline-secondary">
+                        <i class="bi bi-x-circle"></i> Reset
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Bulk Actions -->
+    {% if pending_changes %}
+    <div class="card mb-4">
+        <div class="card-header bg-warning-subtle">
+            <i class="bi bi-lightning"></i> Massenaktionen
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <form method="post" action="{% url 'approvals:superadmin_approve_all' %}" 
+                          class="d-flex gap-2 align-items-center">
+                        {% csrf_token %}
+                        <input type="hidden" name="year" value="{{ current_year }}">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" 
+                                   name="confirm" value="yes" id="confirmApprove">
+                            <label class="form-check-label" for="confirmApprove">
+                                Bestätigen
+                            </label>
+                        </div>
+                        <button type="submit" class="btn btn-success">
+                            <i class="bi bi-check-all"></i>
+                            Alle genehmigen ({{ pending_count }})
+                        </button>
+                    </form>
+                </div>
+                <div class="col-md-6">
+                    <form method="post" action="{% url 'approvals:superadmin_decline_all' %}" 
+                          class="d-flex gap-2 align-items-center">
+                        {% csrf_token %}
+                        <input type="hidden" name="year" value="{{ current_year }}">
+                        <input type="text" name="comment" class="form-control form-control-sm" 
+                               placeholder="Begründung für Ablehnung..." required
+                               style="max-width: 250px;">
+                        <button type="submit" class="btn btn-danger">
+                            <i class="bi bi-x-circle"></i>
+                            Alle ablehnen ({{ pending_count }})
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Results -->
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-table"></i>
+            Ausstehende Änderungen ({{ page_obj.paginator.count }})
+        </div>
+        <div class="card-body p-0">
+            {% if pending_changes %}
+            <div class="table-responsive">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>ID</th>
+                            <th>FamilyID</th>
+                            <th>Eltern</th>
+                            <th>Kind</th>
+                            <th>Jahr</th>
+                            <th>Erstellt</th>
+                            <th>Aktualisiert</th>
+                            <th class="text-center">Aktionen</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for pc in pending_changes %}
+                        <tr>
+                            <td>
+                                <strong>{{ pc.record.id }}</strong>
+                            </td>
+                            <td>{{ pc.record.family_id|default:"-" }}</td>
+                            <td>{{ pc.record.parent_name|default:"-" }}</td>
+                            <td>{{ pc.record.child_name|default:"-" }}</td>
+                            <td>{{ pc.record.year }}</td>
+                            <td>{{ pc.created_at|date:"d.m.Y H:i" }}</td>
+                            <td>{{ pc.updated_at|date:"d.m.Y H:i" }}</td>
+                            <td class="text-center">
+                                <a href="{% url 'approvals:superadmin_war_ist' pc.pk %}" 
+                                   class="btn btn-sm btn-warning"
+                                   title="War/Ist Vergleich">
+                                    <i class="bi bi-arrow-left-right"></i>
+                                    War/Ist
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            {% if page_obj.has_other_pages %}
+            <div class="card-footer">
+                <nav aria-label="Page navigation">
+                    <ul class="pagination justify-content-center mb-0">
+                        {% if page_obj.has_previous %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page=1&year={{ current_year }}&family_id={{ filter_family_id }}&parent={{ filter_parent }}&child={{ filter_child }}">
+                                &laquo; Erste
+                            </a>
+                        </li>
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ page_obj.previous_page_number }}&year={{ current_year }}&family_id={{ filter_family_id }}&parent={{ filter_parent }}&child={{ filter_child }}">
+                                Zurück
+                            </a>
+                        </li>
+                        {% endif %}
+                        
+                        <li class="page-item disabled">
+                            <span class="page-link">
+                                Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}
+                            </span>
+                        </li>
+                        
+                        {% if page_obj.has_next %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ page_obj.next_page_number }}&year={{ current_year }}&family_id={{ filter_family_id }}&parent={{ filter_parent }}&child={{ filter_child }}">
+                                Weiter
+                            </a>
+                        </li>
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}&year={{ current_year }}&family_id={{ filter_family_id }}&parent={{ filter_parent }}&child={{ filter_child }}">
+                                Letzte &raquo;
+                            </a>
+                        </li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            </div>
+            {% endif %}
+            
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-check-circle text-success display-4"></i>
+                <h4 class="mt-3">Keine ausstehenden Änderungen</h4>
+                <p class="text-muted">
+                    Es gibt keine Änderungen, die auf Ihre Genehmigung warten.
+                </p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% comment %}
+Superadmin: War/Ist Comparison View
+
+Mirrors VBA: valid_GrossGeschichteDecision.BuildPendingDecisionSheet
+
+Shows side-by-side comparison of original (War) and pending (Ist) values.
+Allows Superadmin to approve or decline the change.
+{% endcomment %}
+
+{% block title %}War/Ist Vergleich - ID {{ record.id }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .war-ist-table th {
+        width: 20%;
+    }
+    .changed-cell {
+        background-color: #fff3cd !important;
+    }
+    .war-column {
+        background-color: #f8f9fa;
+    }
+    .ist-column {
+        background-color: #e7f5ff;
+    }
+    .decision-form {
+        position: sticky;
+        top: 70px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'approvals:superadmin_pending_overview' %}">Ausstehende Änderungen</a>
+                    </li>
+                    <li class="breadcrumb-item active" aria-current="page">
+                        ID {{ record.id }}
+                    </li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-arrow-left-right text-warning"></i>
+                War/Ist Vergleich
+            </h1>
+            <p class="text-muted">
+                Datensatz ID: <strong>{{ record.id }}</strong> |
+                Jahr: {{ record.year }} |
+                {{ changed_count }} Änderung(en) erkannt
+            </p>
+        </div>
+        <div class="col-auto">
+            <a href="{% url 'approvals:superadmin_pending_overview' %}" 
+               class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i>
+                Zurück zur Übersicht
+            </a>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Main Content: War/Ist Table -->
+        <div class="col-lg-8">
+            <!-- Record Info -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <i class="bi bi-person-badge"></i>
+                    Datensatz-Informationen
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <strong>FamilyID:</strong><br>
+                            {{ record.family_id|default:"-" }}
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Eltern:</strong><br>
+                            {{ record.parent_name|default:"-" }}
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Kind:</strong><br>
+                            {{ record.child_name|default:"-" }}
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Status:</strong><br>
+                            <span class="badge bg-warning">PENDING</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- War/Ist Comparison Table -->
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-table"></i>
+                    War/Ist Vergleich
+                    <span class="badge bg-warning">{{ changed_count }} Änderungen</span>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-bordered war-ist-table mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Feld</th>
+                                <th class="war-column">War (Original)</th>
+                                <th class="ist-column">Ist (Neu)</th>
+                                <th class="text-center" style="width: 80px;">Geändert</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for comp in comparisons %}
+                            <tr{% if comp.changed %} class="table-warning"{% endif %}>
+                                <th>{{ comp.field_label }}</th>
+                                <td class="war-column{% if comp.changed %} changed-cell{% endif %}">
+                                    {{ comp.war|default:"-"|truncatechars:100 }}
+                                </td>
+                                <td class="ist-column{% if comp.changed %} changed-cell{% endif %}">
+                                    {{ comp.ist|default:"-"|truncatechars:100 }}
+                                </td>
+                                <td class="text-center">
+                                    {% if comp.changed %}
+                                    <i class="bi bi-exclamation-circle-fill text-warning"></i>
+                                    {% else %}
+                                    <i class="bi bi-dash text-muted"></i>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- History Link -->
+            {% if has_history %}
+            <div class="mt-3">
+                <a href="{% url 'approvals:superadmin_record_history' record.pk %}" 
+                   class="btn btn-outline-info">
+                    <i class="bi bi-clock-history"></i>
+                    Historie anzeigen
+                </a>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Sidebar: Decision Form -->
+        <div class="col-lg-4">
+            <div class="decision-form">
+                <div class="card border-warning">
+                    <div class="card-header bg-warning">
+                        <i class="bi bi-check-square"></i>
+                        <strong>Entscheidung</strong>
+                    </div>
+                    <div class="card-body">
+                        <form method="post" id="decisionForm">
+                            {% csrf_token %}
+                            
+                            <!-- Decision Radio Buttons -->
+                            <div class="mb-4">
+                                <label class="form-label fw-bold">Ihre Entscheidung:</label>
+                                
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="radio" 
+                                           name="decision" id="decisionApproved" 
+                                           value="APPROVED" required>
+                                    <label class="form-check-label text-success" for="decisionApproved">
+                                        <i class="bi bi-check-circle-fill"></i>
+                                        <strong>Genehmigen</strong>
+                                        <small class="d-block text-muted">
+                                            Änderungen werden angewendet
+                                        </small>
+                                    </label>
+                                </div>
+                                
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" 
+                                           name="decision" id="decisionDeclined" 
+                                           value="DECLINED" required>
+                                    <label class="form-check-label text-danger" for="decisionDeclined">
+                                        <i class="bi bi-x-circle-fill"></i>
+                                        <strong>Ablehnen</strong>
+                                        <small class="d-block text-muted">
+                                            Änderungen werden zurückgewiesen
+                                        </small>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <!-- Comment (required for decline) -->
+                            <div class="mb-4">
+                                <label for="comment" class="form-label fw-bold">
+                                    Kommentar:
+                                    <small class="text-muted">(für Ablehnung erforderlich)</small>
+                                </label>
+                                <textarea class="form-control" id="comment" name="comment" 
+                                          rows="4" 
+                                          placeholder="Begründung oder Anmerkungen..."></textarea>
+                            </div>
+                            
+                            <!-- Submit Button -->
+                            <div class="d-grid gap-2">
+                                <button type="submit" class="btn btn-primary btn-lg">
+                                    <i class="bi bi-send"></i>
+                                    Entscheidung speichern
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Quick Info -->
+                <div class="card mt-3">
+                    <div class="card-body">
+                        <h6><i class="bi bi-info-circle"></i> Hinweise</h6>
+                        <ul class="small mb-0">
+                            <li>Bei <span class="text-success">Genehmigung</span> werden die Änderungen in die Kartei übernommen.</li>
+                            <li>Bei <span class="text-danger">Ablehnung</span> wird der Datensatz als DECLINED markiert.</li>
+                            <li>Der Admin erhält eine Benachrichtigung über Ihre Entscheidung.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('decisionForm');
+    const declineRadio = document.getElementById('decisionDeclined');
+    const commentField = document.getElementById('comment');
+    
+    form.addEventListener('submit', function(e) {
+        if (declineRadio.checked && !commentField.value.trim()) {
+            e.preventDefault();
+            alert('Bitte geben Sie eine Begründung für die Ablehnung ein.');
+            commentField.focus();
+        }
+    });
+});
+</script>
+{% endblock %}

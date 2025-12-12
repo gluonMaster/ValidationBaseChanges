@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% comment %}
+User Search Results - Search and list records (read-only).
+
+Displays:
+- Search form with current parameters
+- Results table with links to detail view
+- Pagination if more than 50 results
+
+This is a read-only interface. Users cannot modify any data.
+{% endcomment %}
+
+{% block title %}Suche - KindEltern{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'accounts:user_dashboard' %}">Übersicht</a>
+                    </li>
+                    <li class="breadcrumb-item active">Suche</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-search"></i>
+                Datensatz-Suche
+            </h1>
+        </div>
+    </div>
+
+    <!-- Search Form -->
+    <div class="row mb-4">
+        <div class="col">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-funnel"></i>
+                    Suchkriterien
+                </div>
+                <div class="card-body">
+                    <form method="get" action="{% url 'accounts:user_search' %}">
+                        <div class="row g-3">
+                            <div class="col-md-3">
+                                <label for="family_id" class="form-label">FamilyID</label>
+                                <input type="text" class="form-control" id="family_id" name="family_id" 
+                                       value="{{ search_params.family_id }}"
+                                       placeholder="z.B. FAM001">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="parent" class="form-label">Eltern</label>
+                                <input type="text" class="form-control" id="parent" name="parent" 
+                                       value="{{ search_params.parent }}"
+                                       placeholder="Name suchen...">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="child" class="form-label">Kind</label>
+                                <input type="text" class="form-control" id="child" name="child" 
+                                       value="{{ search_params.child }}"
+                                       placeholder="Name suchen...">
+                            </div>
+                            <div class="col-md-2">
+                                <label for="year" class="form-label">Jahr</label>
+                                <select class="form-select" id="year" name="year">
+                                    {% for year in available_years %}
+                                    <option value="{{ year }}" {% if year|stringformat:"s" == search_params.year %}selected{% endif %}>
+                                        {{ year }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-1 d-flex align-items-end">
+                                <button type="submit" class="btn btn-primary w-100">
+                                    <i class="bi bi-search"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results -->
+    {% if search_performed %}
+    <div class="row">
+        <div class="col">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>
+                        <i class="bi bi-list"></i>
+                        Suchergebnisse
+                    </span>
+                    <span class="badge bg-secondary">
+                        {{ records|length }} Datensätze
+                    </span>
+                </div>
+                <div class="card-body p-0">
+                    {% if records %}
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>ID</th>
+                                    <th>FamilyID</th>
+                                    <th>Eltern</th>
+                                    <th>Kind</th>
+                                    <th>Status</th>
+                                    <th>Aktionen</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for record in records %}
+                                <tr>
+                                    <td>{{ record.id }}</td>
+                                    <td>{{ record.family_id|default:"-" }}</td>
+                                    <td>{{ record.parent_name|default:"-" }}</td>
+                                    <td>{{ record.child_name|default:"-" }}</td>
+                                    <td>
+                                        {% if record.status == "PENDING" %}
+                                        <span class="badge bg-primary">Wartend</span>
+                                        {% elif record.status == "DECLINED" %}
+                                        <span class="badge bg-danger">Abgelehnt</span>
+                                        {% else %}
+                                        <span class="badge bg-success">Normal</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="{% url 'accounts:user_record_detail' record.pk %}" 
+                                           class="btn btn-sm btn-outline-primary"
+                                           title="Details anzeigen">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                        <a href="{% url 'accounts:user_record_history' record.pk %}" 
+                                           class="btn btn-sm btn-outline-secondary"
+                                           title="Historie anzeigen">
+                                            <i class="bi bi-clock-history"></i>
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="p-4 text-center text-muted">
+                        <i class="bi bi-search fs-1"></i>
+                        <p class="mt-2 mb-0">Keine Datensätze gefunden.</p>
+                        <p class="small">Versuchen Sie, Ihre Suchkriterien anzupassen.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pagination (if applicable) -->
+    {% if page_obj.has_other_pages %}
+    <div class="row mt-4">
+        <div class="col">
+            <nav aria-label="Seitennavigation">
+                <ul class="pagination justify-content-center">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{% for key, value in search_params.items %}{{ key }}={{ value }}&{% endfor %}page={{ page_obj.previous_page_number }}">
+                            &laquo; Zurück
+                        </a>
+                    </li>
+                    {% endif %}
+                    
+                    <li class="page-item disabled">
+                        <span class="page-link">
+                            Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}
+                        </span>
+                    </li>
+                    
+                    {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?{% for key, value in search_params.items %}{{ key }}={{ value }}&{% endfor %}page={{ page_obj.next_page_number }}">
+                            Weiter &raquo;
+                        </a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+        </div>
+    </div>
+    {% endif %}
+
+    {% else %}
+    <!-- No search performed yet -->
+    <div class="row">
+        <div class="col">
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i>
+                Geben Sie mindestens ein Suchkriterium ein (FamilyID, Eltern oder Kind), 
+                um Datensätze zu finden.
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

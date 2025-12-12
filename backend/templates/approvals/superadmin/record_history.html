@@ -1,0 +1,218 @@
+{% extends "base.html" %} {% comment %} Superadmin: Record History View Mirrors
+VBA: Geschichte.bas and valid_ParseHistory.bas Shows the history timeline for a
+single record. {% endcomment %} {% block title %}Historie - ID {{ record.id }}{%
+endblock %} {% block extra_css %}
+<style>
+  .history-timeline {
+    position: relative;
+    padding-left: 30px;
+  }
+  .history-timeline::before {
+    content: "";
+    position: absolute;
+    left: 10px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #dee2e6;
+  }
+  .history-event {
+    position: relative;
+    padding-bottom: 20px;
+  }
+  .history-event::before {
+    content: "";
+    position: absolute;
+    left: -24px;
+    top: 4px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #6c757d;
+    border: 2px solid #fff;
+  }
+  .history-event.event-approve::before {
+    background: #198754;
+  }
+  .history-event.event-decline::before {
+    background: #dc3545;
+  }
+  .history-event.event-create::before {
+    background: #0d6efd;
+  }
+  .history-event.event-change::before {
+    background: #ffc107;
+  }
+  .history-changes {
+    font-size: 0.9rem;
+  }
+  .change-item {
+    padding: 4px 0;
+    border-bottom: 1px dashed #eee;
+  }
+  .change-item:last-child {
+    border-bottom: none;
+  }
+  .old-value {
+    text-decoration: line-through;
+    color: #dc3545;
+  }
+  .new-value {
+    color: #198754;
+    font-weight: 500;
+  }
+</style>
+{% endblock %} {% block content %}
+<div class="container-fluid py-4">
+  <!-- Header -->
+  <div class="row mb-4">
+    <div class="col">
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+          <li class="breadcrumb-item">
+            <a href="{% url 'approvals:superadmin_pending_overview' %}"
+              >Ausstehende Änderungen</a
+            >
+          </li>
+          <li class="breadcrumb-item active" aria-current="page">
+            Historie ID {{ record.id }}
+          </li>
+        </ol>
+      </nav>
+      <h1>
+        <i class="bi bi-clock-history text-info"></i>
+        Änderungshistorie
+      </h1>
+      <p class="text-muted">
+        Datensatz ID: <strong>{{ record.id }}</strong> | Jahr: {{ record.year }}
+        | FamilyID: {{ record.family_id|default:"-" }}
+      </p>
+    </div>
+    <div class="col-auto">
+      <a href="javascript:history.back()" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i>
+        Zurück
+      </a>
+    </div>
+  </div>
+
+  <!-- Record Info -->
+  <div class="card mb-4">
+    <div class="card-header">
+      <i class="bi bi-person-badge"></i>
+      Datensatz-Informationen
+    </div>
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-3">
+          <strong>FamilyID:</strong><br />
+          {{ record.family_id|default:"-" }}
+        </div>
+        <div class="col-md-3">
+          <strong>Eltern:</strong><br />
+          {{ record.parent_name|default:"-" }}
+        </div>
+        <div class="col-md-3">
+          <strong>Kind:</strong><br />
+          {{ record.child_name|default:"-" }}
+        </div>
+        <div class="col-md-3">
+          <strong>Status:</strong><br />
+          {% if record.status == "PENDING" %}
+          <span class="badge bg-warning">PENDING</span>
+          {% elif record.status == "DECLINED" %}
+          <span class="badge bg-danger">DECLINED</span>
+          {% else %}
+          <span class="badge bg-success">Normal</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- History Timeline -->
+  <div class="card">
+    <div class="card-header">
+      <i class="bi bi-list-ul"></i>
+      Änderungsverlauf
+    </div>
+    <div class="card-body">
+      {% if has_history %} {% if history_entries %}
+      <div class="history-timeline">
+        {% for entry in history_entries %}
+        <div class="history-event event-{{ entry.event_type|lower }}">
+          <div class="d-flex justify-content-between align-items-start mb-2">
+            <div>
+              {% if entry.event_type == "APPROVE" %}
+              <span class="badge bg-success">
+                <i class="bi bi-check-circle"></i> Genehmigt
+              </span>
+              {% elif entry.event_type == "DECLINE" %}
+              <span class="badge bg-danger">
+                <i class="bi bi-x-circle"></i> Abgelehnt
+              </span>
+              {% elif entry.event_type == "CREATE" %}
+              <span class="badge bg-primary">
+                <i class="bi bi-plus-circle"></i> Erstellt
+              </span>
+              {% elif entry.event_type == "RUCK" %}
+              <span class="badge bg-secondary">
+                <i class="bi bi-arrow-counterclockwise"></i> Rückwirkend
+              </span>
+              {% else %}
+              <span class="badge bg-warning">
+                <i class="bi bi-pencil"></i> Geändert
+              </span>
+              {% endif %}
+            </div>
+            <small class="text-muted">
+              {% if entry.event_time %} {{ entry.event_time|date:"d.m.Y H:i" }}
+              {% endif %}
+            </small>
+          </div>
+
+          {% if entry.comment %}
+          <div class="alert alert-light mb-2 py-2">
+            <i class="bi bi-chat-left-quote"></i>
+            {{ entry.comment }}
+          </div>
+          {% endif %} {% if entry.changes %}
+          <div class="history-changes bg-light p-2 rounded">
+            {% for field, values in entry.changes.items %}
+            <div class="change-item">
+              <strong>{{ field }}:</strong>
+              <span class="old-value">{{ values.old|default:"(leer)" }}</span>
+              →
+              <span class="new-value">{{ values.new|default:"(leer)" }}</span>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% elif raw_history %}
+      <!-- Fallback: Show raw history if parsing failed -->
+      <div class="alert alert-info">
+        <i class="bi bi-info-circle"></i>
+        Die Historie konnte nicht vollständig geparst werden. Rohdaten:
+      </div>
+      <pre
+        class="bg-light p-3 rounded"
+        style="max-height: 400px; overflow-y: auto"
+      >
+{{ raw_history }}</pre
+      >
+      {% endif %} {% else %}
+      <div class="text-center py-5">
+        <i class="bi bi-inbox text-muted display-4"></i>
+        <h4 class="mt-3">Keine Historie vorhanden</h4>
+        <p class="text-muted">
+          Für diesen Datensatz wurden noch keine Änderungen aufgezeichnet.
+        </p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

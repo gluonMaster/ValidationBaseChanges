@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% comment %}
+Superadmin: NeuList - New Records View
+
+Mirrors VBA: valid_NeuList.RefreshNeuList
+
+Shows records with ID > last_seen_id for the current Superadmin.
+{% endcomment %}
+
+{% block title %}Superadmin - Neue Einträge{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <h1>
+                <i class="bi bi-star-fill text-info"></i>
+                Neue Einträge (NeuList)
+            </h1>
+            <p class="text-muted">
+                Jahr: {{ current_year }} |
+                Letzte gesehene ID: {{ last_seen_id }} |
+                {{ new_count }} neue Einträge seit letztem Besuch
+            </p>
+        </div>
+        <div class="col-auto">
+            <div class="btn-group">
+                <a href="{% url 'approvals:superadmin_pending_overview' %}?year={{ current_year }}" 
+                   class="btn btn-outline-warning">
+                    <i class="bi bi-hourglass-split"></i>
+                    Pending
+                </a>
+                <a href="{% url 'karteien:record_list' %}?year={{ current_year }}" 
+                   class="btn btn-outline-secondary">
+                    <i class="bi bi-list"></i>
+                    Kartei
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3 align-items-center">
+                <div class="col-auto">
+                    <label for="year" class="col-form-label">Jahr:</label>
+                </div>
+                <div class="col-auto">
+                    <select name="year" id="year" class="form-select" onchange="this.form.submit()">
+                        {% for y in available_years %}
+                        <option value="{{ y }}" {% if y == current_year %}selected{% endif %}>{{ y }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <form method="post" action="{% url 'approvals:superadmin_mark_seen' %}" class="d-inline">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-success">
+                            <i class="bi bi-check-all"></i>
+                            Alle als gesehen markieren
+                        </button>
+                    </form>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Info Alert -->
+    <div class="alert alert-info mb-4">
+        <i class="bi bi-info-circle"></i>
+        <strong>Info:</strong>
+        Diese Liste zeigt alle Datensätze mit einer ID größer als {{ last_seen_id }}.
+        Klicken Sie auf "Alle als gesehen markieren", um die Liste zurückzusetzen.
+    </div>
+
+    <!-- Results -->
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-table"></i>
+            Neue Einträge ({{ new_records|length }})
+        </div>
+        <div class="card-body p-0">
+            {% if new_records %}
+            <div class="table-responsive">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>ID</th>
+                            <th>FamilyID</th>
+                            <th>Eltern</th>
+                            <th>Kind</th>
+                            <th>Geburtsdatum</th>
+                            <th>Status</th>
+                            <th class="text-center">Aktionen</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in new_records %}
+                        <tr>
+                            <td>
+                                <strong class="text-info">{{ record.id }}</strong>
+                            </td>
+                            <td>{{ record.family_id|default:"-" }}</td>
+                            <td>{{ record.parent_name|default:"-" }}</td>
+                            <td>{{ record.child_name|default:"-" }}</td>
+                            <td>{{ record.birthdate|date:"d.m.Y"|default:"-" }}</td>
+                            <td>
+                                {% if record.status == "PENDING" %}
+                                <span class="badge bg-warning">PENDING</span>
+                                {% elif record.status == "DECLINED" %}
+                                <span class="badge bg-danger">DECLINED</span>
+                                {% else %}
+                                <span class="badge bg-success">Normal</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                <div class="btn-group btn-group-sm">
+                                    <a href="{% url 'karteien:record_detail' record.pk %}" 
+                                       class="btn btn-outline-primary"
+                                       title="Details anzeigen">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                    {% if record.status == "PENDING" %}
+                                    <a href="{% url 'approvals:superadmin_war_ist' record.pending_change.pk %}" 
+                                       class="btn btn-outline-warning"
+                                       title="War/Ist anzeigen">
+                                        <i class="bi bi-arrow-left-right"></i>
+                                    </a>
+                                    {% endif %}
+                                    <a href="{% url 'approvals:superadmin_record_history' record.pk %}" 
+                                       class="btn btn-outline-info"
+                                       title="Historie anzeigen">
+                                        <i class="bi bi-clock-history"></i>
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-check-circle text-success display-4"></i>
+                <h4 class="mt-3">Keine neuen Einträge</h4>
+                <p class="text-muted">
+                    Es gibt keine neuen Datensätze seit Ihrem letzten Besuch.
+                </p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,243 @@
+{% extends "base.html" %} {% comment %} User Record Detail - Read-only view of a
+KarteiRecord. Displays: - Basic record information (family, child, contacts,
+subjects) - Record status (normal/pending/declined) - Monthly values - Link to
+history view This is a read-only interface. No edit buttons are shown. {%
+endcomment %} {% block title %}Datensatz {{ record.id }} - KindEltern{% endblock
+%} {% block content %}
+<div class="container-fluid py-4">
+  <!-- Header -->
+  <div class="row mb-4">
+    <div class="col">
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+          <li class="breadcrumb-item">
+            <a href="{% url 'accounts:user_dashboard' %}">Übersicht</a>
+          </li>
+          <li class="breadcrumb-item">
+            <a href="{% url 'accounts:user_search' %}">Suche</a>
+          </li>
+          <li class="breadcrumb-item active">Datensatz {{ record.id }}</li>
+        </ol>
+      </nav>
+      <h1>
+        <i class="bi bi-person-badge"></i>
+        {{ record.child_name|default:"(Kein Name)" }}
+        <span class="badge {{ status_class }} fs-6">{{ status_display }}</span>
+      </h1>
+      <p class="text-muted">
+        ID: {{ record.id }} | Jahr: {{ record.year }} | Familie: {{
+        record.family_id }}
+      </p>
+    </div>
+    <div class="col-auto">
+      <a
+        href="{% url 'accounts:user_record_history' record.pk %}"
+        class="btn btn-outline-primary"
+      >
+        <i class="bi bi-clock-history"></i>
+        Historie anzeigen
+      </a>
+    </div>
+  </div>
+
+  <!-- Status Alerts -->
+  {% if record.status == "PENDING" %}
+  <div class="alert alert-primary" role="alert">
+    <i class="bi bi-hourglass-split"></i>
+    <strong>Wartend auf Genehmigung:</strong>
+    Änderungen an diesem Datensatz warten auf Superadmin-Prüfung.
+  </div>
+  {% endif %} {% if record.status == "DECLINED" %}
+  <div class="alert alert-danger" role="alert">
+    <i class="bi bi-x-circle"></i>
+    <strong>Abgelehnt:</strong>
+    Änderungen an diesem Datensatz wurden abgelehnt. {% if declined_count > 0 %}
+    ({{ declined_count }} Ablehnungen) {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="row">
+    <!-- Basic Info -->
+    <div class="col-md-6">
+      <div class="card mb-4">
+        <div class="card-header">
+          <i class="bi bi-person"></i>
+          Grunddaten
+        </div>
+        <div class="card-body">
+          <dl class="row mb-0">
+            <dt class="col-sm-4">FamilyID</dt>
+            <dd class="col-sm-8">{{ record.family_id|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Eltern</dt>
+            <dd class="col-sm-8">{{ record.parent_name|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Kind</dt>
+            <dd class="col-sm-8">{{ record.child_name|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Geburtsdatum</dt>
+            <dd class="col-sm-8">
+              {{ record.birthdate|default:"-"|date:"d.m.Y" }}
+            </dd>
+
+            <dt class="col-sm-4">Adresse</dt>
+            <dd class="col-sm-8">{{ record.address|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Telefon</dt>
+            <dd class="col-sm-8">{{ record.phone|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Mobil</dt>
+            <dd class="col-sm-8">{{ record.mobile|default:"-" }}</dd>
+
+            <dt class="col-sm-4">E-Mail</dt>
+            <dd class="col-sm-8">
+              {% if record.email %}
+              <a href="mailto:{{ record.email }}">{{ record.email }}</a>
+              {% else %} - {% endif %}
+            </dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+
+    <!-- Subjects and Extras -->
+    <div class="col-md-6">
+      <div class="card mb-4">
+        <div class="card-header">
+          <i class="bi bi-book"></i>
+          Fächer & Preise
+        </div>
+        <div class="card-body">
+          <dl class="row mb-0">
+            <dt class="col-sm-4">Fach 1</dt>
+            <dd class="col-sm-8">{{ record.subject1|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Preis 1</dt>
+            <dd class="col-sm-8">
+              {% if record.price1 %} {{ record.price1|floatformat:2 }} € {% else
+              %} - {% endif %}
+            </dd>
+
+            <dt class="col-sm-4">Fach 2</dt>
+            <dd class="col-sm-8">{{ record.subject2|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Preis 2</dt>
+            <dd class="col-sm-8">
+              {% if record.price2 %} {{ record.price2|floatformat:2 }} € {% else
+              %} - {% endif %}
+            </dd>
+
+            <hr class="my-2" />
+
+            <dt class="col-sm-4">Zusatz 1</dt>
+            <dd class="col-sm-8">{{ record.extra1|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Zusatz 2</dt>
+            <dd class="col-sm-8">{{ record.extra2|default:"-" }}</dd>
+
+            <dt class="col-sm-4">Zusatz 3</dt>
+            <dd class="col-sm-8">{{ record.extra3|default:"-" }}</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Monthly Values -->
+  <div class="row">
+    <div class="col">
+      <div class="card mb-4">
+        <div class="card-header">
+          <i class="bi bi-calendar3"></i>
+          Monatswerte
+        </div>
+        <div class="card-body">
+          <div class="row">
+            {% for month in months %}
+            <div class="col-md-2 col-sm-3 col-4 mb-3">
+              <div class="text-center">
+                <div class="fw-bold small text-muted">{{ month.name }}</div>
+                <div class="fs-5">
+                  {% if month.value %} {{ month.value|floatformat:2 }} {% else
+                  %}
+                  <span class="text-muted">-</span>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Technical Info -->
+  <div class="row">
+    <div class="col-md-6">
+      <div class="card mb-4">
+        <div class="card-header">
+          <i class="bi bi-info-circle"></i>
+          Technische Daten
+        </div>
+        <div class="card-body">
+          <dl class="row mb-0">
+            <dt class="col-sm-5">Letzte Änderung</dt>
+            <dd class="col-sm-7">
+              {% if record.last_change_date %} {{
+              record.last_change_date|date:"d.m.Y" }} {% if
+              record.last_change_time %} {{ record.last_change_time|time:"H:i"
+              }} {% endif %} {% else %} - {% endif %}
+            </dd>
+
+            <dt class="col-sm-5">Geändert durch</dt>
+            <dd class="col-sm-7">{{ record.last_change_role|default:"-" }}</dd>
+
+            <dt class="col-sm-5">SEPA-Marker</dt>
+            <dd class="col-sm-7">
+              {% if record.sepa_marker %}
+              <span class="badge bg-info">{{ record.sepa_marker }}</span>
+              {% else %} - {% endif %}
+            </dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Links -->
+    <div class="col-md-6">
+      <div class="card mb-4">
+        <div class="card-header">
+          <i class="bi bi-link-45deg"></i>
+          Schnellzugriff
+        </div>
+        <div class="card-body">
+          <div class="d-grid gap-2">
+            <a
+              href="{% url 'accounts:user_record_history' record.pk %}"
+              class="btn btn-outline-primary"
+            >
+              <i class="bi bi-clock-history"></i>
+              Änderungshistorie anzeigen
+            </a>
+            <a
+              href="{% url 'accounts:user_search' %}?family_id={{ record.family_id }}&year={{ record.year }}"
+              class="btn btn-outline-secondary"
+            >
+              <i class="bi bi-people"></i>
+              Weitere Einträge dieser Familie
+            </a>
+            <a
+              href="{% url 'accounts:user_search' %}"
+              class="btn btn-outline-secondary"
+            >
+              <i class="bi bi-arrow-left"></i>
+              Zurück zur Suche
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% comment %}
+User Dashboard - Home page for User role.
+
+Provides:
+- Search form for records
+- Quick navigation
+- Role-specific welcome message
+
+This is a read-only interface. Users cannot modify any data.
+{% endcomment %}
+
+{% block title %}Benutzer-Übersicht - KindEltern{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <h1>
+                <i class="bi bi-house-door"></i>
+                Willkommen, {{ user.username }}
+            </h1>
+            <p class="lead text-muted">
+                Sie haben Lesezugriff auf Kartei-Einträge und deren Änderungshistorie.
+            </p>
+        </div>
+    </div>
+
+    <!-- Search Card -->
+    <div class="row mb-4">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <i class="bi bi-search"></i>
+                    Datensatz suchen
+                </div>
+                <div class="card-body">
+                    <form method="get" action="{% url 'accounts:user_search' %}">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label for="family_id" class="form-label">FamilyID</label>
+                                <input type="text" class="form-control" id="family_id" name="family_id" 
+                                       placeholder="z.B. FAM001">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="parent" class="form-label">Eltern</label>
+                                <input type="text" class="form-control" id="parent" name="parent" 
+                                       placeholder="Name suchen...">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="child" class="form-label">Kind</label>
+                                <input type="text" class="form-control" id="child" name="child" 
+                                       placeholder="Name suchen...">
+                            </div>
+                        </div>
+                        <div class="row g-3 mt-2">
+                            <div class="col-md-4">
+                                <label for="year" class="form-label">Jahr</label>
+                                <select class="form-select" id="year" name="year">
+                                    {% for year in available_years %}
+                                    <option value="{{ year }}" {% if year == current_year %}selected{% endif %}>
+                                        {{ year }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-8 d-flex align-items-end">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-search"></i>
+                                    Suchen
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Info Card -->
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-info-circle"></i>
+                    Ihre Berechtigung
+                </div>
+                <div class="card-body">
+                    <p class="mb-2">
+                        <span class="badge bg-info">{{ user.role }}</span>
+                    </p>
+                    <ul class="list-unstyled mb-0">
+                        <li class="mb-1">
+                            <i class="bi bi-check-circle text-success"></i>
+                            Datensätze anzeigen
+                        </li>
+                        <li class="mb-1">
+                            <i class="bi bi-check-circle text-success"></i>
+                            Änderungshistorie einsehen
+                        </li>
+                        <li class="mb-1">
+                            <i class="bi bi-x-circle text-danger"></i>
+                            Daten bearbeiten
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Help -->
+    <div class="row">
+        <div class="col">
+            <div class="card bg-light">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <i class="bi bi-question-circle"></i>
+                        Hilfe zur Suche
+                    </h5>
+                    <ul class="mb-0">
+                        <li>
+                            <strong>FamilyID:</strong> 
+                            Suchen Sie nach der eindeutigen Familien-Kennung (z.B. "FAM001").
+                        </li>
+                        <li>
+                            <strong>Eltern:</strong> 
+                            Suchen Sie nach dem Namen der Eltern (Teilsuche möglich).
+                        </li>
+                        <li>
+                            <strong>Kind:</strong> 
+                            Suchen Sie nach dem Namen des Kindes (Teilsuche möglich).
+                        </li>
+                        <li>
+                            <strong>Jahr:</strong> 
+                            Wählen Sie das Jahr, in dem der Datensatz erfasst wurde.
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

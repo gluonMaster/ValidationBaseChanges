@@ -1,0 +1,29 @@
+# Python dependencies for KindEltern Web
+# ========================================
+
+# Django framework
+Django>=5.0,<6.0
+
+# Django REST Framework
+djangorestframework>=3.14,<4.0
+
+# PostgreSQL adapter
+psycopg2-binary>=2.9,<3.0
+
+# Environment variables
+python-dotenv>=1.0,<2.0
+
+# CORS headers for API access from different origins
+django-cors-headers>=4.3,<5.0
+
+# Production WSGI server
+gunicorn>=21.0,<23.0
+
+# ODBC driver for Microsoft Access database import
+# NOTE: On Windows, install Microsoft Access Database Engine (ACE) ODBC driver.
+# On Linux, this requires unixodbc and mdbtools system packages.
+# The legacy_import app uses pyodbc to read Access .accdb/.mdb files.
+pyodbc>=4.0,<6.0
+
+# Development tools (optional, uncomment if needed)
+# django-debug-toolbar>=4.0,<5.0
