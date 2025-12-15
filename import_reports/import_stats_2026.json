@@ -1,0 +1,33 @@
+{
+  "timestamp": "2025-12-12T16:04:48.826846",
+  "year": 2026,
+  "dry_run": false,
+  "stats": {
+    "total_rows": 1493,
+    "created_records": 966,
+    "updated_records": 0,
+    "skipped_records": 0,
+    "pending_created": 10,
+    "pending_updated": 0,
+    "declined_created": 0,
+    "marker_skipped": 517,
+    "familyid_issues": 0,
+    "conflicts_year_id": 0,
+    "parse_errors": 0,
+    "marker_row_ids_sample": [
+      172,
+      179,
+      2,
+      4,
+      12,
+      14,
+      17,
+      27,
+      29,
+      35
+    ],
+    "conflict_ids_sample": [],
+    "error_count": 0
+  },
+  "history_events_created": 3086
+}

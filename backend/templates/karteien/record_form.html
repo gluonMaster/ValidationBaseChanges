@@ -1,8 +1,12 @@
-{% extends "base.html" %} {% comment %} Template for Kartei record create/edit
-form. Includes validation and restrictions for Operator role. {% endcomment %}
-{% block title %} {% if is_create %} Kartei - Neuer Datensatz {% else %} Kartei
-- Datensatz {{ record.id }} bearbeiten {% endif %} {% endblock %} {% block
-content %}
+{% extends "base.html" %}
+{% comment %}
+Template for Kartei record create/edit form.
+Includes validation and restrictions for Operator role.
+{% endcomment %}
+{% block title %}
+{% if is_create %}Kartei - Neuer Datensatz{% else %}Kartei - Datensatz {{ record.id }} bearbeiten{% endif %}
+{% endblock %}
+{% block content %}
 <div class="container-fluid py-4">
   <!-- Header -->
   <div class="row mb-4">

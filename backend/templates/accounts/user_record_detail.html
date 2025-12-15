@@ -1,9 +1,18 @@
-{% extends "base.html" %} {% comment %} User Record Detail - Read-only view of a
-KarteiRecord. Displays: - Basic record information (family, child, contacts,
-subjects) - Record status (normal/pending/declined) - Monthly values - Link to
-history view This is a read-only interface. No edit buttons are shown. {%
-endcomment %} {% block title %}Datensatz {{ record.id }} - KindEltern{% endblock
-%} {% block content %}
+{% extends "base.html" %}
+{% comment %}
+User Record Detail - Read-only view of a KarteiRecord.
+Displays:
+- Basic record information (family, child, contacts, subjects)
+- Record status (normal/pending/declined)
+- Monthly values
+- Link to history view
+
+This is a read-only interface. No edit buttons are shown.
+{% endcomment %}
+
+{% block title %}Datensatz {{ record.id }} - KindEltern{% endblock %}
+
+{% block content %}
 <div class="container-fluid py-4">
   <!-- Header -->
   <div class="row mb-4">
@@ -25,15 +34,11 @@ endcomment %} {% block title %}Datensatz {{ record.id }} - KindEltern{% endblock
         <span class="badge {{ status_class }} fs-6">{{ status_display }}</span>
       </h1>
       <p class="text-muted">
-        ID: {{ record.id }} | Jahr: {{ record.year }} | Familie: {{
-        record.family_id }}
+        ID: {{ record.id }} | Jahr: {{ record.year }} | Familie: {{ record.family_id }}
       </p>
     </div>
     <div class="col-auto">
-      <a
-        href="{% url 'accounts:user_record_history' record.pk %}"
-        class="btn btn-outline-primary"
-      >
+      <a href="{% url 'accounts:user_record_history' record.pk %}" class="btn btn-outline-primary">
         <i class="bi bi-clock-history"></i>
         Historie anzeigen
       </a>
@@ -47,12 +52,14 @@ endcomment %} {% block title %}Datensatz {{ record.id }} - KindEltern{% endblock
     <strong>Wartend auf Genehmigung:</strong>
     Änderungen an diesem Datensatz warten auf Superadmin-Prüfung.
   </div>
-  {% endif %} {% if record.status == "DECLINED" %}
+  {% endif %}
+
+  {% if record.status == "DECLINED" %}
   <div class="alert alert-danger" role="alert">
     <i class="bi bi-x-circle"></i>
     <strong>Abgelehnt:</strong>
-    Änderungen an diesem Datensatz wurden abgelehnt. {% if declined_count > 0 %}
-    ({{ declined_count }} Ablehnungen) {% endif %}
+    Änderungen an diesem Datensatz wurden abgelehnt.
+    {% if declined_count > 0 %}({{ declined_count }} Ablehnungen){% endif %}
   </div>
   {% endif %}
 
@@ -76,9 +83,7 @@ endcomment %} {% block title %}Datensatz {{ record.id }} - KindEltern{% endblock
             <dd class="col-sm-8">{{ record.child_name|default:"-" }}</dd>
 
             <dt class="col-sm-4">Geburtsdatum</dt>
-            <dd class="col-sm-8">
-              {{ record.birthdate|default:"-"|date:"d.m.Y" }}
-            </dd>
+            <dd class="col-sm-8">{{ record.birthdate|default:"-"|date:"d.m.Y" }}</dd>
 
             <dt class="col-sm-4">Adresse</dt>
             <dd class="col-sm-8">{{ record.address|default:"-" }}</dd>
@@ -93,7 +98,7 @@ endcomment %} {% block title %}Datensatz {{ record.id }} - KindEltern{% endblock
             <dd class="col-sm-8">
               {% if record.email %}
               <a href="mailto:{{ record.email }}">{{ record.email }}</a>
-              {% else %} - {% endif %}
+              {% else %}-{% endif %}
             </dd>
           </dl>
         </div>
@@ -114,8 +119,7 @@ endcomment %} {% block title %}Datensatz {{ record.id }} - KindEltern{% endblock
 
             <dt class="col-sm-4">Preis 1</dt>
             <dd class="col-sm-8">
-              {% if record.price1 %} {{ record.price1|floatformat:2 }} € {% else
-              %} - {% endif %}
+              {% if record.price1 %}{{ record.price1|floatformat:2 }} €{% else %}-{% endif %}
             </dd>
 
             <dt class="col-sm-4">Fach 2</dt>
@@ -123,8 +127,7 @@ endcomment %} {% block title %}Datensatz {{ record.id }} - KindEltern{% endblock
 
             <dt class="col-sm-4">Preis 2</dt>
             <dd class="col-sm-8">
-              {% if record.price2 %} {{ record.price2|floatformat:2 }} € {% else
-              %} - {% endif %}
+              {% if record.price2 %}{{ record.price2|floatformat:2 }} €{% else %}-{% endif %}
             </dd>
 
             <hr class="my-2" />
@@ -158,10 +161,7 @@ endcomment %} {% block title %}Datensatz {{ record.id }} - KindEltern{% endblock
               <div class="text-center">
                 <div class="fw-bold small text-muted">{{ month.name }}</div>
                 <div class="fs-5">
-                  {% if month.value %} {{ month.value|floatformat:2 }} {% else
-                  %}
-                  <span class="text-muted">-</span>
-                  {% endif %}
+                  {% if month.value %}{{ month.value|floatformat:2 }}{% else %}<span class="text-muted">-</span>{% endif %}
                 </div>
               </div>
             </div>
@@ -184,10 +184,10 @@ endcomment %} {% block title %}Datensatz {{ record.id }} - KindEltern{% endblock
           <dl class="row mb-0">
             <dt class="col-sm-5">Letzte Änderung</dt>
             <dd class="col-sm-7">
-              {% if record.last_change_date %} {{
-              record.last_change_date|date:"d.m.Y" }} {% if
-              record.last_change_time %} {{ record.last_change_time|time:"H:i"
-              }} {% endif %} {% else %} - {% endif %}
+              {% if record.last_change_date %}
+                {{ record.last_change_date|date:"d.m.Y" }}
+                {% if record.last_change_time %}{{ record.last_change_time|time:"H:i" }}{% endif %}
+              {% else %}-{% endif %}
             </dd>
 
             <dt class="col-sm-5">Geändert durch</dt>
@@ -197,7 +197,7 @@ endcomment %} {% block title %}Datensatz {{ record.id }} - KindEltern{% endblock
             <dd class="col-sm-7">
               {% if record.sepa_marker %}
               <span class="badge bg-info">{{ record.sepa_marker }}</span>
-              {% else %} - {% endif %}
+              {% else %}-{% endif %}
             </dd>
           </dl>
         </div>
@@ -213,24 +213,15 @@ endcomment %} {% block title %}Datensatz {{ record.id }} - KindEltern{% endblock
         </div>
         <div class="card-body">
           <div class="d-grid gap-2">
-            <a
-              href="{% url 'accounts:user_record_history' record.pk %}"
-              class="btn btn-outline-primary"
-            >
+            <a href="{% url 'accounts:user_record_history' record.pk %}" class="btn btn-outline-primary">
               <i class="bi bi-clock-history"></i>
               Änderungshistorie anzeigen
             </a>
-            <a
-              href="{% url 'accounts:user_search' %}?family_id={{ record.family_id }}&year={{ record.year }}"
-              class="btn btn-outline-secondary"
-            >
+            <a href="{% url 'accounts:user_search' %}?family_id={{ record.family_id }}&year={{ record.year }}" class="btn btn-outline-secondary">
               <i class="bi bi-people"></i>
               Weitere Einträge dieser Familie
             </a>
-            <a
-              href="{% url 'accounts:user_search' %}"
-              class="btn btn-outline-secondary"
-            >
+            <a href="{% url 'accounts:user_search' %}" class="btn btn-outline-secondary">
               <i class="bi bi-arrow-left"></i>
               Zurück zur Suche
             </a>

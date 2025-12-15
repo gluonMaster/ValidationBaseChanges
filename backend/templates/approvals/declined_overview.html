@@ -33,16 +33,18 @@ Mirrors VBA: Export_DeclinedTools.ShowDeclinedOverview
     <!-- Year Filter -->
     <div class="card mb-4">
         <div class="card-body">
-            <form method="get" class="row g-3 align-items-center">
+            <div class="row g-3 align-items-center">
                 <div class="col-auto">
                     <label for="year" class="col-form-label">Jahr:</label>
                 </div>
                 <div class="col-auto">
-                    <select name="year" id="year" class="form-select" onchange="this.form.submit()">
-                        {% for y in available_years %}
-                        <option value="{{ y }}" {% if y|stringformat:"s" == current_year|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
-                        {% endfor %}
-                    </select>
+                    <form method="get" class="d-inline">
+                        <select name="year" id="year" class="form-select" onchange="this.form.submit()">
+                            {% for y in available_years %}
+                            <option value="{{ y }}" {% if y|stringformat:"s" == current_year|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
+                            {% endfor %}
+                        </select>
+                    </form>
                 </div>
                 <div class="col-auto">
                     {% if declined_changes %}
@@ -57,7 +59,7 @@ Mirrors VBA: Export_DeclinedTools.ShowDeclinedOverview
                     </form>
                     {% endif %}
                 </div>
-            </form>
+            </div>
         </div>
     </div>
 

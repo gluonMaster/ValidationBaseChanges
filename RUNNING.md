@@ -249,37 +249,66 @@ docker compose exec web python manage.py migrate
 
 ## Импорт данных из Access (legacy_import)
 
+> **Важно: Структура ключей KarteiRecord**
+>
+> Django PK (`pkid`) — суррогатный ключ `BigAutoField`, используется для FK-связей.  
+> Доменный ключ — `(year, id)`:
+>
+> - `id` — Access ID (поле AV / tblKartei.ID) — **не уникален глобально!**
+> - `year` — год записи (2024, 2025, ...)
+>
+> Уникальность обеспечивается ограничением `UNIQUE(year, id)`.  
+> В API истории используется `/api/history/records/<year>/<record_id>/`.
+
 Этот раздел описывает, как импортировать данные из Access-базы (`*.accdb`) в PostgreSQL.
 
-### Предварительные требования
+### Рекомендуемый способ: импорт с Windows-хоста (не из Docker)
 
-1. **pyodbc установлен** в Python-окружении backend (уже в `requirements.txt`).
-2. **ODBC-драйвер для Access:**
-   - **Windows:** Microsoft Access Database Engine / ACE ODBC Driver.
-   - **Linux:** связка `unixODBC` + MDB Tools или аналог (см. `backend/apps/legacy_import/README.md`).
+> **Почему не Docker?**  
+> ODBC-драйвер `Microsoft Access Driver (*.mdb, *.accdb)` — это Windows-компонент (ACE / Access Database Engine).  
+> В Linux-контейнере Docker его нет, а настройка альтернатив (unixODBC + MDB Tools) сложна и ненадёжна.  
+> **Рекомендуется запускать импорт из локальной командной строки Windows.**
 
-### Где лежат `.accdb`
+### Предварительные требования (Windows 10)
 
-Укажите расположение файлов через переменные окружения или `settings.py`:
+1. **Python 3.10+** установлен локально.
+2. **Виртуальное окружение** с зависимостями:
+   ```powershell
+   cd backend
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+   ```
+3. **Microsoft Access Database Engine** (ACE ODBC Driver):
+   - Скачайте с [Microsoft Download Center](https://www.microsoft.com/en-us/download/details.aspx?id=54920).
+   - Установите версию, соответствующую разрядности Python (x64 или x86).
+4. **Переменные окружения** — создайте файл `.env` в корне проекта или задайте переменные:
 
-```bash
-# Базовый каталог с .accdb файлами
-ACCESS_BASE_DIR=/opt/kindeltern_data
+   ```powershell
+   $env:DATABASE_URL = "postgres://kindeltern:kindeltern_local@localhost:5432/kindeltern"
+   $env:ACCESS_BASE_DIR = "C:\Path\To\AccessFiles"
+   $env:ACCESS_CONN_STRING_TEMPLATE = "DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={file_path};"
+   ```
 
-# Шаблон строки подключения ODBC
-ACCESS_CONN_STRING_TEMPLATE="DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ={file_path};"
-```
+   > **Важно:** удвоенные фигурные скобки `{{...}}` вокруг имени драйвера обязательны!
 
-Файлы должны называться по шаблону `KindElternDaten_XX_front.accdb` (где XX — год).
+5. **PostgreSQL доступен** — контейнер `db` должен быть запущен:
+   ```powershell
+   docker compose up -d db
+   ```
 
 ### Dry-run импорт (анализ без записи)
 
-```bash
-docker compose exec web python manage.py import_access_year \
-    --year 2025 \
-    --access-file KindElternDaten_25_front.accdb \
-    --dry-run \
-    --report-dir ./import_reports
+Из каталога `backend`:
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+python manage.py import_access_year `
+    --year 2025 `
+    --access-file KindElternDaten_25_front.accdb `
+    --dry-run `
+    --report-dir ..\import_reports
 ```
 
 В режиме `--dry-run`:
@@ -289,13 +318,13 @@ docker compose exec web python manage.py import_access_year \
 
 ### Боевой импорт
 
-```bash
-docker compose exec web python manage.py import_access_year \
-    --year 2025 \
-    --access-file KindElternDaten_25_front.accdb \
-    --familyid-policy=report \
-    --sync-history \
-    --report-dir ./import_reports
+```powershell
+python manage.py import_access_year `
+    --year 2025 `
+    --access-file KindElternDaten_25_front.accdb `
+    --familyid-policy=report `
+    --sync-history `
+    --report-dir ..\import_reports
 ```
 
 Основные параметры:

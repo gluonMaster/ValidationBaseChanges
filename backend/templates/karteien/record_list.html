@@ -157,7 +157,7 @@ Admin/Operator UI for browsing and filtering Kartei records.
                                    title="Anzeigen">
                                     <i class="bi bi-eye"></i>
                                 </a>
-                                {% if record.status == "NORMAL" %}
+                                {% if not record.status %}
                                 <a href="{% url 'karteien:record_update' record.pk %}" 
                                    class="btn btn-sm btn-outline-secondary"
                                    title="Bearbeiten">

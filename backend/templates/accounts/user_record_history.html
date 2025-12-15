@@ -1,9 +1,15 @@
-{% extends "base.html" %} {% comment %} User Record History - Read-only history
-view (like Geschichte). Displays: - Record basic info - Chronological list of
-history events - For each event: date/time, user, changed fields (old → new),
-comment This is a read-only interface. Users cannot modify any data. {%
-endcomment %} {% block title %}Historie - Datensatz {{ record.id }} -
-KindEltern{% endblock %} {% block extra_css %}
+{% extends "base.html" %}
+{% comment %}
+User Record History - Read-only history view (like Geschichte).
+Displays:
+- Record basic info
+- Chronological list of history events
+- For each event: date/time, user, changed fields (old → new), comment
+
+This is a read-only interface. Users cannot modify any data.
+{% endcomment %}
+{% block title %}Historie - Datensatz {{ record.id }} - KindEltern{% endblock %}
+{% block extra_css %}
 <style>
   .history-timeline {
     position: relative;
@@ -175,8 +181,7 @@ KindEltern{% endblock %} {% block extra_css %}
                     </div>
                     <div class="text-muted small">
                       <i class="bi bi-calendar"></i>
-                      {% if event.time %} {{ event.time|date:"d.m.Y H:i" }} {%
-                      else %} (Kein Datum) {% endif %}
+                      {% if event.time %}{{ event.time|date:"d.m.Y H:i" }}{% else %}(Kein Datum){% endif %}
                     </div>
                   </div>
                 </div>

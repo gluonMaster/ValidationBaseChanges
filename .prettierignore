@@ -1,0 +1,11 @@
+# Ignore Django templates - Prettier breaks Django template tags
+backend/templates/**/*.html
+
+# Ignore migration files
+backend/apps/*/migrations/*.py
+
+# Ignore static files
+backend/static/**
+
+# Ignore Python files (use Black/Ruff instead)
+*.py

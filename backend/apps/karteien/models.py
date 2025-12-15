@@ -132,17 +132,30 @@ class KarteiRecord(models.Model):
     - Access table: tblKartei (fields ID, Value1-Value52)
     
     The unique identifier is (year, id) where:
-    - id corresponds to Kartei!AV and tblKartei.ID
+    - id corresponds to Kartei!AV and tblKartei.ID (Access ID)
     - year separates records from different yearly databases
+    
+    Note: Django PK is surrogate 'pkid' (BigAutoField).
+    The domain key (year, id) is enforced by UniqueConstraint.
     """
     
     # -------------------------------------------------------------------------
-    # Primary Key & Year
+    # Surrogate Primary Key (Django PK)
+    # -------------------------------------------------------------------------
+    
+    pkid = models.BigAutoField(
+        primary_key=True,
+        help_text="Surrogate primary key for Django. Use (year, id) for domain lookups.",
+    )
+    
+    # -------------------------------------------------------------------------
+    # Domain Key: Year + Access ID
     # -------------------------------------------------------------------------
     
     id = models.PositiveIntegerField(
-        primary_key=True,
-        help_text="Unique record ID. Excel: AV (48), Access: ID field.",
+        db_index=True,
+        help_text="Access/Excel record ID. Excel: AV (48), Access: ID field. "
+                  "NOT globally unique — use together with 'year'.",
     )
     
     year = models.PositiveSmallIntegerField(

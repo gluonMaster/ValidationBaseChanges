@@ -63,11 +63,20 @@ class KarteiEditorMixin(LoginRequiredMixin, UserPassesTestMixin):
         """Redirect to login or show error for unauthorized users."""
         if not self.request.user.is_authenticated:
             return super().handle_no_permission()
+        
+        user = self.request.user
         messages.error(
             self.request,
             "Sie haben keine Berechtigung, Kartei-Einträge zu bearbeiten."
         )
-        return redirect("karteien:record_list")
+        
+        # Redirect based on role to avoid infinite loops
+        if user.is_superadmin:
+            return redirect("approvals:superadmin_pending_overview")
+        elif user.is_user_role:
+            return redirect("accounts:user_dashboard")
+        else:
+            return redirect("login")
 
 
 # =============================================================================
@@ -224,6 +233,10 @@ class KarteiRecordCreateView(KarteiEditorMixin, CreateView):
         
         # Set year
         record.year = int(self.request.GET.get("year", date.today().year))
+        
+        # Generate next ID for this year (max ID + 1)
+        max_id = KarteiRecord.objects.filter(year=record.year).order_by('-id').values_list('id', flat=True).first()
+        record.id = (max_id or 0) + 1
         
         # Set last change metadata
         user = self.request.user

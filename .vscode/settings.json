@@ -1,0 +1,19 @@
+{
+  "editor.formatOnSave": true,
+  "[html]": {
+    "editor.formatOnSave": false,
+    "editor.defaultFormatter": null
+  },
+  "[django-html]": {
+    "editor.formatOnSave": false,
+    "editor.defaultFormatter": null
+  },
+  "files.associations": {
+    "backend/templates/**/*.html": "django-html"
+  },
+  "prettier.disableLanguages": ["html", "django-html"],
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.formatOnSave": true
+  }
+}

@@ -1,7 +1,11 @@
-{% extends "base.html" %} {% comment %} Superadmin: Record History View Mirrors
+{% extends "base.html" %}
+{% comment %}
+Superadmin: Record History View Mirrors
 VBA: Geschichte.bas and valid_ParseHistory.bas Shows the history timeline for a
-single record. {% endcomment %} {% block title %}Historie - ID {{ record.id }}{%
-endblock %} {% block extra_css %}
+single record.
+{% endcomment %}
+{% block title %}Historie - ID {{ record.id }}{% endblock %}
+{% block extra_css %}
 <style>
   .history-timeline {
     position: relative;

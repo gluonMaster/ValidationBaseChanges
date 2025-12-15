@@ -66,6 +66,7 @@ docker compose logs web --tail=50
 После этого приложение доступно по адресу `http://localhost:8000/`.
 
 > Если в логах постоянно повторяется только `Database not ready, waiting...`, убедитесь, что:
+>
 > - изменённый `backend/entrypoint.sh` действительно попал в образ (повторный `docker compose build web`);
 > - контейнер `db` имеет статус `healthy` (`docker compose ps`).
 
@@ -172,3 +173,64 @@ docker compose down
 ```bash
 docker compose down -v
 ```
+
+## 8. Структура ключей KarteiRecord и импорт нескольких лет
+
+Django PK (`pkid`) — суррогатный ключ `BigAutoField`, используется для FK-связей.  
+Доменный ключ — `(year, id)`:
+
+- `id` — Access ID (поле AV / tblKartei.ID) — **не уникален глобально!**
+- `year` — год записи (2024, 2025, ...)
+
+Это позволяет хранить данные нескольких лет одновременно.
+
+### Переимпорт данных после обновления модели
+
+Если вы обновили модель KarteiRecord (например, после применения PROMPT_12), необходимо:
+
+1. **Сбросить базу данных:**
+
+   ```powershell
+   docker compose down -v
+   ```
+
+2. **Пересобрать и запустить:**
+
+   ```powershell
+   docker compose up -d --build
+   ```
+
+3. **Импортировать годы последовательно (из Windows, не из Docker!):**
+
+   > **Рекомендация:** Импорт Access лучше запускать из локальной командной строки Windows,  
+   > поскольку ODBC-драйвер для Access — это Windows-компонент.
+
+   ```powershell
+   # Подготовка окружения (один раз)
+   cd backend
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+
+   # Установить переменные окружения
+   $env:DATABASE_URL = "postgres://kindeltern:kindeltern_local@localhost:5432/kindeltern"
+   $env:ACCESS_BASE_DIR = "C:\Path\To\AccessFiles"
+   $env:ACCESS_CONN_STRING_TEMPLATE = "DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={file_path};"
+
+   # Импорт 2024
+   python manage.py import_access_year `
+       --year 2024 `
+       --access-file KindElternDaten_24_front.accdb `
+       --report-dir ..\import_reports
+
+   # Импорт 2025
+   python manage.py import_access_year `
+       --year 2025 `
+       --access-file KindElternDaten_25_front.accdb `
+       --report-dir ..\import_reports
+   ```
+
+   > **Важно:** Убедитесь, что контейнер `db` запущен (`docker compose up -d db`),  
+   > чтобы PostgreSQL был доступен на `localhost:5432`.
+
+После импорта в БД могут существовать записи с одинаковым Access `id`, но разными `year`.

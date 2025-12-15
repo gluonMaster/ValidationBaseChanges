@@ -36,7 +36,7 @@ class RecordHistoryView(APIView):
     """
     View history events for a specific KarteiRecord.
     
-    GET /api/history/records/<record_id>/
+    GET /api/history/records/<year>/<record_id>/
     
     Returns the record basic info and its history events in chronological order.
     
@@ -46,10 +46,10 @@ class RecordHistoryView(APIView):
     - event_type: Filter by event type (CHANGE, CREATE, APPROVE, DECLINE, IMPORT, RUCK)
     """
     
-    def get(self, request: Request, record_id: int) -> Response:
+    def get(self, request: Request, year: int, record_id: int) -> Response:
         """Get history events for a record."""
-        # Get the record
-        record = get_object_or_404(KarteiRecord, id=record_id)
+        # Get the record by (year, id) - domain key
+        record = get_object_or_404(KarteiRecord, year=year, id=record_id)
         
         # Build queryset with optional filters
         queryset = HistoryEvent.objects.filter(record=record).order_by("event_time", "id")
@@ -116,7 +116,7 @@ class SyncHistoryView(APIView):
     """
     Trigger history synchronization from raw history field.
     
-    POST /api/history/records/<record_id>/sync/
+    POST /api/history/records/<year>/<record_id>/sync/
     
     Parses the record's history_raw field and creates HistoryEvent objects
     for any events not already in the database.
@@ -124,10 +124,10 @@ class SyncHistoryView(APIView):
     Returns the list of newly created events.
     """
     
-    def post(self, request: Request, record_id: int) -> Response:
+    def post(self, request: Request, year: int, record_id: int) -> Response:
         """Sync history from raw for a record."""
-        # Get the record
-        record = get_object_or_404(KarteiRecord, id=record_id)
+        # Get the record by (year, id) - domain key
+        record = get_object_or_404(KarteiRecord, year=year, id=record_id)
         
         # Run sync
         created_events = sync_history_from_raw(record)
