@@ -70,6 +70,7 @@ INSTALLED_APPS = [
     'apps.notifications',
     'apps.legacy_import',
     'apps.reporting',
+    'apps.catalog',
 ]
 
 MIDDLEWARE = [

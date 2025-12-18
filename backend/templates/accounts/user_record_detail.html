@@ -155,10 +155,14 @@ This is a read-only interface. No edit buttons are shown.
           Monatswerte
         </div>
         <div class="card-body">
+          <p class="text-muted small mb-3">
+            <i class="bi bi-info-circle"></i>
+            Klicken Sie auf einen Monatswert, um die Berechnungsdetails zu sehen.
+          </p>
           <div class="row">
             {% for month in months %}
             <div class="col-md-2 col-sm-3 col-4 mb-3">
-              <div class="text-center">
+              <div class="text-center month-breakdown-btn" role="button" data-month="{{ month.number }}" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
                 <div class="fw-bold small text-muted">{{ month.name }}</div>
                 <div class="fs-5">
                   {% if month.value %}{{ month.value|floatformat:2 }}{% else %}<span class="text-muted">-</span>{% endif %}
@@ -167,6 +171,31 @@ This is a read-only interface. No edit buttons are shown.
             </div>
             {% endfor %}
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Month Breakdown Modal -->
+  <div class="modal fade" id="monthBreakdownModal" tabindex="-1" aria-labelledby="monthBreakdownModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="monthBreakdownModalLabel">
+            <i class="bi bi-calculator"></i>
+            Monat <span id="breakdownMonthNum"></span> - Berechnungsdetails
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body" id="breakdownContent">
+          <div class="text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+              <span class="visually-hidden">Laden...</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
         </div>
       </div>
     </div>
@@ -231,4 +260,193 @@ This is a read-only interface. No edit buttons are shown.
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const modalEl = document.getElementById('monthBreakdownModal');
+  if (!modalEl) return;
+  
+  const modal = new bootstrap.Modal(modalEl);
+  const breakdownContent = document.getElementById('breakdownContent');
+  const breakdownMonthNum = document.getElementById('breakdownMonthNum');
+  
+  // Month names in German
+  const monthNames = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 
+                      'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+  
+  document.querySelectorAll('.month-breakdown-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      const month = this.dataset.month;
+      const recordPk = this.dataset.recordPk;
+      
+      // Update modal title
+      breakdownMonthNum.textContent = month + ' (' + monthNames[parseInt(month) - 1] + ')';
+      
+      // Show loading
+      breakdownContent.innerHTML = `
+        <div class="text-center py-4">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Laden...</span>
+          </div>
+        </div>
+      `;
+      
+      modal.show();
+      
+      // Fetch breakdown
+      fetch('/karteien/' + recordPk + '/month-breakdown/?month=' + month)
+        .then(response => response.json())
+        .then(data => {
+          breakdownContent.innerHTML = renderBreakdown(data);
+        })
+        .catch(error => {
+          breakdownContent.innerHTML = `
+            <div class="alert alert-danger">
+              <i class="bi bi-exclamation-triangle"></i>
+              Fehler beim Laden der Daten: ${error.message}
+            </div>
+          `;
+        });
+    });
+  });
+  
+  function renderBreakdown(data) {
+    if (!data.available) {
+      let reasonText = 'Keine Detaildaten verfügbar.';
+      if (data.reason === 'LEGACY_NO_DATA') {
+        reasonText = 'Legacy-Import: Für dieses Feld sind keine Berechnungsdetails verfügbar. Es wird nur der gespeicherte Wert angezeigt.';
+      } else if (data.reason === 'OVERRIDE_MODE') {
+        reasonText = 'Override-Modus: Der Wert wurde manuell überschrieben. Die ursprüngliche Berechnung ist nicht verfügbar.';
+      }
+      
+      return `
+        <div class="alert alert-secondary">
+          <i class="bi bi-info-circle"></i>
+          ${reasonText}
+        </div>
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Gespeicherter Wert</dt>
+          <dd class="col-sm-8"><strong>${parseFloat(data.final || 0).toFixed(2)} €</strong></dd>
+        </dl>
+      `;
+    }
+    
+    let html = '<dl class="row">';
+    
+    // Basic info
+    html += `
+      <dt class="col-sm-4">Halbjahr</dt>
+      <dd class="col-sm-8">${data.semester}. Halbjahr</dd>
+      
+      <dt class="col-sm-4">Fach</dt>
+      <dd class="col-sm-8">${data.subject_name || '-'}</dd>
+      
+      <dt class="col-sm-4">Abrechnungsart</dt>
+      <dd class="col-sm-8">${data.billing_kind === 'HOURLY' ? 'Pro Stunde (€/UE)' : 'Monatlich (€/Monat)'}</dd>
+    `;
+    
+    // For hourly billing, show hours and unit price
+    if (data.billing_kind === 'HOURLY') {
+      html += `
+        <dt class="col-sm-4">Stunden</dt>
+        <dd class="col-sm-8">${parseFloat(data.hours || 0).toFixed(2)} UE</dd>
+        
+        <dt class="col-sm-4">Preis pro UE</dt>
+        <dd class="col-sm-8">${data.unit_price ? parseFloat(data.unit_price).toFixed(2) + ' €' : '-'}</dd>
+      `;
+    }
+    
+    // Base amount
+    html += `
+      <dt class="col-sm-4">Basis (vor Rabatten)</dt>
+      <dd class="col-sm-8"><strong>${parseFloat(data.base || 0).toFixed(2)} €</strong></dd>
+    `;
+    
+    html += '</dl>';
+    
+    // Discounts section
+    html += '<hr><h6><i class="bi bi-percent"></i> Rabatte</h6>';
+    
+    // Check for skipped discounts
+    if (data.discounts_skipped_reason) {
+      let skipReason = '';
+      if (data.discounts_skipped_reason === 'NACHHILFE') {
+        skipReason = '<span class="badge bg-info">Nachhilfe: Rabatte werden nicht angewendet</span>';
+      } else if (data.discounts_skipped_reason === 'DISABLED') {
+        skipReason = '<span class="badge bg-warning text-dark">Rabatte für diesen Datensatz deaktiviert</span>';
+      }
+      html += `<p>${skipReason}</p>`;
+    } else {
+      // Show discounts applied
+      html += '<dl class="row">';
+      
+      // Percent discounts
+      if (data.percent_discounts_applied && data.percent_discounts_applied.length > 0) {
+        html += '<dt class="col-sm-4">Prozentrabatte</dt><dd class="col-sm-8">';
+        data.percent_discounts_applied.forEach(d => {
+          const pct = (parseFloat(d.value) * 100).toFixed(0);
+          html += `<span class="badge bg-success me-1">${pct}%</span> ${d.description || ''} <small class="text-muted">(${d.months_display})</small><br>`;
+        });
+        html += '</dd>';
+      } else {
+        html += '<dt class="col-sm-4">Prozentrabatte</dt><dd class="col-sm-8 text-muted">Keine</dd>';
+      }
+      
+      // Fixed discounts
+      if (data.fixed_discounts_applied && data.fixed_discounts_applied.length > 0) {
+        html += '<dt class="col-sm-4">Feste Rabatte</dt><dd class="col-sm-8">';
+        data.fixed_discounts_applied.forEach(d => {
+          html += `<span class="badge bg-primary me-1">${parseFloat(d.value).toFixed(2)} €</span> ${d.description || ''} <small class="text-muted">(${d.months_display})</small><br>`;
+        });
+        html += '</dd>';
+      } else {
+        html += '<dt class="col-sm-4">Feste Rabatte</dt><dd class="col-sm-8 text-muted">Keine</dd>';
+      }
+      
+      html += '</dl>';
+      
+      // Calculation steps
+      html += '<hr><h6><i class="bi bi-calculator"></i> Berechnungsschritte</h6>';
+      html += '<dl class="row">';
+      
+      const percentSumPct = (parseFloat(data.percent_sum || 0) * 100).toFixed(0);
+      html += `<dt class="col-sm-4">Summe Prozentrabatte</dt><dd class="col-sm-8">${percentSumPct}%`;
+      if (data.percent_clamped) {
+        const origPct = (parseFloat(data.original_percent_sum || 0) * 100).toFixed(0);
+        html += ` <span class="badge bg-warning text-dark">Begrenzt von ${origPct}% auf 99%</span>`;
+      }
+      html += '</dd>';
+      
+      html += `<dt class="col-sm-4">Nach Prozentrabatt</dt><dd class="col-sm-8">${parseFloat(data.after_percent || 0).toFixed(2)} €</dd>`;
+      
+      html += `<dt class="col-sm-4">Summe feste Rabatte</dt><dd class="col-sm-8">${parseFloat(data.fixed_sum || 0).toFixed(2)} €</dd>`;
+      
+      html += `<dt class="col-sm-4">Nach festen Rabatten</dt><dd class="col-sm-8">${parseFloat(data.after_fixed || 0).toFixed(2)} €</dd>`;
+      
+      html += '</dl>';
+      
+      if (data.clamped_to_zero) {
+        html += `
+          <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i>
+            Das Ergebnis war negativ und wurde auf 0.00 € gesetzt.
+          </div>
+        `;
+      }
+    }
+    
+    // Final result
+    html += `
+      <hr>
+      <div class="text-center">
+        <h5>Endergebnis: <span class="text-success">${parseFloat(data.final || 0).toFixed(2)} €</span></h5>
+      </div>
+    `;
+    
+    return html;
+  }
+});
+</script>
 {% endblock %}

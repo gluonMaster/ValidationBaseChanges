@@ -11,6 +11,7 @@ from django.urls import path, include
 from django.views.generic import RedirectView
 
 from apps.accounts.views import role_based_redirect
+from apps.catalog.views_api import TeachersApiView, PricesApiView
 
 urlpatterns = [
     # Django admin
@@ -29,6 +30,7 @@ urlpatterns = [
     # Web UI - Admin/Operator interfaces
     path('karteien/', include('apps.karteien.urls')),
     path('approvals/', include('apps.approvals.urls')),
+    path('catalog/', include('apps.catalog.urls')),
     
     # API endpoints
     path('api/accounts/', include(('apps.accounts.urls', 'accounts_api'), namespace='accounts_api')),
@@ -38,4 +40,8 @@ urlpatterns = [
     path('api/notifications/', include('apps.notifications.urls')),
     path('api/legacy-import/', include('apps.legacy_import.urls')),
     path('api/reporting/', include('apps.reporting.urls')),
+    
+    # Catalog API endpoints for dynamic form data
+    path('api/catalog/teachers/', TeachersApiView.as_view(), name='api_catalog_teachers'),
+    path('api/catalog/prices/', PricesApiView.as_view(), name='api_catalog_prices'),
 ]

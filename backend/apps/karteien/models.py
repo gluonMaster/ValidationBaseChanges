@@ -109,6 +109,19 @@ class RecordStatus(models.TextChoices):
     DECLINED = "DECLINED", "Declined"
 
 
+class MonthsMode(models.TextChoices):
+    """
+    Mode for monthly billing calculation.
+    
+    - LEGACY: Manual entry of month_1..month_12 values (default for imported records)
+    - AUTO: Automatic calculation based on subject/price/hours/discounts
+    - OVERRIDE: Emergency manual override (requires approval workflow)
+    """
+    LEGACY = "LEGACY", "Legacy (manual)"
+    AUTO = "AUTO", "Automatic"
+    OVERRIDE = "OVERRIDE", "Override"
+
+
 class UserRole(models.TextChoices):
     """
     Role of user who made last change.
@@ -274,6 +287,119 @@ class KarteiRecord(models.Model):
         blank=True,
         default="",
         help_text="Extra subject 3. Excel: AM (39), Access: Value39.",
+    )
+    
+    # -------------------------------------------------------------------------
+    # Catalog References (Web extension, nullable FKs)
+    # These link to catalog.Subject/Teacher/PriceOption for structured selection.
+    # Legacy fields subject1/subject2/price1/price2 are kept in sync.
+    # -------------------------------------------------------------------------
+    
+    subject1_ref = models.ForeignKey(
+        "catalog.Subject",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="kartei_records_subject1",
+        verbose_name="Fach 1 (Ref)",
+        help_text="Reference to catalog Subject for subject1 (1st semester).",
+    )
+    
+    teacher1_ref = models.ForeignKey(
+        "catalog.Teacher",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="kartei_records_teacher1",
+        verbose_name="Lehrer 1 (Ref)",
+        help_text="Reference to catalog Teacher for subject1.",
+    )
+    
+    price1_ref = models.ForeignKey(
+        "catalog.PriceOption",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="kartei_records_price1",
+        verbose_name="Preis 1 (Ref)",
+        help_text="Reference to catalog PriceOption for subject1.",
+    )
+    
+    subject2_ref = models.ForeignKey(
+        "catalog.Subject",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="kartei_records_subject2",
+        verbose_name="Fach 2 (Ref)",
+        help_text="Reference to catalog Subject for subject2 (2nd semester).",
+    )
+    
+    teacher2_ref = models.ForeignKey(
+        "catalog.Teacher",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="kartei_records_teacher2",
+        verbose_name="Lehrer 2 (Ref)",
+        help_text="Reference to catalog Teacher for subject2.",
+    )
+    
+    price2_ref = models.ForeignKey(
+        "catalog.PriceOption",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="kartei_records_price2",
+        verbose_name="Preis 2 (Ref)",
+        help_text="Reference to catalog PriceOption for subject2.",
+    )
+    
+    # Start months for billing (within each semester)
+    # Default: 1 = January (1st semester starts month 1), 7 = July (2nd semester starts month 7)
+    # Months before start_month will be charged 0.00
+    start_month_1 = models.PositiveSmallIntegerField(
+        default=1,
+        verbose_name="Startmonat 1. HJ",
+        help_text="Starting month for billing in 1st semester (1-6). Months before this are 0.00.",
+    )
+    
+    start_month_2 = models.PositiveSmallIntegerField(
+        default=7,
+        verbose_name="Startmonat 2. HJ",
+        help_text="Starting month for billing in 2nd semester (7-12). Months before this are 0.00.",
+    )
+    
+    # -------------------------------------------------------------------------
+    # Billing Mode and Calculation Data
+    # -------------------------------------------------------------------------
+    
+    months_mode = models.CharField(
+        max_length=10,
+        choices=MonthsMode.choices,
+        default=MonthsMode.LEGACY,
+        verbose_name="Abrechnungsmodus",
+        help_text="LEGACY: manual entry, AUTO: automatic calculation, OVERRIDE: emergency override.",
+    )
+    
+    base_amounts = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name="Basisbeträge",
+        help_text="Base amounts before discounts. Keys: month_1..month_12, Values: Decimal strings.",
+    )
+    
+    hours_amounts = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name="Stunden pro Monat",
+        help_text="Academic hours per month for Individual/NH subjects. Keys: month_1..month_12.",
+    )
+    
+    discounts_disabled = models.BooleanField(
+        default=False,
+        verbose_name="Rabatte deaktiviert",
+        help_text="If True, no discounts are applied to this record.",
     )
     
     # -------------------------------------------------------------------------

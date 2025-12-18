@@ -5,6 +5,7 @@
 ## 1. Overview
 
 - Исходники legacy VBA-модулей для справки лежат в `legacy_VBA/`:
+
   - `legacy_VBA/*.bas` и `legacy_VBA/*.cls` — модули из `KindElternDaten_XX_Admin.xlsm`
   - `legacy_VBA/admin_forms/` — VBA-код форм из `KindElternDaten_XX_Admin.xlsm`
   - `legacy_VBA/Superadmin/` — модули из `KindElternDaten_XX_Suprime.xlsm`
@@ -128,6 +129,16 @@
   - Поле `status` (enum: normal/pending/declined) для быстрых фильтров.
   - Уникальное ограничение: `(year, id)`.
 - В дальнейшем возможно выделение отдельных сущностей (`Family`, `Child`, `Subscription`), но первый шаг максимально близок к текущей структуре.
+
+**Catalog Integration (PROMPT_20):**
+
+Формы создания/редактирования записей (`KarteiRecordForm`) интегрированы со справочниками:
+
+- **Subject/Teacher/Price selection**: Вместо свободного ввода admin выбирает предмет, преподавателя и цену из справочников (`catalog.Subject`, `catalog.Teacher`, `catalog.PriceOption`).
+- **Dynamic loading**: При смене предмета JavaScript динамически подгружает списки преподавателей и цен для выбранного предмета и года через API endpoints (`/api/catalog/teachers/`, `/api/catalog/prices/`).
+- **Validation**: Форма валидирует, что выбранная цена принадлежит году записи и выбранному предмету; преподаватель имеет `TeachingAssignment` для предмета и года.
+- **Legacy sync**: При сохранении legacy-поля `subject1/subject2/price1/price2` синхронизируются с выбранными ref-полями для обратной совместимости с импортом/экспортом.
+- **Start months**: Поля `start_month_1` (1-6) и `start_month_2` (7-12) определяют, с какого месяца начинается начисление в каждом полугодии.
 
 **Сервисный слой (`apps/karteien/services.py`):**
 
@@ -418,7 +429,110 @@
 - `GET /api/reporting/recent-changes-by-record/` — изменения, сгруппированные по записям.
   - Показывает записи с последними изменениями и количество событий.
 
-### 2.7 `legacy_import` (миграция из Access)
+### 2.7 `catalog` (справочники)
+
+**Назначение:**
+
+Справочные таблицы для стандартизации данных о преподавателях и предметах.
+Эти таблицы **не заменяют** существующие поля `KarteiRecord.subject1/subject2`
+и не влияют на импорт из Access. Это отдельные справочники для:
+
+- Стандартизации названий предметов и имён преподавателей.
+- Связи "кто вёл что в каком году".
+- Будущих форм выбора с автодополнением.
+- Отчётности и аналитики.
+
+**Ключевые модели:**
+
+- `Teacher` (`apps/catalog/models.py`):
+
+  - `last_name` — CharField, фамилия преподавателя.
+  - `first_name` — CharField, имя преподавателя.
+  - `is_active` — BooleanField, активность.
+  - UniqueConstraint на `(last_name, first_name)`.
+
+- `Subject` (`apps/catalog/models.py`):
+
+  - `name` — CharField, уникальное название предмета.
+  - `is_active` — BooleanField, активность.
+
+- `TeachingAssignment` (`apps/catalog/models.py`):
+
+  - `year` — PositiveSmallIntegerField, учебный год.
+  - `subject` — FK на `Subject`.
+  - `teacher` — FK на `Teacher`.
+  - `is_active` — BooleanField, активность.
+  - UniqueConstraint на `(year, subject, teacher)`.
+  - Индексы: `(year, subject)`, `(year, teacher)`.
+
+- `PriceOption` (`apps/catalog/models.py`):
+
+  - `year` — PositiveSmallIntegerField, учебный год.
+  - `subject` — FK на `Subject`.
+  - `amount` — DecimalField (max_digits=10, decimal_places=2), сумма в €.
+  - `comment` — TextField, комментарий (почему такая цена).
+  - `is_active` — BooleanField, активность.
+  - UniqueConstraint на `(year, subject, amount, comment)`.
+  - CheckConstraint: `amount >= 0`.
+  - Индекс: `(year, subject)`.
+  - **Семантика цены:** По умолчанию это цена за месяц (€/Monat).
+    Для предметов с "Ind." или "VSpE\_" (индивидуальные) и "NH"/"Nachhilfe" (наххильфе)
+    в названии — это цена за академический час (€/UE).
+  - Метод `get_price_unit()` возвращает единицу ("€/Monat" или "€/UE").
+  - Метод `is_per_hour()` проверяет тип расчёта.
+
+- `Discount` (`apps/catalog/models.py`):
+
+  - `kind` — CharField (choices: PERCENT, FIXED), тип скидки.
+  - `value` — DecimalField, значение скидки:
+    - Для PERCENT: 0.00-0.99 (например 0.25 = 25%).
+    - Для FIXED: сумма в € (вычитается после процентной скидки).
+  - `description` — TextField, описание скидки.
+  - `is_active` — BooleanField, активность.
+  - Валидация: PERCENT 0..0.99, FIXED ≥ 0.
+
+- `FamilyDiscount` (`apps/catalog/models.py`):
+
+  - `year` — PositiveSmallIntegerField, учебный год.
+  - `family_id` — CharField, идентификатор семьи (как в KarteiRecord).
+  - `discount` — FK на `Discount`.
+  - `start_month`, `end_month` — месяцы действия (1-12).
+  - `months` — JSONField, опционально список конкретных месяцев [1,2,3].
+  - `created_at`, `updated_at` — timestamps.
+  - Применяется ко всем записям семьи в данном году.
+
+- `RecordDiscount` (`apps/catalog/models.py`):
+  - `record` — FK на `karteien.KarteiRecord`.
+  - `discount` — FK на `Discount`.
+  - `start_month`, `end_month`, `months` — как в FamilyDiscount.
+  - `created_at`, `updated_at` — timestamps.
+  - Применяется к конкретной записи.
+
+**Скидки и расчёт начислений (будущий функционал):**
+
+В текущей реализации скидки только хранятся и управляются.
+Автоматический перерасчёт полей `month_1..month_12` с учётом скидок
+будет реализован в следующем шаге (PROMPT_21).
+Порядок применения: сначала процентные скидки, затем фиксированные.
+
+**Django Admin:**
+
+Все модели зарегистрированы в Django Admin для быстрого наполнения справочников.
+
+**Web UI (Admin):**
+
+- `/catalog/` — главная страница каталога со статистикой.
+- `/catalog/teachers/` — управление преподавателями.
+- `/catalog/subjects/` — управление предметами.
+- `/catalog/assignments/` — управление назначениями (преподаватель-предмет-год).
+- `/catalog/assignments/copy-year/` — копирование назначений между годами.
+- `/catalog/prices/` — управление прайс-листом по годам и предметам.
+- `/catalog/prices/copy-year/` — копирование прайса между годами.
+- `/catalog/discounts/` — управление справочником скидок (процентные/фиксированные).
+- `/catalog/family-discounts/` — назначение скидок на семью+год.
+- `/catalog/record-discounts/` — назначение скидок на конкретные записи.
+
+### 2.8 `legacy_import` (миграция из Access)
 
 **Происхождение из VBA:**
 

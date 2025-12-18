@@ -131,7 +131,7 @@ class KarteiValidationService:
         family_id: str,
         parent_name: str,
         year: int,
-        exclude_id: int | None = None,
+        exclude_pk: int | None = None,
     ) -> bool:
         """
         Check if FamilyID + Parent combination is unique.
@@ -142,7 +142,7 @@ class KarteiValidationService:
             family_id: The family identifier.
             parent_name: The parent name.
             year: Year context.
-            exclude_id: Record ID to exclude (for updates).
+            exclude_pk: Record pkid (surrogate PK) to exclude (for updates).
             
         Returns:
             True if combination is unique, False otherwise.
@@ -152,8 +152,8 @@ class KarteiValidationService:
             family_id=family_id,
             parent_name=parent_name,
         )
-        if exclude_id is not None:
-            qs = qs.exclude(id=exclude_id)
+        if exclude_pk is not None:
+            qs = qs.exclude(pk=exclude_pk)
         return not qs.exists()
     
     @staticmethod

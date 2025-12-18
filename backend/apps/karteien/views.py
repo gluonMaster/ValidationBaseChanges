@@ -6,6 +6,7 @@ This module contains views for:
 - Creating new KarteiRecord entries
 - Editing existing KarteiRecord entries
 - Deleting KarteiRecord entries
+- Emergency months override (admin-only)
 
 Access is restricted to Admin and Operator roles, with appropriate
 restrictions applied (SEPA, past-months) for Operators.
@@ -38,8 +39,9 @@ from apps.approvals.services import (
     get_changed_tracked_fields,
 )
 
-from .forms import KarteiRecordForm, KarteiRecordFilterForm
-from .models import KarteiRecord, RecordStatus
+from .billing import recalculate_record_months, build_base_amounts
+from .forms import KarteiRecordForm, KarteiRecordFilterForm, MonthsOverrideForm
+from .models import KarteiRecord, RecordStatus, MonthsMode
 from .validators import validate_kartei_record, apply_operator_filters
 
 
@@ -225,10 +227,29 @@ class KarteiRecordCreateView(KarteiEditorMixin, CreateView):
         context = super().get_context_data(**kwargs)
         context["is_create"] = True
         context["year"] = int(self.request.GET.get("year", date.today().year))
+        
+        # New records are AUTO mode by default
+        context["is_auto_mode"] = True
+        context["months_mode"] = MonthsMode.AUTO
+        
+        # Get hourly months for template
+        form = context.get('form')
+        if form:
+            context["hourly_months"] = form.get_hourly_months()
+            
+            # Zero clamp confirmation context
+            if hasattr(form, '_calculation_flags') and form._calculation_flags:
+                flags = form._calculation_flags
+                context["needs_zero_clamp_confirmation"] = flags.requires_confirmation
+                context["clamped_zero_months"] = list(flags.clamped_to_zero_months) if flags.clamped_to_zero_months else []
+            else:
+                context["needs_zero_clamp_confirmation"] = False
+                context["clamped_zero_months"] = []
+        
         return context
     
     def form_valid(self, form) -> HttpResponse:
-        """Save new record with metadata."""
+        """Save new record with metadata and AUTO billing."""
         record = form.save(commit=False)
         
         # Set year
@@ -246,6 +267,27 @@ class KarteiRecordCreateView(KarteiEditorMixin, CreateView):
         
         # Status is NORMAL for new records
         record.status = RecordStatus.NORMAL
+        
+        # Set months_mode to AUTO for new records
+        record.months_mode = MonthsMode.AUTO
+        
+        # Get billing data from form
+        billing_data = form.get_billing_data()
+        record.hours_amounts = billing_data['hours_amounts']
+        
+        # Calculate billing
+        flags = recalculate_record_months(
+            record,
+            hours_amounts=billing_data['hours_amounts'],
+        )
+        
+        # Show warning if percent discount was clamped
+        if flags.percent_discount_exceeded:
+            messages.warning(
+                self.request,
+                f"Warnung: Die Summe der Prozentrabatte ({flags.original_percent_sum * 100:.0f}%) "
+                f"wurde auf 99% begrenzt."
+            )
         
         record.save()
         
@@ -324,6 +366,24 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
         context["year"] = self.object.year
         context["record"] = self.object
         
+        # AUTO mode info
+        context["is_auto_mode"] = self.object.months_mode == MonthsMode.AUTO
+        context["months_mode"] = self.object.months_mode
+        
+        # Get hourly months for template
+        form = context.get('form')
+        if form:
+            context["hourly_months"] = form.get_hourly_months()
+            
+            # Zero clamp confirmation context
+            if hasattr(form, '_calculation_flags') and form._calculation_flags:
+                flags = form._calculation_flags
+                context["needs_zero_clamp_confirmation"] = flags.requires_confirmation
+                context["clamped_zero_months"] = list(flags.clamped_to_zero_months) if flags.clamped_to_zero_months else []
+            else:
+                context["needs_zero_clamp_confirmation"] = False
+                context["clamped_zero_months"] = []
+        
         # Show restrictions info for Operators
         user = self.request.user
         if user.has_sepa_restrictions:
@@ -337,7 +397,7 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
         return context
     
     def form_valid(self, form) -> HttpResponse:
-        """Handle save with safe/risky classification.
+        """Handle save with safe/risky classification and AUTO billing.
         
         SAFE path (direct update) is only allowed for records with status NORMAL.
         For any other status, changes must go through the approvals workflow.
@@ -361,6 +421,27 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
                     "\"Abgelehnte Änderungen\", um Korrekturen erneut einzureichen."
                 )
             return redirect("karteien:record_detail", pk=original.pk)
+        
+        # Handle AUTO mode billing calculations
+        if record.months_mode == MonthsMode.AUTO:
+            billing_data = form.get_billing_data()
+            record.hours_amounts = billing_data['hours_amounts']
+            
+            # Recalculate with partial updates if price changed
+            flags = recalculate_record_months(
+                record,
+                apply_from_month_1=billing_data['apply_from_month_1'],
+                apply_from_month_2=billing_data['apply_from_month_2'],
+                hours_amounts=billing_data['hours_amounts'],
+            )
+            
+            # Show warning if percent discount was clamped
+            if flags.percent_discount_exceeded:
+                messages.warning(
+                    self.request,
+                    f"Warnung: Die Summe der Prozentrabatte ({flags.original_percent_sum * 100:.0f}%) "
+                    f"wurde auf 99% begrenzt."
+                )
         
         # Get proposed changes (comparing form data with original)
         proposed_data = form.cleaned_data
@@ -448,3 +529,78 @@ class KarteiRecordDeleteView(KarteiEditorMixin, DeleteView):
         messages.success(request, f"Datensatz {record_id} wurde gelöscht.")
         
         return response
+
+
+# =============================================================================
+# Months Override View (Emergency Admin-only tool)
+# =============================================================================
+
+class MonthsOverrideView(KarteiEditorMixin, View):
+    """
+    Emergency override view for manually setting month values.
+    
+    Admin-only tool for correcting month values when automatic
+    calculation doesn't apply or needs manual correction.
+    
+    Changes go through the approvals workflow as RISKY changes.
+    """
+    
+    template_name = "karteien/months_override.html"
+    
+    def test_func(self) -> bool:
+        """Only Admin can use override tool."""
+        user = self.request.user
+        return user.is_authenticated and user.is_admin_role
+    
+    def get(self, request: HttpRequest, pk: int) -> HttpResponse:
+        """Show override form."""
+        record = get_object_or_404(KarteiRecord, pk=pk)
+        form = MonthsOverrideForm(record=record)
+        
+        return render(request, self.template_name, {
+            "record": record,
+            "form": form,
+        })
+    
+    def post(self, request: HttpRequest, pk: int) -> HttpResponse:
+        """Process override form."""
+        record = get_object_or_404(KarteiRecord, pk=pk)
+        form = MonthsOverrideForm(request.POST, record=record)
+        
+        if not form.is_valid():
+            return render(request, self.template_name, {
+                "record": record,
+                "form": form,
+            })
+        
+        # Get month changes
+        month_changes = form.get_month_changes()
+        reason = form.cleaned_data['reason']
+        
+        # Apply changes to record
+        for field_name, value in month_changes.items():
+            setattr(record, field_name, value)
+        
+        # Set mode to OVERRIDE
+        record.months_mode = MonthsMode.OVERRIDE
+        
+        # Create pending change (always risky for override)
+        pending = create_or_update_pending_change(record)
+        
+        # Add reason to pending change comment
+        if pending and hasattr(pending, 'comment'):
+            pending.comment = f"OVERRIDE: {reason}"
+            pending.save()
+        
+        # Mark record as PENDING
+        KarteiRecord.objects.filter(pk=record.pk).update(
+            status=RecordStatus.PENDING
+        )
+        
+        messages.info(
+            request,
+            f"Override für Datensatz {record.id} wurde zur Genehmigung eingereicht. "
+            "Ein Superadmin muss die Änderungen prüfen."
+        )
+        
+        return redirect("karteien:record_detail", pk=record.pk)

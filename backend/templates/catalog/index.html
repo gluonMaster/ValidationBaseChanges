@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+{% comment %}
+Catalog index page - Quick links to all catalog management sections.
+Only accessible to Admin users.
+{% endcomment %}
+
+{% block title %}Katalog - Verwaltung{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <h1>
+                <i class="bi bi-book"></i>
+                Katalog Verwaltung
+            </h1>
+            <p class="text-muted">
+                Verwalten Sie Lehrer, Fächer, Preise und Rabatte für standardisierte Formulare und Berichte.
+            </p>
+        </div>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="row mb-4">
+        <div class="col-md-2">
+            <div class="card text-bg-primary">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="card-title mb-0">{{ teacher_count }}</h5>
+                            <p class="card-text mb-0 small">Aktive Lehrer</p>
+                        </div>
+                        <i class="bi bi-person-badge fs-2 opacity-50"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card text-bg-success">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="card-title mb-0">{{ subject_count }}</h5>
+                            <p class="card-text mb-0 small">Aktive Fächer</p>
+                        </div>
+                        <i class="bi bi-journal-bookmark fs-2 opacity-50"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card text-bg-info">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="card-title mb-0">{{ assignment_count }}</h5>
+                            <p class="card-text mb-0 small">Zuweisungen</p>
+                        </div>
+                        <i class="bi bi-link-45deg fs-2 opacity-50"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card text-bg-warning">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="card-title mb-0">{{ price_count }}</h5>
+                            <p class="card-text mb-0 small">Aktive Preise</p>
+                        </div>
+                        <i class="bi bi-currency-euro fs-2 opacity-50"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card text-bg-secondary">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="card-title mb-0">{{ discount_count }}</h5>
+                            <p class="card-text mb-0 small">Aktive Rabatte</p>
+                        </div>
+                        <i class="bi bi-percent fs-2 opacity-50"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation Cards -->
+    <div class="row">
+        <!-- Teachers -->
+        <div class="col-md-3 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-person-badge"></i>
+                    Lehrer (Teachers)
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Verwalten Sie die Liste der Lehrer mit Namen und Aktivitätsstatus.
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'catalog:teacher_list' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-list"></i> Alle anzeigen
+                    </a>
+                    <a href="{% url 'catalog:teacher_create' %}" class="btn btn-success">
+                        <i class="bi bi-plus-lg"></i> Neu
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Subjects -->
+        <div class="col-md-3 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-journal-bookmark"></i>
+                    Fächer (Subjects)
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Verwalten Sie die standardisierten Fachnamen für Formulare und Dropdown-Listen.
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'catalog:subject_list' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-list"></i> Alle anzeigen
+                    </a>
+                    <a href="{% url 'catalog:subject_create' %}" class="btn btn-success">
+                        <i class="bi bi-plus-lg"></i> Neu
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Assignments -->
+        <div class="col-md-3 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-link-45deg"></i>
+                    Zuweisungen (Assignments)
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Verknüpfen Sie Lehrer mit Fächern für bestimmte Jahre.
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'catalog:assignment_list' %}?year={{ current_year }}" class="btn btn-outline-primary">
+                        <i class="bi bi-list"></i> Alle
+                    </a>
+                    <a href="{% url 'catalog:assignment_create' %}?year={{ current_year }}" class="btn btn-success">
+                        <i class="bi bi-plus-lg"></i> Neu
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Prices -->
+        <div class="col-md-3 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-currency-euro"></i>
+                    Preise (Prices)
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Verwalten Sie Preise pro Fach und Jahr (€/Monat oder €/UE).
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'catalog:price_list' %}?year={{ current_year }}" class="btn btn-outline-primary">
+                        <i class="bi bi-list"></i> Alle
+                    </a>
+                    <a href="{% url 'catalog:price_create' %}?year={{ current_year }}" class="btn btn-success">
+                        <i class="bi bi-plus-lg"></i> Neu
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Discount Section -->
+    <div class="row mt-2">
+        <div class="col-12">
+            <h4 class="mb-3">
+                <i class="bi bi-percent"></i>
+                Rabatte
+            </h4>
+        </div>
+        
+        <!-- Discount Catalog -->
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-secondary">
+                <div class="card-header bg-secondary text-white">
+                    <i class="bi bi-percent"></i>
+                    Rabatt-Katalog
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Definieren Sie Rabattarten (Prozent oder Fest €) für die Zuweisung an Familien und Einträge.
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'catalog:discount_list' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-list"></i> Alle
+                    </a>
+                    <a href="{% url 'catalog:discount_create' %}" class="btn btn-secondary">
+                        <i class="bi bi-plus-lg"></i> Neu
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Family Discounts -->
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-info">
+                <div class="card-header bg-info text-white">
+                    <i class="bi bi-people"></i>
+                    Familienrabatte
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Rabatte für alle Einträge einer Familie in einem Jahr.
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'catalog:family_discount_list' %}?year={{ current_year }}" class="btn btn-outline-info">
+                        <i class="bi bi-list"></i> Alle
+                    </a>
+                    <a href="{% url 'catalog:family_discount_create' %}?year={{ current_year }}" class="btn btn-info">
+                        <i class="bi bi-plus-lg"></i> Neu
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Record Discounts -->
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-primary">
+                <div class="card-header bg-primary text-white">
+                    <i class="bi bi-file-earmark"></i>
+                    Eintragsrabatte
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Rabatte für einzelne Karteieinträge (z.B. individuelle Absprachen).
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'catalog:record_discount_list' %}" class="btn btn-outline-primary">
+                        <i class="bi bi-list"></i> Alle
+                    </a>
+                    <a href="{% url 'catalog:record_discount_create' %}" class="btn btn-primary">
+                        <i class="bi bi-plus-lg"></i> Neu
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Copy Year Sections -->
+    <div class="row mt-3">
+        <div class="col-md-6">
+            <div class="card border-warning h-100">
+                <div class="card-header bg-warning text-dark">
+                    <i class="bi bi-copy"></i>
+                    Zuweisungen kopieren
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Kopieren Sie alle Lehrer-Fach-Zuweisungen von einem Jahr in ein anderes.
+                    </p>
+                    <a href="{% url 'catalog:copy_year' %}" class="btn btn-warning">
+                        <i class="bi bi-arrow-right-circle"></i>
+                        Jahr kopieren
+                    </a>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card border-warning h-100">
+                <div class="card-header bg-warning text-dark">
+                    <i class="bi bi-copy"></i>
+                    Preise kopieren
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Kopieren Sie alle Preise von einem Jahr in ein anderes.
+                    </p>
+                    <a href="{% url 'catalog:copy_prices_year' %}" class="btn btn-warning">
+                        <i class="bi bi-arrow-right-circle"></i>
+                        Jahr kopieren
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

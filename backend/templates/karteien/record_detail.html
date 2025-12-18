@@ -104,7 +104,17 @@ Shows all fields of a single KarteiRecord.
         <div class="card-body">
           <dl class="row mb-0">
             <dt class="col-sm-4">FamilyID</dt>
-            <dd class="col-sm-8">{{ record.family_id|default:"-" }}</dd>
+            <dd class="col-sm-8">
+              {{ record.family_id|default:"-" }}
+              {% if user.is_admin_role and record.family_id %}
+              <a href="{% url 'karteien:family_dashboard' %}?year={{ record.year }}&family_id={{ record.family_id }}" 
+                 class="btn btn-sm btn-outline-info py-0 px-1 ms-1"
+                 title="Familien-Dashboard öffnen">
+                  <i class="bi bi-people"></i>
+                  Familie
+              </a>
+              {% endif %}
+            </dd>
 
             <dt class="col-sm-4">Eltern</dt>
             <dd class="col-sm-8">{{ record.parent_name|default:"-" }}</dd>
@@ -151,7 +161,7 @@ Shows all fields of a single KarteiRecord.
 
             <dt class="col-sm-4">Preis 1</dt>
             <dd class="col-sm-8">
-              {% if record.price1 %}{{ record.price1 }} €{% else %}-{% endif %}
+              {% if record.price1 %}{{ record.price1|floatformat:2 }} €{% else %}-{% endif %}
             </dd>
 
             <dt class="col-sm-4">Fach 2</dt>
@@ -159,7 +169,7 @@ Shows all fields of a single KarteiRecord.
 
             <dt class="col-sm-4">Preis 2</dt>
             <dd class="col-sm-8">
-              {% if record.price2 %}{{ record.price2 }} €{% else %}-{% endif %}
+              {% if record.price2 %}{{ record.price2|floatformat:2 }} €{% else %}-{% endif %}
             </dd>
 
             <dt class="col-sm-4">Extra 1</dt>
@@ -185,83 +195,128 @@ Shows all fields of a single KarteiRecord.
 
   <!-- Months -->
   <div class="card mb-4">
-    <div class="card-header">
-      <i class="bi bi-calendar-month"></i>
-      Monatsdaten
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span>
+        <i class="bi bi-calendar-month"></i>
+        Monatsdaten
+        {% if record.months_mode %}
+        <span class="badge {% if record.months_mode == 'AUTO' %}bg-success{% elif record.months_mode == 'OVERRIDE' %}bg-danger{% else %}bg-secondary{% endif %} ms-2">
+          {{ record.months_mode }}
+        </span>
+        {% endif %}
+        {% if record.discounts_disabled %}
+        <span class="badge bg-warning text-dark ms-1">Rabatte deaktiviert</span>
+        {% endif %}
+      </span>
+      {% if user.is_admin_role %}
+      <a href="{% url 'karteien:months_override' record.pk %}" class="btn btn-outline-danger btn-sm">
+        <i class="bi bi-exclamation-triangle"></i>
+        Override
+      </a>
+      {% endif %}
     </div>
     <div class="card-body">
+      <p class="text-muted small mb-3">
+        <i class="bi bi-info-circle"></i>
+        Klicken Sie auf einen Monatswert, um die Berechnungsdetails zu sehen.
+      </p>
       <div class="row">
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center">
+          <div class="p-2 border rounded text-center month-breakdown-btn" role="button" data-month="1" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
             <small class="text-muted">Monat 1</small>
-            <div class="fw-bold">{{ record.month_1|default:"-" }}</div>
+            <div class="fw-bold">{% if record.month_1 %}{{ record.month_1|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center">
+          <div class="p-2 border rounded text-center month-breakdown-btn" role="button" data-month="2" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
             <small class="text-muted">Monat 2</small>
-            <div class="fw-bold">{{ record.month_2|default:"-" }}</div>
+            <div class="fw-bold">{% if record.month_2 %}{{ record.month_2|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center">
+          <div class="p-2 border rounded text-center month-breakdown-btn" role="button" data-month="3" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
             <small class="text-muted">Monat 3</small>
-            <div class="fw-bold">{{ record.month_3|default:"-" }}</div>
+            <div class="fw-bold">{% if record.month_3 %}{{ record.month_3|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center">
+          <div class="p-2 border rounded text-center month-breakdown-btn" role="button" data-month="4" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
             <small class="text-muted">Monat 4</small>
-            <div class="fw-bold">{{ record.month_4|default:"-" }}</div>
+            <div class="fw-bold">{% if record.month_4 %}{{ record.month_4|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center">
+          <div class="p-2 border rounded text-center month-breakdown-btn" role="button" data-month="5" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
             <small class="text-muted">Monat 5</small>
-            <div class="fw-bold">{{ record.month_5|default:"-" }}</div>
+            <div class="fw-bold">{% if record.month_5 %}{{ record.month_5|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center">
+          <div class="p-2 border rounded text-center month-breakdown-btn" role="button" data-month="6" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
             <small class="text-muted">Monat 6</small>
-            <div class="fw-bold">{{ record.month_6|default:"-" }}</div>
+            <div class="fw-bold">{% if record.month_6 %}{{ record.month_6|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center">
+          <div class="p-2 border rounded text-center month-breakdown-btn" role="button" data-month="7" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
             <small class="text-muted">Monat 7</small>
-            <div class="fw-bold">{{ record.month_7|default:"-" }}</div>
+            <div class="fw-bold">{% if record.month_7 %}{{ record.month_7|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center">
+          <div class="p-2 border rounded text-center month-breakdown-btn" role="button" data-month="8" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
             <small class="text-muted">Monat 8</small>
-            <div class="fw-bold">{{ record.month_8|default:"-" }}</div>
+            <div class="fw-bold">{% if record.month_8 %}{{ record.month_8|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center">
+          <div class="p-2 border rounded text-center month-breakdown-btn" role="button" data-month="9" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
             <small class="text-muted">Monat 9</small>
-            <div class="fw-bold">{{ record.month_9|default:"-" }}</div>
+            <div class="fw-bold">{% if record.month_9 %}{{ record.month_9|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center">
+          <div class="p-2 border rounded text-center month-breakdown-btn" role="button" data-month="10" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
             <small class="text-muted">Monat 10</small>
-            <div class="fw-bold">{{ record.month_10|default:"-" }}</div>
+            <div class="fw-bold">{% if record.month_10 %}{{ record.month_10|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center">
+          <div class="p-2 border rounded text-center month-breakdown-btn" role="button" data-month="11" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
             <small class="text-muted">Monat 11</small>
-            <div class="fw-bold">{{ record.month_11|default:"-" }}</div>
+            <div class="fw-bold">{% if record.month_11 %}{{ record.month_11|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center">
+          <div class="p-2 border rounded text-center month-breakdown-btn" role="button" data-month="12" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
             <small class="text-muted">Monat 12</small>
-            <div class="fw-bold">{{ record.month_12|default:"-" }}</div>
+            <div class="fw-bold">{% if record.month_12 %}{{ record.month_12|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Month Breakdown Modal -->
+  <div class="modal fade" id="monthBreakdownModal" tabindex="-1" aria-labelledby="monthBreakdownModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="monthBreakdownModalLabel">
+            <i class="bi bi-calculator"></i>
+            Monat <span id="breakdownMonthNum"></span> - Berechnungsdetails
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body" id="breakdownContent">
+          <div class="text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+              <span class="visually-hidden">Laden...</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
         </div>
       </div>
     </div>
@@ -326,4 +381,190 @@ Shows all fields of a single KarteiRecord.
     </a>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const modal = new bootstrap.Modal(document.getElementById('monthBreakdownModal'));
+  const breakdownContent = document.getElementById('breakdownContent');
+  const breakdownMonthNum = document.getElementById('breakdownMonthNum');
+  
+  // Month names in German
+  const monthNames = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 
+                      'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+  
+  document.querySelectorAll('.month-breakdown-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      const month = this.dataset.month;
+      const recordPk = this.dataset.recordPk;
+      
+      // Update modal title
+      breakdownMonthNum.textContent = month + ' (' + monthNames[parseInt(month) - 1] + ')';
+      
+      // Show loading
+      breakdownContent.innerHTML = `
+        <div class="text-center py-4">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Laden...</span>
+          </div>
+        </div>
+      `;
+      
+      modal.show();
+      
+      // Fetch breakdown
+      fetch('/karteien/' + recordPk + '/month-breakdown/?month=' + month)
+        .then(response => response.json())
+        .then(data => {
+          breakdownContent.innerHTML = renderBreakdown(data);
+        })
+        .catch(error => {
+          breakdownContent.innerHTML = `
+            <div class="alert alert-danger">
+              <i class="bi bi-exclamation-triangle"></i>
+              Fehler beim Laden der Daten: ${error.message}
+            </div>
+          `;
+        });
+    });
+  });
+  
+  function renderBreakdown(data) {
+    if (!data.available) {
+      let reasonText = 'Keine Detaildaten verfügbar.';
+      if (data.reason === 'LEGACY_NO_DATA') {
+        reasonText = 'Legacy-Import: Für dieses Feld sind keine Berechnungsdetails verfügbar. Es wird nur der gespeicherte Wert angezeigt.';
+      } else if (data.reason === 'OVERRIDE_MODE') {
+        reasonText = 'Override-Modus: Der Wert wurde manuell überschrieben. Die ursprüngliche Berechnung ist nicht verfügbar.';
+      }
+      
+      return `
+        <div class="alert alert-secondary">
+          <i class="bi bi-info-circle"></i>
+          ${reasonText}
+        </div>
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Gespeicherter Wert</dt>
+          <dd class="col-sm-8"><strong>${parseFloat(data.final || 0).toFixed(2)} €</strong></dd>
+        </dl>
+      `;
+    }
+    
+    let html = '<dl class="row">';
+    
+    // Basic info
+    html += `
+      <dt class="col-sm-4">Halbjahr</dt>
+      <dd class="col-sm-8">${data.semester}. Halbjahr</dd>
+      
+      <dt class="col-sm-4">Fach</dt>
+      <dd class="col-sm-8">${data.subject_name || '-'}</dd>
+      
+      <dt class="col-sm-4">Abrechnungsart</dt>
+      <dd class="col-sm-8">${data.billing_kind === 'HOURLY' ? 'Pro Stunde (€/UE)' : 'Monatlich (€/Monat)'}</dd>
+    `;
+    
+    // For hourly billing, show hours and unit price
+    if (data.billing_kind === 'HOURLY') {
+      html += `
+        <dt class="col-sm-4">Stunden</dt>
+        <dd class="col-sm-8">${parseFloat(data.hours || 0).toFixed(2)} UE</dd>
+        
+        <dt class="col-sm-4">Preis pro UE</dt>
+        <dd class="col-sm-8">${data.unit_price ? parseFloat(data.unit_price).toFixed(2) + ' €' : '-'}</dd>
+      `;
+    }
+    
+    // Base amount
+    html += `
+      <dt class="col-sm-4">Basis (vor Rabatten)</dt>
+      <dd class="col-sm-8"><strong>${parseFloat(data.base || 0).toFixed(2)} €</strong></dd>
+    `;
+    
+    html += '</dl>';
+    
+    // Discounts section
+    html += '<hr><h6><i class="bi bi-percent"></i> Rabatte</h6>';
+    
+    // Check for skipped discounts
+    if (data.discounts_skipped_reason) {
+      let skipReason = '';
+      if (data.discounts_skipped_reason === 'NACHHILFE') {
+        skipReason = '<span class="badge bg-info">Nachhilfe: Rabatte werden nicht angewendet</span>';
+      } else if (data.discounts_skipped_reason === 'DISABLED') {
+        skipReason = '<span class="badge bg-warning text-dark">Rabatte für diesen Datensatz deaktiviert</span>';
+      }
+      html += `<p>${skipReason}</p>`;
+    } else {
+      // Show discounts applied
+      html += '<dl class="row">';
+      
+      // Percent discounts
+      if (data.percent_discounts_applied && data.percent_discounts_applied.length > 0) {
+        html += '<dt class="col-sm-4">Prozentrabatte</dt><dd class="col-sm-8">';
+        data.percent_discounts_applied.forEach(d => {
+          const pct = (parseFloat(d.value) * 100).toFixed(0);
+          html += `<span class="badge bg-success me-1">${pct}%</span> ${d.description || ''} <small class="text-muted">(${d.months_display})</small><br>`;
+        });
+        html += '</dd>';
+      } else {
+        html += '<dt class="col-sm-4">Prozentrabatte</dt><dd class="col-sm-8 text-muted">Keine</dd>';
+      }
+      
+      // Fixed discounts
+      if (data.fixed_discounts_applied && data.fixed_discounts_applied.length > 0) {
+        html += '<dt class="col-sm-4">Feste Rabatte</dt><dd class="col-sm-8">';
+        data.fixed_discounts_applied.forEach(d => {
+          html += `<span class="badge bg-primary me-1">${parseFloat(d.value).toFixed(2)} €</span> ${d.description || ''} <small class="text-muted">(${d.months_display})</small><br>`;
+        });
+        html += '</dd>';
+      } else {
+        html += '<dt class="col-sm-4">Feste Rabatte</dt><dd class="col-sm-8 text-muted">Keine</dd>';
+      }
+      
+      html += '</dl>';
+      
+      // Calculation steps
+      html += '<hr><h6><i class="bi bi-calculator"></i> Berechnungsschritte</h6>';
+      html += '<dl class="row">';
+      
+      const percentSumPct = (parseFloat(data.percent_sum || 0) * 100).toFixed(0);
+      html += `<dt class="col-sm-4">Summe Prozentrabatte</dt><dd class="col-sm-8">${percentSumPct}%`;
+      if (data.percent_clamped) {
+        const origPct = (parseFloat(data.original_percent_sum || 0) * 100).toFixed(0);
+        html += ` <span class="badge bg-warning text-dark">Begrenzt von ${origPct}% auf 99%</span>`;
+      }
+      html += '</dd>';
+      
+      html += `<dt class="col-sm-4">Nach Prozentrabatt</dt><dd class="col-sm-8">${parseFloat(data.after_percent || 0).toFixed(2)} €</dd>`;
+      
+      html += `<dt class="col-sm-4">Summe feste Rabatte</dt><dd class="col-sm-8">${parseFloat(data.fixed_sum || 0).toFixed(2)} €</dd>`;
+      
+      html += `<dt class="col-sm-4">Nach festen Rabatten</dt><dd class="col-sm-8">${parseFloat(data.after_fixed || 0).toFixed(2)} €</dd>`;
+      
+      html += '</dl>';
+      
+      if (data.clamped_to_zero) {
+        html += `
+          <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i>
+            Das Ergebnis war negativ und wurde auf 0.00 € gesetzt.
+          </div>
+        `;
+      }
+    }
+    
+    // Final result
+    html += `
+      <hr>
+      <div class="text-center">
+        <h5>Endergebnis: <span class="text-success">${parseFloat(data.final || 0).toFixed(2)} €</span></h5>
+      </div>
+    `;
+    
+    return html;
+  }
+});
+</script>
 {% endblock %}

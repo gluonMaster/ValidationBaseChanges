@@ -371,7 +371,45 @@ EXCEL_COL_TO_MONTH = {21: 1, 22: 2, ..., 32: 12}
 
 Модель предоставляет методы `get_month_value(n)`, `set_month_value(n, val)`, `get_all_months()` для удобной работы с месяцами.
 
-### 7.4 Pending / Declined
+### 7.4 Catalog Reference Fields (Web Extension)
+
+Веб-система расширяет `KarteiRecord` nullable FK-полями для связи со справочниками:
+
+| Django Field    | FK Target             | Описание                                         |
+| --------------- | --------------------- | ------------------------------------------------ |
+| `subject1_ref`  | `catalog.Subject`     | Ссылка на предмет 1-го полугодия (мес. 1-6)      |
+| `teacher1_ref`  | `catalog.Teacher`     | Ссылка на преподавателя для предмета 1           |
+| `price1_ref`    | `catalog.PriceOption` | Ссылка на цену для предмета 1                    |
+| `subject2_ref`  | `catalog.Subject`     | Ссылка на предмет 2-го полугодия (мес. 7-12)     |
+| `teacher2_ref`  | `catalog.Teacher`     | Ссылка на преподавателя для предмета 2           |
+| `price2_ref`    | `catalog.PriceOption` | Ссылка на цену для предмета 2                    |
+| `start_month_1` | —                     | Стартовый месяц начисления 1-го полугодия (1-6)  |
+| `start_month_2` | —                     | Стартовый месяц начисления 2-го полугодия (7-12) |
+
+**Семантика:**
+
+- Поля `subject1/price1` относятся к 1-му полугодию (месяцы 1-6).
+- Поля `subject2/price2` относятся к 2-му полугодию (месяцы 7-12).
+- `start_month_*` определяет, с какого месяца начинается начисление (месяцы до старта = 0.00).
+
+**Синхронизация с legacy-полями:**
+
+- При сохранении формы, если выбран `subject*_ref`, legacy-поле `subject*` заполняется именем предмета.
+- Если выбран `price*_ref`, legacy-поле `price*` заполняется суммой.
+- Это обеспечивает обратную совместимость с импортом и экспортом в Access.
+
+**Валидация:**
+
+- `price*_ref.year` должен совпадать с `record.year`.
+- `price*_ref.subject` должен совпадать с `subject*_ref` (если оба выбраны).
+- `teacher*_ref` должен иметь активный `TeachingAssignment` для `(year, subject)`.
+
+**Обратная совместимость:**
+
+- Все ref-поля nullable; импортированные записи с заполненными legacy-полями работают без ref.
+- При редактировании форма пытается prefill ref из legacy (по совпадению имени предмета/суммы).
+
+### 7.5 Pending / Declined
 
 Таблицы `pre_tblKartei` и `decl_tblKartei` проецируются на модели в приложении `approvals`:
 
@@ -532,11 +570,152 @@ FamilyID предполагаются отчёты поверх PostgreSQL бе�
 
 ---
 
-## 9. NeuList (Новые записи)
+## 9. Reference / Catalog Tables (Справочники)
+
+Справочные таблицы для стандартизации данных о преподавателях и предметах.
+Эти таблицы **не заменяют** существующие поля `KarteiRecord.subject1/subject2`
+и не влияют на импорт из Access. Это отдельные справочники для будущих форм
+и отчётности.
+
+### 9.1 Teacher (Преподаватель)
+
+| Поле       | Тип          | Описание                                |
+| ---------- | ------------ | --------------------------------------- |
+| last_name  | CharField    | Фамилия (обязательное, max 100)         |
+| first_name | CharField    | Имя (обязательное, max 100)             |
+| is_active  | BooleanField | Активен ли преподаватель (default=True) |
+
+**Ограничения:**
+
+- UniqueConstraint на `(last_name, first_name)` — уникальность по полному имени.
+
+**Отображение:** `__str__` → `"LastName, FirstName"`
+
+### 9.2 Subject (Предмет)
+
+| Поле      | Тип          | Описание                            |
+| --------- | ------------ | ----------------------------------- |
+| name      | CharField    | Название предмета (unique, max 200) |
+| is_active | BooleanField | Активен ли предмет (default=True)   |
+
+**Отображение:** `__str__` → `name`
+
+### 9.3 TeachingAssignment (Назначение преподавателя)
+
+Связь "в каком году какой преподаватель вёл какой предмет".
+
+| Поле      | Тип                       | Описание                             |
+| --------- | ------------------------- | ------------------------------------ |
+| year      | PositiveSmallIntegerField | Учебный год (2024, 2025, ...)        |
+| subject   | FK → Subject              | Предмет (on_delete=PROTECT)          |
+| teacher   | FK → Teacher              | Преподаватель (on_delete=PROTECT)    |
+| is_active | BooleanField              | Активно ли назначение (default=True) |
+
+**Ограничения:**
+
+- UniqueConstraint на `(year, subject, teacher)` — уникальность назначения.
+
+**Индексы:**
+
+- `(year, subject)` — для быстрого поиска преподавателей по году и предмету.
+- `(year, teacher)` — для быстрого поиска предметов по году и преподавателю.
+
+**Отображение:** `__str__` → `"YEAR: SubjectName — LastName, FirstName"`
+
+### 9.4 PriceOption (Прайс-лист)
+
+Цены по году и дисциплине. Позволяет управлять прайс-листом с разными вариантами цен для одного предмета.
+
+| Поле      | Тип                       | Описание                                            |
+| --------- | ------------------------- | --------------------------------------------------- |
+| year      | PositiveSmallIntegerField | Учебный год (2024, 2025, ...)                       |
+| subject   | FK → Subject              | Предмет (on_delete=PROTECT)                         |
+| amount    | DecimalField(10,2)        | Сумма в € (не может быть отрицательной)             |
+| comment   | TextField                 | Комментарий — почему такая цена (blank, default="") |
+| is_active | BooleanField              | Активна ли цена (default=True)                      |
+
+**Ограничения:**
+
+- UniqueConstraint на `(year, subject, amount, comment)` — уникальность цены.
+- CheckConstraint: `amount >= 0` — запрет отрицательных значений.
+
+**Индексы:**
+
+- `(year, subject)` — для быстрого поиска цен по году и предмету.
+
+**Семантика цены (`amount`):**
+
+- По умолчанию: **цена за месяц** (€/Monat) — для групповых занятий.
+- Для предметов с "Ind." или "VSpE\_" в названии (индивидуальные занятия): **цена за академический час** (€/UE).
+- Для предметов с "NH" или "Nachhilfe" в названии (наххильфе): **цена за академический час** (€/UE).
+
+**Методы:**
+
+- `get_price_unit()` → `"€/Monat"` или `"€/UE"` (определяется по названию предмета).
+- `is_per_hour()` → `True` если цена за академический час.
+
+**Отображение:** `__str__` → `"YEAR: SubjectName – AMOUNT UNIT (comment)"`
+
+### 9.5 Примеры запросов
+
+```python
+from apps.catalog.models import Teacher, Subject, TeachingAssignment, PriceOption
+
+# Все преподаватели, которые вели "Gitarre" в 2024 году
+teachers = Teacher.objects.filter(
+    assignments__year=2024,
+    assignments__subject__name="Gitarre",
+    assignments__is_active=True
+)
+
+# Все предметы преподавателя за все годы
+subjects = Subject.objects.filter(
+    assignments__teacher__last_name="Müller",
+    assignments__teacher__first_name="Hans"
+).distinct()
+
+# Список всех назначений за 2025 год
+assignments_2025 = TeachingAssignment.objects.filter(
+    year=2025,
+    is_active=True
+).select_related('subject', 'teacher')
+
+# Все годы, в которые велся предмет
+years = TeachingAssignment.objects.filter(
+    subject__name="Klavier"
+).values_list('year', flat=True).distinct()
+
+# Все активные цены для предмета в 2025 году
+prices_klavier_2025 = PriceOption.objects.filter(
+    year=2025,
+    subject__name="Klavier",
+    is_active=True
+).order_by('amount')
+
+# Получить цену с единицей измерения
+for price in prices_klavier_2025:
+    unit = price.get_price_unit()  # "€/Monat" или "€/UE"
+    print(f"{price.amount} {unit}: {price.comment}")
+
+# Все предметы с ценами за академчас (индивидуальные, наххильфе)
+per_hour_subjects = Subject.objects.filter(
+    price_options__year=2025,
+    price_options__is_active=True
+).filter(
+    models.Q(name__icontains='Ind.') |
+    models.Q(name__icontains='VSpE_') |
+    models.Q(name__icontains='NH') |
+    models.Q(name__icontains='Nachhilfe')
+).distinct()
+```
+
+---
+
+## 10. NeuList (Новые записи)
 
 Функциональность NeuList позволяет Superadmin отслеживать новые записи, появившиеся с момента последнего просмотра.
 
-### 9.1 VBA реализация (valid_NeuList.bas)
+### 10.1 VBA реализация (valid_NeuList.bas)
 
 В VBA NeuList реализован через:
 
@@ -545,7 +724,7 @@ FamilyID предполагаются отчёты поверх PostgreSQL бе�
 - **RefreshNeuList**: Обновляет список, загружая новые записи из Access.
 - **MarkAllSeen**: Устанавливает `LastSeenID = max(ID)`.
 
-### 9.2 Django реализация
+### 10.2 Django реализация
 
 В веб-интерфейсе NeuList реализован через:
 
@@ -572,7 +751,7 @@ FamilyID предполагаются отчёты поверх PostgreSQL бе�
 | `/approvals/superadmin/neu/`       | `SuperadminNeuListView`  | Список новых записей.           |
 | `/approvals/superadmin/mark-seen/` | `SuperadminMarkSeenView` | Отметить все как просмотренные. |
 
-### 9.3 Критерий "новой" записи
+### 10.3 Критерий "новой" записи
 
 Запись считается "новой" если:
 
@@ -581,7 +760,7 @@ FamilyID предполагаются отчёты поверх PostgreSQL бе�
 
 По умолчанию используется ID-based подход (аналог VBA).
 
-### 9.4 Отображение в UI
+### 10.4 Отображение в UI
 
 NeuList страница показывает:
 
@@ -590,3 +769,99 @@ NeuList страница показывает:
 - Количество новых записей
 - Кнопку "Alle als gesehen markieren" для сброса
 - Фильтр по году
+
+---
+
+## 11. Справочник скидок (Discounts)
+
+Система скидок позволяет назначать процентные и фиксированные скидки на семьи
+или отдельные записи с привязкой к конкретным месяцам.
+
+### 11.1 Модели скидок
+
+**Discount (Справочник скидок):**
+
+| Поле          | Тип          | Описание                                              |
+| ------------- | ------------ | ----------------------------------------------------- |
+| `id`          | AutoField    | Primary key.                                          |
+| `kind`        | CharField    | Тип: `PERCENT` или `FIXED`.                           |
+| `value`       | DecimalField | Значение: для PERCENT 0.00-0.99, для FIXED сумма в €. |
+| `description` | TextField    | Описание скидки (например "Geschwisterrabatt").       |
+| `is_active`   | BooleanField | Активна ли скидка.                                    |
+
+**FamilyDiscount (Скидка на семью):**
+
+| Поле          | Тип                       | Описание                                          |
+| ------------- | ------------------------- | ------------------------------------------------- |
+| `id`          | AutoField                 | Primary key.                                      |
+| `year`        | PositiveSmallIntegerField | Учебный год.                                      |
+| `family_id`   | CharField                 | Идентификатор семьи (как в KarteiRecord).         |
+| `discount`    | FK → Discount             | Применяемая скидка.                               |
+| `start_month` | PositiveSmallIntegerField | Начальный месяц (1-12), default=1.                |
+| `end_month`   | PositiveSmallIntegerField | Конечный месяц (1-12), default=12.                |
+| `months`      | JSONField                 | Опционально: список месяцев [1,3,5] вместо range. |
+| `created_at`  | DateTimeField             | Время создания.                                   |
+| `updated_at`  | DateTimeField             | Время обновления.                                 |
+
+**RecordDiscount (Скидка на запись):**
+
+| Поле          | Тип                       | Описание                                          |
+| ------------- | ------------------------- | ------------------------------------------------- |
+| `id`          | AutoField                 | Primary key.                                      |
+| `record`      | FK → KarteiRecord         | Запись, к которой применяется скидка.             |
+| `discount`    | FK → Discount             | Применяемая скидка.                               |
+| `start_month` | PositiveSmallIntegerField | Начальный месяц (1-12), default=1.                |
+| `end_month`   | PositiveSmallIntegerField | Конечный месяц (1-12), default=12.                |
+| `months`      | JSONField                 | Опционально: список месяцев [1,3,5] вместо range. |
+| `created_at`  | DateTimeField             | Время создания.                                   |
+| `updated_at`  | DateTimeField             | Время обновления.                                 |
+
+### 11.2 Логика применимости месяцев
+
+Метод `get_applicable_months()` возвращает список месяцев, к которым применяется скидка:
+
+1. Если `months` заполнено (например `[1, 3, 5]`) — используется этот список.
+2. Иначе используется диапазон `start_month..end_month` (включительно).
+
+Примеры:
+
+- `start_month=1, end_month=12, months=None` → весь год `[1,2,3,4,5,6,7,8,9,10,11,12]`
+- `start_month=3, end_month=6, months=None` → `[3,4,5,6]`
+- `months=[1,6,12]` → только январь, июнь, декабрь (range игнорируется)
+
+### 11.3 Типы скидок
+
+**Процентная скидка (PERCENT):**
+
+- Значение хранится как дробь: 0.25 = 25%, 0.10 = 10%.
+- Допустимый диапазон: 0.00 - 0.99.
+- Применяется первой (до фиксированной).
+
+**Фиксированная скидка (FIXED):**
+
+- Значение в EUR: 10.00 = вычесть 10€.
+- Допустимый диапазон: >= 0.
+- Применяется после процентной скидки.
+
+### 11.4 Иерархия применения
+
+Скидки применяются в следующем порядке:
+
+1. Семейные скидки (FamilyDiscount) — ко всем записям семьи.
+2. Записные скидки (RecordDiscount) — к конкретной записи.
+3. Внутри каждой категории: сначала PERCENT, затем FIXED.
+
+**Пример расчёта для месяца:**
+
+- Базовая цена: 100€
+- Семейная скидка: 10% (PERCENT, value=0.10)
+- Записная скидка: 5€ (FIXED, value=5.00)
+- Расчёт: 100€ × (1 - 0.10) - 5€ = 90€ - 5€ = 85€
+
+### 11.5 URL-эндпоинты
+
+| URL                          | Описание                  |
+| ---------------------------- | ------------------------- |
+| `/catalog/discounts/`        | Справочник скидок (CRUD). |
+| `/catalog/family-discounts/` | Скидки на семьи (CRUD).   |
+| `/catalog/record-discounts/` | Скидки на записи (CRUD).  |

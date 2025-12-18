@@ -32,6 +32,7 @@ urlpatterns = [
     # ===========================================================================
     path('declined/', views.DeclinedOverviewView.as_view(), name='declined_overview'),
     path('declined/<int:pk>/', views.DeclinedDetailView.as_view(), name='declined_detail'),
+    path('declined/<int:pk>/edit/', views.DeclinedChangeEditView.as_view(), name='declined_edit'),
     
     # Apply fixes
     path('declined/<int:pk>/apply-fix/', views.ApplyDeclinedFixView.as_view(), name='apply_fix'),

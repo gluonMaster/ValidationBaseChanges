@@ -2,6 +2,7 @@
 {% comment %}
 Template for Kartei record list view.
 Admin/Operator UI for browsing and filtering Kartei records.
+Supports live-search via AJAX for instant filtering.
 {% endcomment %}
 
 {% block title %}Kartei - Übersicht{% endblock %}
@@ -33,10 +34,10 @@ Admin/Operator UI for browsing and filtering Kartei records.
             Filter
         </div>
         <div class="card-body">
-            <form method="get" class="row g-3">
+            <form method="get" id="filter-form" class="row g-3">
                 <div class="col-md-2">
                     <label for="year" class="form-label">Jahr</label>
-                    <select name="year" id="year" class="form-select">
+                    <select name="year" id="year" class="form-select filter-input">
                         {% for y in available_years %}
                         <option value="{{ y }}" {% if y|stringformat:"s" == current_year|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
                         {% endfor %}
@@ -45,24 +46,24 @@ Admin/Operator UI for browsing and filtering Kartei records.
                 <div class="col-md-2">
                     <label for="family_id" class="form-label">FamilyID</label>
                     <input type="text" name="family_id" id="family_id" 
-                           class="form-control" value="{{ current_filters.family_id }}"
+                           class="form-control filter-input" value="{{ current_filters.family_id }}"
                            placeholder="Suche...">
                 </div>
                 <div class="col-md-2">
                     <label for="parent" class="form-label">Eltern</label>
                     <input type="text" name="parent" id="parent" 
-                           class="form-control" value="{{ current_filters.parent }}"
+                           class="form-control filter-input" value="{{ current_filters.parent }}"
                            placeholder="Suche...">
                 </div>
                 <div class="col-md-2">
                     <label for="child" class="form-label">Kind</label>
                     <input type="text" name="child" id="child" 
-                           class="form-control" value="{{ current_filters.child }}"
+                           class="form-control filter-input" value="{{ current_filters.child }}"
                            placeholder="Suche...">
                 </div>
                 <div class="col-md-2">
                     <label for="status" class="form-label">Status</label>
-                    <select name="status" id="status" class="form-select">
+                    <select name="status" id="status" class="form-select filter-input">
                         <option value="">Alle</option>
                         <option value="NORMAL" {% if current_filters.status == "NORMAL" %}selected{% endif %}>Normal</option>
                         <option value="PENDING" {% if current_filters.status == "PENDING" %}selected{% endif %}>Wartend</option>
@@ -74,7 +75,7 @@ Admin/Operator UI for browsing and filtering Kartei records.
                         <i class="bi bi-search"></i>
                         Suchen
                     </button>
-                    <a href="{% url 'karteien:record_list' %}?year={{ current_year }}" class="btn btn-outline-secondary">
+                    <a href="{% url 'karteien:record_list' %}?year={{ current_year }}" class="btn btn-outline-secondary" id="reset-filters">
                         <i class="bi bi-x-lg"></i>
                     </a>
                 </div>
@@ -87,7 +88,10 @@ Admin/Operator UI for browsing and filtering Kartei records.
         <div class="card-header d-flex justify-content-between align-items-center">
             <span>
                 <i class="bi bi-table"></i>
-                Ergebnisse ({{ page_obj.paginator.count }} Datensätze)
+                Ergebnisse (<span id="result-count">{{ page_obj.paginator.count }}</span> Datensätze)
+                <span id="loading-spinner" class="spinner-border spinner-border-sm ms-2 d-none" role="status">
+                    <span class="visually-hidden">Lädt...</span>
+                </span>
             </span>
             <div>
                 <a href="{% url 'approvals:pending_list' %}?year={{ current_year }}" 
@@ -103,7 +107,6 @@ Admin/Operator UI for browsing and filtering Kartei records.
             </div>
         </div>
         <div class="card-body p-0">
-            {% if records %}
             <div class="table-responsive">
                 <table class="table table-striped table-hover mb-0">
                     <thead class="table-light">
@@ -119,106 +122,220 @@ Admin/Operator UI for browsing and filtering Kartei records.
                             <th>Aktionen</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        {% for record in records %}
-                        <tr>
-                            <td>{{ record.id }}</td>
-                            <td>{{ record.family_id }}</td>
-                            <td>{{ record.parent_name }}</td>
-                            <td>{{ record.child_name }}</td>
-                            <td>{{ record.subject1|default:"-" }}</td>
-                            <td>{{ record.subject2|default:"-" }}</td>
-                            <td>
-                                {% if record.status == "PENDING" %}
-                                <span class="badge bg-primary">
-                                    <i class="bi bi-hourglass-split"></i>
-                                    Wartend
-                                </span>
-                                {% elif record.status == "DECLINED" %}
-                                <span class="badge bg-danger">
-                                    <i class="bi bi-x-circle"></i>
-                                    Abgelehnt
-                                </span>
-                                {% else %}
-                                <span class="badge bg-success">
-                                    <i class="bi bi-check-circle"></i>
-                                    Normal
-                                </span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if record.is_sepa %}
-                                <span class="badge bg-warning text-dark">SEPA</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <a href="{% url 'karteien:record_detail' record.pk %}" 
-                                   class="btn btn-sm btn-outline-primary"
-                                   title="Anzeigen">
-                                    <i class="bi bi-eye"></i>
-                                </a>
-                                {% if not record.status %}
-                                <a href="{% url 'karteien:record_update' record.pk %}" 
-                                   class="btn btn-sm btn-outline-secondary"
-                                   title="Bearbeiten">
-                                    <i class="bi bi-pencil"></i>
-                                </a>
-                                {% elif record.status == "PENDING" %}
-                                <span class="btn btn-sm btn-outline-secondary disabled"
-                                      title="Bearbeitung gesperrt – wartet auf Freigabe">
-                                    <i class="bi bi-hourglass-split"></i>
-                                </span>
-                                {% elif record.status == "DECLINED" %}
-                                <a href="{% url 'approvals:declined_overview' %}?family_id={{ record.family_id }}" 
-                                   class="btn btn-sm btn-outline-danger"
-                                   title="Zur Abgelehnt-Übersicht">
-                                    <i class="bi bi-x-circle"></i>
-                                </a>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
+                    <tbody id="records-tbody">
+                        {% include "karteien/_record_list_table.html" %}
                     </tbody>
                 </table>
             </div>
-            {% else %}
-            <div class="text-center py-5">
-                <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
-                <p class="text-muted mt-3">Keine Datensätze gefunden.</p>
-            </div>
-            {% endif %}
         </div>
         
         <!-- Pagination -->
-        {% if page_obj.has_other_pages %}
-        <div class="card-footer">
-            <nav aria-label="Seitennavigation">
-                <ul class="pagination justify-content-center mb-0">
-                    {% if page_obj.has_previous %}
-                    <li class="page-item">
-                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}&year={{ current_year }}&family_id={{ current_filters.family_id }}&parent={{ current_filters.parent }}&child={{ current_filters.child }}&status={{ current_filters.status }}">
-                            <i class="bi bi-chevron-left"></i>
-                        </a>
-                    </li>
-                    {% endif %}
-                    
-                    <li class="page-item disabled">
-                        <span class="page-link">
-                            Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}
-                        </span>
-                    </li>
-                    
-                    {% if page_obj.has_next %}
-                    <li class="page-item">
-                        <a class="page-link" href="?page={{ page_obj.next_page_number }}&year={{ current_year }}&family_id={{ current_filters.family_id }}&parent={{ current_filters.parent }}&child={{ current_filters.child }}&status={{ current_filters.status }}">
-                            <i class="bi bi-chevron-right"></i>
-                        </a>
-                    </li>
-                    {% endif %}
-                </ul>
-            </nav>
+        <div class="card-footer" id="pagination-container">
+            {% include "karteien/_record_list_pagination.html" %}
         </div>
-        {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    'use strict';
+    
+    // Configuration
+    const DEBOUNCE_MS = 300;
+    const API_URL = '/api/karteien/live-search/';
+    
+    // DOM Elements
+    const filterForm = document.getElementById('filter-form');
+    const filterInputs = document.querySelectorAll('.filter-input');
+    const tbody = document.getElementById('records-tbody');
+    const paginationContainer = document.getElementById('pagination-container');
+    const resultCount = document.getElementById('result-count');
+    const loadingSpinner = document.getElementById('loading-spinner');
+    
+    // State
+    let debounceTimer = null;
+    let abortController = null;
+    let currentPage = 1;
+    
+    /**
+     * Get current filter values
+     */
+    function getFilterValues() {
+        return {
+            year: document.getElementById('year').value,
+            family_id: document.getElementById('family_id').value,
+            parent: document.getElementById('parent').value,
+            child: document.getElementById('child').value,
+            status: document.getElementById('status').value,
+            page: currentPage
+        };
+    }
+    
+    /**
+     * Build query string from filter values
+     */
+    function buildQueryString(filters) {
+        const params = new URLSearchParams();
+        for (const [key, value] of Object.entries(filters)) {
+            if (value) {
+                params.set(key, value);
+            }
+        }
+        return params.toString();
+    }
+    
+    /**
+     * Show/hide loading state
+     */
+    function setLoading(isLoading) {
+        if (isLoading) {
+            loadingSpinner.classList.remove('d-none');
+            tbody.style.opacity = '0.5';
+        } else {
+            loadingSpinner.classList.add('d-none');
+            tbody.style.opacity = '1';
+        }
+    }
+    
+    /**
+     * Update URL in browser without reload
+     */
+    function updateBrowserUrl(filters) {
+        const queryString = buildQueryString(filters);
+        const newUrl = window.location.pathname + (queryString ? '?' + queryString : '');
+        history.replaceState(null, '', newUrl);
+    }
+    
+    /**
+     * Perform AJAX search
+     */
+    async function performSearch(resetPage = true) {
+        // Cancel previous request if still pending
+        if (abortController) {
+            abortController.abort();
+        }
+        
+        // Reset to page 1 when filters change
+        if (resetPage) {
+            currentPage = 1;
+        }
+        
+        const filters = getFilterValues();
+        const queryString = buildQueryString(filters);
+        
+        abortController = new AbortController();
+        setLoading(true);
+        
+        try {
+            const response = await fetch(API_URL + '?' + queryString, {
+                signal: abortController.signal,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error('Search request failed');
+            }
+            
+            const data = await response.json();
+            
+            // Update DOM
+            tbody.innerHTML = data.rows_html;
+            paginationContainer.innerHTML = data.pagination_html;
+            resultCount.textContent = data.total_count;
+            
+            // Update browser URL
+            updateBrowserUrl(filters);
+            
+            // Re-attach pagination event listeners
+            attachPaginationListeners();
+            
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                // Request was cancelled, ignore
+                return;
+            }
+            console.error('Live search error:', error);
+            // On error, don't update the UI - keep previous results
+        } finally {
+            setLoading(false);
+            abortController = null;
+        }
+    }
+    
+    /**
+     * Debounced search handler
+     */
+    function debouncedSearch() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => performSearch(true), DEBOUNCE_MS);
+    }
+    
+    /**
+     * Attach event listeners to pagination links
+     */
+    function attachPaginationListeners() {
+        const paginationLinks = paginationContainer.querySelectorAll('.pagination-link');
+        paginationLinks.forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                const page = this.getAttribute('data-page');
+                if (page) {
+                    currentPage = parseInt(page, 10);
+                    performSearch(false);
+                }
+            });
+        });
+    }
+    
+    /**
+     * Initialize live search
+     */
+    function init() {
+        // Add input listeners to all filter inputs
+        filterInputs.forEach(input => {
+            const eventType = input.tagName === 'SELECT' ? 'change' : 'input';
+            input.addEventListener(eventType, debouncedSearch);
+        });
+        
+        // Prevent form submission (fallback for users without JS disabled)
+        filterForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            performSearch(true);
+        });
+        
+        // Handle reset button
+        const resetBtn = document.getElementById('reset-filters');
+        resetBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            document.getElementById('family_id').value = '';
+            document.getElementById('parent').value = '';
+            document.getElementById('child').value = '';
+            document.getElementById('status').value = '';
+            currentPage = 1;
+            performSearch(true);
+        });
+        
+        // Initialize pagination listeners for server-rendered content
+        attachPaginationListeners();
+        
+        // Set initial page from URL if present
+        const urlParams = new URLSearchParams(window.location.search);
+        const pageParam = urlParams.get('page');
+        if (pageParam) {
+            currentPage = parseInt(pageParam, 10) || 1;
+        }
+    }
+    
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
 {% endblock %}

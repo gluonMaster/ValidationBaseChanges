@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% comment %}
+Subject create/edit form.
+{% endcomment %}
+
+{% block title %}Katalog - {{ page_title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:index' %}">Katalog</a>
+                    </li>
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:subject_list' %}">Fächer</a>
+                    </li>
+                    <li class="breadcrumb-item active">
+                        {% if is_create %}Neu{% else %}Bearbeiten{% endif %}
+                    </li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-{% if is_create %}plus-circle{% else %}pencil{% endif %}"></i>
+                {{ page_title }}
+            </h1>
+        </div>
+    </div>
+
+    <!-- Form -->
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-journal-bookmark"></i>
+                    Fachdaten
+                </div>
+                <div class="card-body">
+                    <form method="post" novalidate>
+                        {% csrf_token %}
+                        
+                        <!-- Validation Errors -->
+                        {% if form.non_field_errors %}
+                        <div class="alert alert-danger" role="alert">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>Fehler:</strong>
+                            <ul class="mb-0">
+                                {% for error in form.non_field_errors %}
+                                <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                        
+                        <div class="mb-3">
+                            <label for="{{ form.name.id_for_label }}" class="form-label">
+                                Fachname <span class="text-danger">*</span>
+                            </label>
+                            {{ form.name }}
+                            {% if form.name.errors %}
+                            <div class="invalid-feedback d-block">
+                                {{ form.name.errors.0 }}
+                            </div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="form-check">
+                                {{ form.is_active }}
+                                <label class="form-check-label" for="{{ form.is_active.id_for_label }}">
+                                    Aktiv
+                                </label>
+                            </div>
+                            <small class="text-muted">
+                                Inaktive Fächer werden in Dropdown-Listen nicht angezeigt.
+                            </small>
+                        </div>
+                        
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-lg"></i>
+                                Speichern
+                            </button>
+                            <a href="{% url 'catalog:subject_list' %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-x-lg"></i>
+                                Abbrechen
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

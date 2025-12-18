@@ -1,0 +1,32 @@
+{% comment %}
+Partial template for Kartei record list pagination.
+Used by record_list.html and live-search API.
+{% endcomment %}
+
+{% if page_obj.has_other_pages %}
+<nav aria-label="Seitennavigation">
+    <ul class="pagination justify-content-center mb-0">
+        {% if page_obj.has_previous %}
+        <li class="page-item">
+            <a class="page-link pagination-link" href="#" data-page="{{ page_obj.previous_page_number }}">
+                <i class="bi bi-chevron-left"></i>
+            </a>
+        </li>
+        {% endif %}
+        
+        <li class="page-item disabled">
+            <span class="page-link">
+                Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}
+            </span>
+        </li>
+        
+        {% if page_obj.has_next %}
+        <li class="page-item">
+            <a class="page-link pagination-link" href="#" data-page="{{ page_obj.next_page_number }}">
+                <i class="bi bi-chevron-right"></i>
+            </a>
+        </li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}

@@ -2,10 +2,87 @@
 {% comment %}
 Template for Kartei record create/edit form.
 Includes validation and restrictions for Operator role.
+Includes autocomplete for parent/child names when creating new records.
 {% endcomment %}
 {% block title %}
 {% if is_create %}Kartei - Neuer Datensatz{% else %}Kartei - Datensatz {{ record.id }} bearbeiten{% endif %}
 {% endblock %}
+
+{% block extra_css %}
+{% if is_create %}
+<style>
+  /* Autocomplete dropdown styles */
+  .autocomplete-wrapper {
+    position: relative;
+  }
+  .autocomplete-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 250px;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-top: none;
+    border-radius: 0 0 0.375rem 0.375rem;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    z-index: 1050;
+    display: none;
+  }
+  .autocomplete-dropdown.show {
+    display: block;
+  }
+  .autocomplete-item {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .autocomplete-item:last-child {
+    border-bottom: none;
+  }
+  .autocomplete-item:hover,
+  .autocomplete-item.active {
+    background-color: #e9ecef;
+  }
+  .autocomplete-item.fallback {
+    background-color: #fff3cd;
+  }
+  .autocomplete-item.fallback:hover,
+  .autocomplete-item.fallback.active {
+    background-color: #ffe69c;
+  }
+  .autocomplete-empty {
+    padding: 0.5rem 0.75rem;
+    color: #6c757d;
+    font-style: italic;
+  }
+  .autocomplete-loading {
+    padding: 0.5rem 0.75rem;
+    color: #6c757d;
+  }
+  
+  /* Fallback badge styles */
+  .fallback-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  
+  /* Prefilled field highlight */
+  .prefilled-field {
+    background-color: #d1ecf1 !important;
+    border-color: #bee5eb !important;
+    transition: background-color 0.3s ease;
+  }
+  .prefilled-field.fallback-source {
+    background-color: #fff3cd !important;
+    border-color: #ffc107 !important;
+  }
+</style>
+{% endif %}
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid py-4">
   <!-- Header -->
@@ -34,6 +111,13 @@ Includes validation and restrictions for Operator role.
         ></i>
         {% if is_create %} Neuer Datensatz {% else %} Datensatz {{ record.id }}
         bearbeiten {% endif %}
+        <!-- Fallback badge container (shown when data is prefilled from another year) -->
+        {% if is_create %}
+        <span id="fallback-badge" class="badge bg-warning text-dark ms-2 d-none">
+          <i class="bi bi-clock-history"></i>
+          <span id="fallback-badge-text">Daten aus Jahr (fallback)</span>
+        </span>
+        {% endif %}
       </h1>
       <p class="text-muted">Jahr: {{ year }}</p>
     </div>
@@ -98,7 +182,15 @@ Includes validation and restrictions for Operator role.
               >
                 Eltern
               </label>
-              {{ form.parent_name }} {% if form.parent_name.errors %}
+              {% if is_create %}
+              <div class="autocomplete-wrapper" id="parent-autocomplete-wrapper">
+                {{ form.parent_name }}
+                <div class="autocomplete-dropdown" id="parent-autocomplete-dropdown"></div>
+              </div>
+              {% else %}
+              {{ form.parent_name }}
+              {% endif %}
+              {% if form.parent_name.errors %}
               <div class="invalid-feedback d-block">
                 {{ form.parent_name.errors.0 }}
               </div>
@@ -112,7 +204,14 @@ Includes validation and restrictions for Operator role.
               >
                 Kind
               </label>
+              {% if is_create %}
+              <div class="autocomplete-wrapper" id="child-autocomplete-wrapper">
+                {{ form.child_name }}
+                <div class="autocomplete-dropdown" id="child-autocomplete-dropdown"></div>
+              </div>
+              {% else %}
               {{ form.child_name }}
+              {% endif %}
             </div>
 
             <div class="mb-3">
@@ -162,43 +261,112 @@ Includes validation and restrictions for Operator role.
             Fächer & Preise
           </div>
           <div class="card-body">
+            <!-- Semester 1: Fach 1 / Preis 1 (Monate 1-6) -->
+            <h6 class="text-muted mb-3">
+              <i class="bi bi-1-circle"></i> 1. Halbjahr (Monate 1-6)
+            </h6>
+            
             <div class="row">
-              <div class="col-md-8 mb-3">
-                <label
-                  for="{{ form.subject1.id_for_label }}"
-                  class="form-label"
-                >
+              <div class="col-md-6 mb-3">
+                <label for="{{ form.subject1_ref.id_for_label }}" class="form-label">
                   Fach 1
                 </label>
-                {{ form.subject1 }}
+                {{ form.subject1_ref }}
+                {% if form.subject1_ref.errors %}
+                <div class="invalid-feedback d-block">{{ form.subject1_ref.errors.0 }}</div>
+                {% endif %}
               </div>
-              <div class="col-md-4 mb-3">
-                <label for="{{ form.price1.id_for_label }}" class="form-label">
+              <div class="col-md-6 mb-3">
+                <label for="{{ form.teacher1_ref.id_for_label }}" class="form-label">
+                  Lehrer 1
+                </label>
+                {{ form.teacher1_ref }}
+                {% if form.teacher1_ref.errors %}
+                <div class="invalid-feedback d-block">{{ form.teacher1_ref.errors.0 }}</div>
+                {% endif %}
+              </div>
+            </div>
+            
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label for="{{ form.price1_ref.id_for_label }}" class="form-label">
                   Preis 1
                 </label>
-                {{ form.price1 }}
+                {{ form.price1_ref }}
+                {% if form.price1_ref.errors %}
+                <div class="invalid-feedback d-block">{{ form.price1_ref.errors.0 }}</div>
+                {% endif %}
+                <small class="text-muted price-comment" id="price1_comment"></small>
+              </div>
+              <div class="col-md-6 mb-3">
+                <label for="{{ form.start_month_1.id_for_label }}" class="form-label">
+                  Startmonat
+                </label>
+                {{ form.start_month_1 }}
+                <small class="text-muted">Ab welchem Monat wird berechnet</small>
               </div>
             </div>
-
+            
+            <hr class="my-4" />
+            
+            <!-- Semester 2: Fach 2 / Preis 2 (Monate 7-12) -->
+            <h6 class="text-muted mb-3">
+              <i class="bi bi-2-circle"></i> 2. Halbjahr (Monate 7-12)
+            </h6>
+            
             <div class="row">
-              <div class="col-md-8 mb-3">
-                <label
-                  for="{{ form.subject2.id_for_label }}"
-                  class="form-label"
-                >
+              <div class="col-md-6 mb-3">
+                <label for="{{ form.subject2_ref.id_for_label }}" class="form-label">
                   Fach 2
                 </label>
-                {{ form.subject2 }}
+                {{ form.subject2_ref }}
+                {% if form.subject2_ref.errors %}
+                <div class="invalid-feedback d-block">{{ form.subject2_ref.errors.0 }}</div>
+                {% endif %}
               </div>
-              <div class="col-md-4 mb-3">
-                <label for="{{ form.price2.id_for_label }}" class="form-label">
-                  Preis 2
+              <div class="col-md-6 mb-3">
+                <label for="{{ form.teacher2_ref.id_for_label }}" class="form-label">
+                  Lehrer 2
                 </label>
-                {{ form.price2 }}
+                {{ form.teacher2_ref }}
+                {% if form.teacher2_ref.errors %}
+                <div class="invalid-feedback d-block">{{ form.teacher2_ref.errors.0 }}</div>
+                {% endif %}
               </div>
             </div>
+            
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label for="{{ form.price2_ref.id_for_label }}" class="form-label">
+                  Preis 2
+                </label>
+                {{ form.price2_ref }}
+                {% if form.price2_ref.errors %}
+                <div class="invalid-feedback d-block">{{ form.price2_ref.errors.0 }}</div>
+                {% endif %}
+                <small class="text-muted price-comment" id="price2_comment"></small>
+              </div>
+              <div class="col-md-6 mb-3">
+                <label for="{{ form.start_month_2.id_for_label }}" class="form-label">
+                  Startmonat
+                </label>
+                {{ form.start_month_2 }}
+                <small class="text-muted">Ab welchem Monat wird berechnet</small>
+              </div>
+            </div>
+            
+            <!-- Hidden legacy fields (synced from refs) -->
+            {{ form.subject1 }}
+            {{ form.price1 }}
+            {{ form.subject2 }}
+            {{ form.price2 }}
 
             <hr />
+
+            <!-- Extras (free text, no catalog refs) -->
+            <h6 class="text-muted mb-3">
+              <i class="bi bi-plus-circle"></i> Zusätzliche Fächer (Freitext)
+            </h6>
 
             <div class="mb-3">
               <label for="{{ form.extra1.id_for_label }}" class="form-label">
@@ -235,6 +403,18 @@ Includes validation and restrictions for Operator role.
                 Setzen Sie "SEPA" um SEPA-Einschränkungen zu aktivieren.
               </small>
             </div>
+            
+            <div class="mb-3">
+              <div class="form-check">
+                {{ form.discounts_disabled }}
+                <label class="form-check-label" for="{{ form.discounts_disabled.id_for_label }}">
+                  Rabatte deaktiviert
+                </label>
+              </div>
+              <small class="text-muted">
+                Wenn aktiviert, werden keine Rabatte auf diesen Datensatz angewendet.
+              </small>
+            </div>
           </div>
         </div>
       </div>
@@ -242,111 +422,217 @@ Includes validation and restrictions for Operator role.
 
     <!-- Months -->
     <div class="card mb-4">
-      <div class="card-header">
-        <i class="bi bi-calendar-month"></i>
-        Monatsdaten
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>
+          <i class="bi bi-calendar-month"></i>
+          Monatsdaten
+          {% if is_auto_mode %}
+          <span class="badge bg-success ms-2">AUTO</span>
+          {% elif months_mode == 'OVERRIDE' %}
+          <span class="badge bg-danger ms-2">OVERRIDE</span>
+          {% else %}
+          <span class="badge bg-secondary ms-2">LEGACY</span>
+          {% endif %}
+        </span>
       </div>
       <div class="card-body">
+        {% if is_auto_mode %}
+        <div class="alert alert-info mb-3" role="alert">
+          <i class="bi bi-info-circle"></i>
+          <strong>Automatische Berechnung:</strong>
+          Die Monatswerte werden automatisch aus Preis, Stunden und Rabatten berechnet.
+          Für Individual/Nachhilfe-Fächer geben Sie bitte die Stunden ein.
+        </div>
+        {% endif %}
+        
         <div class="row">
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label for="{{ form.month_1.id_for_label }}" class="form-label"
-              >Monat 1</label
-            >
-            {{ form.month_1 }} {% if form.month_1.help_text %}
-            <small class="text-muted">{{ form.month_1.help_text }}</small>
+            <label for="{{ form.month_1.id_for_label }}" class="form-label">Monat 1</label>
+            {{ form.month_1 }}
+            {% if 1 in hourly_months %}
+            <div class="mt-1">
+              <label class="form-label small text-muted">UE (Stunden)</label>
+              {{ form.hours_month_1 }}
+            </div>
             {% endif %}
           </div>
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label for="{{ form.month_2.id_for_label }}" class="form-label"
-              >Monat 2</label
-            >
-            {{ form.month_2 }} {% if form.month_2.help_text %}
-            <small class="text-muted">{{ form.month_2.help_text }}</small>
+            <label for="{{ form.month_2.id_for_label }}" class="form-label">Monat 2</label>
+            {{ form.month_2 }}
+            {% if 2 in hourly_months %}
+            <div class="mt-1">
+              <label class="form-label small text-muted">UE (Stunden)</label>
+              {{ form.hours_month_2 }}
+            </div>
             {% endif %}
           </div>
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label for="{{ form.month_3.id_for_label }}" class="form-label"
-              >Monat 3</label
-            >
-            {{ form.month_3 }} {% if form.month_3.help_text %}
-            <small class="text-muted">{{ form.month_3.help_text }}</small>
+            <label for="{{ form.month_3.id_for_label }}" class="form-label">Monat 3</label>
+            {{ form.month_3 }}
+            {% if 3 in hourly_months %}
+            <div class="mt-1">
+              <label class="form-label small text-muted">UE (Stunden)</label>
+              {{ form.hours_month_3 }}
+            </div>
             {% endif %}
           </div>
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label for="{{ form.month_4.id_for_label }}" class="form-label"
-              >Monat 4</label
-            >
-            {{ form.month_4 }} {% if form.month_4.help_text %}
-            <small class="text-muted">{{ form.month_4.help_text }}</small>
+            <label for="{{ form.month_4.id_for_label }}" class="form-label">Monat 4</label>
+            {{ form.month_4 }}
+            {% if 4 in hourly_months %}
+            <div class="mt-1">
+              <label class="form-label small text-muted">UE (Stunden)</label>
+              {{ form.hours_month_4 }}
+            </div>
             {% endif %}
           </div>
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label for="{{ form.month_5.id_for_label }}" class="form-label"
-              >Monat 5</label
-            >
-            {{ form.month_5 }} {% if form.month_5.help_text %}
-            <small class="text-muted">{{ form.month_5.help_text }}</small>
+            <label for="{{ form.month_5.id_for_label }}" class="form-label">Monat 5</label>
+            {{ form.month_5 }}
+            {% if 5 in hourly_months %}
+            <div class="mt-1">
+              <label class="form-label small text-muted">UE (Stunden)</label>
+              {{ form.hours_month_5 }}
+            </div>
             {% endif %}
           </div>
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label for="{{ form.month_6.id_for_label }}" class="form-label"
-              >Monat 6</label
-            >
-            {{ form.month_6 }} {% if form.month_6.help_text %}
-            <small class="text-muted">{{ form.month_6.help_text }}</small>
+            <label for="{{ form.month_6.id_for_label }}" class="form-label">Monat 6</label>
+            {{ form.month_6 }}
+            {% if 6 in hourly_months %}
+            <div class="mt-1">
+              <label class="form-label small text-muted">UE (Stunden)</label>
+              {{ form.hours_month_6 }}
+            </div>
             {% endif %}
           </div>
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label for="{{ form.month_7.id_for_label }}" class="form-label"
-              >Monat 7</label
-            >
-            {{ form.month_7 }} {% if form.month_7.help_text %}
-            <small class="text-muted">{{ form.month_7.help_text }}</small>
+            <label for="{{ form.month_7.id_for_label }}" class="form-label">Monat 7</label>
+            {{ form.month_7 }}
+            {% if 7 in hourly_months %}
+            <div class="mt-1">
+              <label class="form-label small text-muted">UE (Stunden)</label>
+              {{ form.hours_month_7 }}
+            </div>
             {% endif %}
           </div>
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label for="{{ form.month_8.id_for_label }}" class="form-label"
-              >Monat 8</label
-            >
-            {{ form.month_8 }} {% if form.month_8.help_text %}
-            <small class="text-muted">{{ form.month_8.help_text }}</small>
+            <label for="{{ form.month_8.id_for_label }}" class="form-label">Monat 8</label>
+            {{ form.month_8 }}
+            {% if 8 in hourly_months %}
+            <div class="mt-1">
+              <label class="form-label small text-muted">UE (Stunden)</label>
+              {{ form.hours_month_8 }}
+            </div>
             {% endif %}
           </div>
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label for="{{ form.month_9.id_for_label }}" class="form-label"
-              >Monat 9</label
-            >
-            {{ form.month_9 }} {% if form.month_9.help_text %}
-            <small class="text-muted">{{ form.month_9.help_text }}</small>
+            <label for="{{ form.month_9.id_for_label }}" class="form-label">Monat 9</label>
+            {{ form.month_9 }}
+            {% if 9 in hourly_months %}
+            <div class="mt-1">
+              <label class="form-label small text-muted">UE (Stunden)</label>
+              {{ form.hours_month_9 }}
+            </div>
             {% endif %}
           </div>
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label for="{{ form.month_10.id_for_label }}" class="form-label"
-              >Monat 10</label
-            >
-            {{ form.month_10 }} {% if form.month_10.help_text %}
-            <small class="text-muted">{{ form.month_10.help_text }}</small>
+            <label for="{{ form.month_10.id_for_label }}" class="form-label">Monat 10</label>
+            {{ form.month_10 }}
+            {% if 10 in hourly_months %}
+            <div class="mt-1">
+              <label class="form-label small text-muted">UE (Stunden)</label>
+              {{ form.hours_month_10 }}
+            </div>
             {% endif %}
           </div>
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label for="{{ form.month_11.id_for_label }}" class="form-label"
-              >Monat 11</label
-            >
-            {{ form.month_11 }} {% if form.month_11.help_text %}
-            <small class="text-muted">{{ form.month_11.help_text }}</small>
+            <label for="{{ form.month_11.id_for_label }}" class="form-label">Monat 11</label>
+            {{ form.month_11 }}
+            {% if 11 in hourly_months %}
+            <div class="mt-1">
+              <label class="form-label small text-muted">UE (Stunden)</label>
+              {{ form.hours_month_11 }}
+            </div>
             {% endif %}
           </div>
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label for="{{ form.month_12.id_for_label }}" class="form-label"
-              >Monat 12</label
-            >
-            {{ form.month_12 }} {% if form.month_12.help_text %}
-            <small class="text-muted">{{ form.month_12.help_text }}</small>
+            <label for="{{ form.month_12.id_for_label }}" class="form-label">Monat 12</label>
+            {{ form.month_12 }}
+            {% if 12 in hourly_months %}
+            <div class="mt-1">
+              <label class="form-label small text-muted">UE (Stunden)</label>
+              {{ form.hours_month_12 }}
+            </div>
             {% endif %}
           </div>
         </div>
       </div>
     </div>
+
+    <!-- Price Change Application (edit mode only) -->
+    {% if not is_create and is_auto_mode %}
+    <div class="card mb-4" id="price-change-card">
+      <div class="card-header bg-warning text-dark">
+        <i class="bi bi-arrow-right-circle"></i>
+        Preis-Änderung anwenden
+      </div>
+      <div class="card-body">
+        <p class="text-muted small">
+          Wenn Sie den Preis ändern, wählen Sie bitte, ab welchem Monat die neue Berechnung gelten soll.
+          Monate vor dem gewählten Monat behalten ihre bisherigen Werte.
+        </p>
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <label for="{{ form.apply_from_month_1.id_for_label }}" class="form-label">
+              Preis 1 anwenden ab Monat
+            </label>
+            {{ form.apply_from_month_1 }}
+            {% if form.apply_from_month_1.errors %}
+            <div class="invalid-feedback d-block">{{ form.apply_from_month_1.errors.0 }}</div>
+            {% endif %}
+            <small class="text-muted">{{ form.apply_from_month_1.help_text }}</small>
+          </div>
+          <div class="col-md-6 mb-3">
+            <label for="{{ form.apply_from_month_2.id_for_label }}" class="form-label">
+              Preis 2 anwenden ab Monat
+            </label>
+            {{ form.apply_from_month_2 }}
+            {% if form.apply_from_month_2.errors %}
+            <div class="invalid-feedback d-block">{{ form.apply_from_month_2.errors.0 }}</div>
+            {% endif %}
+            <small class="text-muted">{{ form.apply_from_month_2.help_text }}</small>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Confirmation for negative discount clamping -->
+    {% if is_auto_mode and needs_zero_clamp_confirmation %}
+    <div class="card mb-4 border-danger" id="confirm-clamp-card">
+      <div class="card-header bg-danger text-white">
+        <i class="bi bi-exclamation-triangle"></i>
+        Bestätigung erforderlich
+      </div>
+      <div class="card-body">
+        <p class="mb-3">
+          <strong>Achtung:</strong> Die Rabatte führen in folgenden Monaten zu negativen Werten, 
+          die auf 0 € geklemmt werden: <strong>{{ clamped_zero_months|join:", " }}</strong>
+        </p>
+        <div class="form-check">
+          {{ form.confirm_zero_clamp }}
+          <label class="form-check-label" for="{{ form.confirm_zero_clamp.id_for_label }}">
+            Ich bestätige, dass negative Werte auf 0 geklemmt werden sollen.
+          </label>
+        </div>
+        {% if form.confirm_zero_clamp.errors %}
+        <div class="invalid-feedback d-block mt-2">{{ form.confirm_zero_clamp.errors.0 }}</div>
+        {% endif %}
+        <small class="text-muted">{{ form.confirm_zero_clamp.help_text }}</small>
+      </div>
+    </div>
+    {% endif %}
 
     <!-- Comment for risky changes -->
     {% if not is_create %}
@@ -378,4 +664,454 @@ Includes validation and restrictions for Operator role.
     </div>
   </form>
 </div>
+
+<!-- JavaScript for dynamic teacher/price loading -->
+<script>
+(function() {
+  const year = {{ year }};
+  
+  {% if is_create %}
+  // ==========================================================================
+  // Autocomplete functionality for parent/child names (create mode only)
+  // ==========================================================================
+  
+  const DEBOUNCE_DELAY = 300; // ms
+  const MIN_QUERY_LENGTH = 2;
+  
+  // API endpoints
+  const autocompleteParentsUrl = '/api/karteien/autocomplete/parents/';
+  const autocompleteChildrenUrl = '/api/karteien/autocomplete/children/';
+  const prefillUrl = '/api/karteien/prefill-from-record/';
+  
+  // CSRF token for fetch requests
+  const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+  
+  // Elements
+  const parentInput = document.getElementById('id_parent_name');
+  const parentDropdown = document.getElementById('parent-autocomplete-dropdown');
+  const childInput = document.getElementById('id_child_name');
+  const childDropdown = document.getElementById('child-autocomplete-dropdown');
+  const fallbackBadge = document.getElementById('fallback-badge');
+  const fallbackBadgeText = document.getElementById('fallback-badge-text');
+  
+  // Form fields that can be prefilled
+  const formFields = {
+    family_id: document.getElementById('id_family_id'),
+    parent_name: parentInput,
+    child_name: childInput,
+    birthdate: document.getElementById('id_birthdate'),
+    address: document.getElementById('id_address'),
+    phone: document.getElementById('id_phone'),
+    mobile: document.getElementById('id_mobile'),
+    email: document.getElementById('id_email'),
+    sepa_marker: document.getElementById('id_sepa_marker'),
+  };
+  
+  // Track prefilled fields
+  let prefilledFields = new Set();
+  let currentFallbackYear = null;
+  
+  // Debounce helper
+  function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
+  
+  // Close all dropdowns
+  function closeAllDropdowns() {
+    parentDropdown.classList.remove('show');
+    childDropdown.classList.remove('show');
+  }
+  
+  // Close dropdowns when clicking outside
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.autocomplete-wrapper')) {
+      closeAllDropdowns();
+    }
+  });
+  
+  // Render dropdown content
+  function renderDropdown(dropdown, data, isFallback, onSelect) {
+    dropdown.innerHTML = '';
+    
+    if (data.results.length === 0) {
+      dropdown.innerHTML = '<div class="autocomplete-empty">Keine Ergebnisse gefunden</div>';
+      dropdown.classList.add('show');
+      return;
+    }
+    
+    data.results.forEach((item, index) => {
+      const div = document.createElement('div');
+      div.className = 'autocomplete-item' + (isFallback ? ' fallback' : '');
+      div.textContent = item.label;
+      div.dataset.pkid = item.record_pkid;
+      div.dataset.index = index;
+      
+      div.addEventListener('click', function() {
+        onSelect(item);
+        dropdown.classList.remove('show');
+      });
+      
+      dropdown.appendChild(div);
+    });
+    
+    dropdown.classList.add('show');
+  }
+  
+  // Show loading in dropdown
+  function showLoading(dropdown) {
+    dropdown.innerHTML = '<div class="autocomplete-loading"><i class="bi bi-hourglass-split"></i> Suche...</div>';
+    dropdown.classList.add('show');
+  }
+  
+  // Fetch autocomplete suggestions
+  async function fetchSuggestions(url, query, dropdown, onSelect) {
+    if (query.length < MIN_QUERY_LENGTH) {
+      dropdown.classList.remove('show');
+      return;
+    }
+    
+    showLoading(dropdown);
+    
+    try {
+      const response = await fetch(`${url}?year=${year}&q=${encodeURIComponent(query)}`);
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
+      }
+      const data = await response.json();
+      renderDropdown(dropdown, data, data.is_fallback, onSelect);
+    } catch (error) {
+      console.error('Autocomplete fetch error:', error);
+      dropdown.innerHTML = '<div class="autocomplete-empty">Fehler beim Laden</div>';
+      dropdown.classList.add('show');
+    }
+  }
+  
+  // Prefill form fields from selected record
+  async function prefillFromRecord(recordPkid, source) {
+    try {
+      const response = await fetch(`${prefillUrl}?record_pkid=${recordPkid}&target_year=${year}`);
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
+      }
+      const data = await response.json();
+      
+      // Clear previous prefill highlights
+      prefilledFields.forEach(fieldName => {
+        const field = formFields[fieldName];
+        if (field) {
+          field.classList.remove('prefilled-field', 'fallback-source');
+        }
+      });
+      prefilledFields.clear();
+      
+      // Determine which fields to fill based on source
+      let fieldsToFill;
+      if (source === 'parent') {
+        // Selected by parent: fill FamilyID + contacts (not child_name/birthdate)
+        fieldsToFill = ['family_id', 'address', 'phone', 'mobile', 'email', 'sepa_marker'];
+      } else {
+        // Selected by child: fill FamilyID + parent + birthdate + contacts
+        fieldsToFill = ['family_id', 'parent_name', 'birthdate', 'address', 'phone', 'mobile', 'email', 'sepa_marker'];
+      }
+      
+      // Fill fields
+      fieldsToFill.forEach(fieldName => {
+        const field = formFields[fieldName];
+        const value = data.data[fieldName];
+        
+        if (field && value !== undefined && value !== null) {
+          field.value = value;
+          field.classList.add('prefilled-field');
+          if (data.is_fallback) {
+            field.classList.add('fallback-source');
+          }
+          prefilledFields.add(fieldName);
+        }
+      });
+      
+      // Show/hide fallback badge
+      if (data.is_fallback) {
+        currentFallbackYear = data.source_year;
+        fallbackBadgeText.textContent = `Daten aus ${data.source_year} (fallback)`;
+        fallbackBadge.classList.remove('d-none');
+      } else {
+        currentFallbackYear = null;
+        fallbackBadge.classList.add('d-none');
+      }
+      
+      // Add input listeners to remove prefill highlight on manual change
+      prefilledFields.forEach(fieldName => {
+        const field = formFields[fieldName];
+        if (field) {
+          field.addEventListener('input', function onManualChange() {
+            field.classList.remove('prefilled-field', 'fallback-source');
+            prefilledFields.delete(fieldName);
+            field.removeEventListener('input', onManualChange);
+            
+            // Hide fallback badge if all prefilled fields are manually changed
+            if (prefilledFields.size === 0) {
+              fallbackBadge.classList.add('d-none');
+              currentFallbackYear = null;
+            }
+          }, { once: true });
+        }
+      });
+      
+    } catch (error) {
+      console.error('Prefill fetch error:', error);
+    }
+  }
+  
+  // Parent autocomplete handlers
+  const debouncedParentSearch = debounce(function(query) {
+    fetchSuggestions(autocompleteParentsUrl, query, parentDropdown, function(item) {
+      // Don't change the parent_name input value since user is typing
+      prefillFromRecord(item.record_pkid, 'parent');
+    });
+  }, DEBOUNCE_DELAY);
+  
+  if (parentInput) {
+    parentInput.addEventListener('input', function() {
+      debouncedParentSearch(this.value.trim());
+    });
+    
+    parentInput.addEventListener('focus', function() {
+      if (this.value.trim().length >= MIN_QUERY_LENGTH) {
+        debouncedParentSearch(this.value.trim());
+      }
+    });
+  }
+  
+  // Child autocomplete handlers
+  const debouncedChildSearch = debounce(function(query) {
+    fetchSuggestions(autocompleteChildrenUrl, query, childDropdown, function(item) {
+      // Don't change the child_name input value since user is typing
+      prefillFromRecord(item.record_pkid, 'child');
+    });
+  }, DEBOUNCE_DELAY);
+  
+  if (childInput) {
+    childInput.addEventListener('input', function() {
+      debouncedChildSearch(this.value.trim());
+    });
+    
+    childInput.addEventListener('focus', function() {
+      if (this.value.trim().length >= MIN_QUERY_LENGTH) {
+        debouncedChildSearch(this.value.trim());
+      }
+    });
+  }
+  
+  // Keyboard navigation for dropdowns
+  function setupKeyboardNav(input, dropdown) {
+    input.addEventListener('keydown', function(e) {
+      if (!dropdown.classList.contains('show')) return;
+      
+      const items = dropdown.querySelectorAll('.autocomplete-item');
+      if (items.length === 0) return;
+      
+      let activeIndex = -1;
+      items.forEach((item, i) => {
+        if (item.classList.contains('active')) {
+          activeIndex = i;
+        }
+      });
+      
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        items.forEach(item => item.classList.remove('active'));
+        activeIndex = (activeIndex + 1) % items.length;
+        items[activeIndex].classList.add('active');
+        items[activeIndex].scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        items.forEach(item => item.classList.remove('active'));
+        activeIndex = activeIndex <= 0 ? items.length - 1 : activeIndex - 1;
+        items[activeIndex].classList.add('active');
+        items[activeIndex].scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'Enter') {
+        if (activeIndex >= 0) {
+          e.preventDefault();
+          items[activeIndex].click();
+        }
+      } else if (e.key === 'Escape') {
+        dropdown.classList.remove('show');
+      }
+    });
+  }
+  
+  if (parentInput && parentDropdown) {
+    setupKeyboardNav(parentInput, parentDropdown);
+  }
+  if (childInput && childDropdown) {
+    setupKeyboardNav(childInput, childDropdown);
+  }
+  
+  {% endif %}
+  
+  // ==========================================================================
+  // Teacher/Price loading (both create and edit modes)
+  // ==========================================================================
+  
+  // API endpoints
+  const teachersApiUrl = '/api/catalog/teachers/';
+  const pricesApiUrl = '/api/catalog/prices/';
+  
+  // Elements for Semester 1
+  const subject1Select = document.getElementById('id_subject1_ref');
+  const teacher1Select = document.getElementById('id_teacher1_ref');
+  const price1Select = document.getElementById('id_price1_ref');
+  const price1Comment = document.getElementById('price1_comment');
+  
+  // Elements for Semester 2
+  const subject2Select = document.getElementById('id_subject2_ref');
+  const teacher2Select = document.getElementById('id_teacher2_ref');
+  const price2Select = document.getElementById('id_price2_ref');
+  const price2Comment = document.getElementById('price2_comment');
+  
+  // Store initial values to restore after filtering
+  const initialTeacher1 = teacher1Select ? teacher1Select.value : '';
+  const initialPrice1 = price1Select ? price1Select.value : '';
+  const initialTeacher2 = teacher2Select ? teacher2Select.value : '';
+  const initialPrice2 = price2Select ? price2Select.value : '';
+  
+  /**
+   * Fetch teachers for a given subject and update select options
+   */
+  async function loadTeachers(subjectId, teacherSelect, initialValue) {
+    if (!subjectId) {
+      // Keep all options but clear selection
+      return;
+    }
+    
+    try {
+      const response = await fetch(`${teachersApiUrl}?year=${year}&subject_id=${subjectId}`);
+      const data = await response.json();
+      
+      // Store current value
+      const currentValue = teacherSelect.value || initialValue;
+      
+      // Clear and rebuild options
+      teacherSelect.innerHTML = '<option value="">---------</option>';
+      
+      data.teachers.forEach(teacher => {
+        const option = document.createElement('option');
+        option.value = teacher.id;
+        option.textContent = teacher.name;
+        if (String(teacher.id) === String(currentValue)) {
+          option.selected = true;
+        }
+        teacherSelect.appendChild(option);
+      });
+    } catch (error) {
+      console.error('Error loading teachers:', error);
+    }
+  }
+  
+  /**
+   * Fetch prices for a given subject and update select options
+   */
+  async function loadPrices(subjectId, priceSelect, priceComment, initialValue) {
+    if (!subjectId) {
+      // Keep all options but clear selection
+      return;
+    }
+    
+    try {
+      const response = await fetch(`${pricesApiUrl}?year=${year}&subject_id=${subjectId}`);
+      const data = await response.json();
+      
+      // Store current value
+      const currentValue = priceSelect.value || initialValue;
+      
+      // Clear and rebuild options
+      priceSelect.innerHTML = '<option value="">---------</option>';
+      
+      data.prices.forEach(price => {
+        const option = document.createElement('option');
+        option.value = price.id;
+        option.textContent = `${price.amount} ${price.unit}`;
+        option.dataset.comment = price.comment || '';
+        if (String(price.id) === String(currentValue)) {
+          option.selected = true;
+        }
+        priceSelect.appendChild(option);
+      });
+      
+      // Update comment display
+      updatePriceComment(priceSelect, priceComment);
+    } catch (error) {
+      console.error('Error loading prices:', error);
+    }
+  }
+  
+  /**
+   * Update the price comment display
+   */
+  function updatePriceComment(priceSelect, priceComment) {
+    if (!priceComment) return;
+    
+    const selectedOption = priceSelect.options[priceSelect.selectedIndex];
+    if (selectedOption && selectedOption.dataset.comment) {
+      priceComment.textContent = selectedOption.dataset.comment;
+    } else {
+      priceComment.textContent = '';
+    }
+  }
+  
+  // Event listeners for Semester 1
+  if (subject1Select) {
+    subject1Select.addEventListener('change', function() {
+      const subjectId = this.value;
+      loadTeachers(subjectId, teacher1Select, initialTeacher1);
+      loadPrices(subjectId, price1Select, price1Comment, initialPrice1);
+    });
+    
+    // Initial load if subject is selected
+    if (subject1Select.value) {
+      loadTeachers(subject1Select.value, teacher1Select, initialTeacher1);
+      loadPrices(subject1Select.value, price1Select, price1Comment, initialPrice1);
+    }
+  }
+  
+  if (price1Select) {
+    price1Select.addEventListener('change', function() {
+      updatePriceComment(this, price1Comment);
+    });
+    // Show initial comment
+    updatePriceComment(price1Select, price1Comment);
+  }
+  
+  // Event listeners for Semester 2
+  if (subject2Select) {
+    subject2Select.addEventListener('change', function() {
+      const subjectId = this.value;
+      loadTeachers(subjectId, teacher2Select, initialTeacher2);
+      loadPrices(subjectId, price2Select, price2Comment, initialPrice2);
+    });
+    
+    // Initial load if subject is selected
+    if (subject2Select.value) {
+      loadTeachers(subject2Select.value, teacher2Select, initialTeacher2);
+      loadPrices(subject2Select.value, price2Select, price2Comment, initialPrice2);
+    }
+  }
+  
+  if (price2Select) {
+    price2Select.addEventListener('change', function() {
+      updatePriceComment(this, price2Comment);
+    });
+    // Show initial comment
+    updatePriceComment(price2Select, price2Comment);
+  }
+})();
+</script>
 {% endblock %}

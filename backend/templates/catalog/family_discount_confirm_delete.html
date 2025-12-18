@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% comment %}
+Family discount delete confirmation.
+{% endcomment %}
+
+{% block title %}Familienrabatt löschen{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:index' %}">Katalog</a>
+                    </li>
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:family_discount_list' %}">Familienrabatte</a>
+                    </li>
+                    <li class="breadcrumb-item active">Löschen</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-trash text-danger"></i>
+                Familienrabatt löschen
+            </h1>
+        </div>
+    </div>
+
+    <!-- Confirmation -->
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    Löschen bestätigen
+                </div>
+                <div class="card-body">
+                    <p class="mb-4">
+                        Möchten Sie diesen Familienrabatt wirklich löschen?
+                    </p>
+                    
+                    <dl class="row">
+                        <dt class="col-sm-4">Jahr:</dt>
+                        <dd class="col-sm-8"><strong>{{ object.year }}</strong></dd>
+                        
+                        <dt class="col-sm-4">FamilyID:</dt>
+                        <dd class="col-sm-8"><strong>{{ object.family_id }}</strong></dd>
+                        
+                        <dt class="col-sm-4">Rabatt:</dt>
+                        <dd class="col-sm-8">
+                            {% if object.discount.kind == 'PERCENT' %}
+                            <span class="badge bg-primary">{% widthratio object.discount.value 1 100 %}%</span>
+                            {% else %}
+                            <span class="badge bg-success">{{ object.discount.value|floatformat:2 }} €</span>
+                            {% endif %}
+                            {{ object.discount.description }}
+                        </dd>
+                        
+                        <dt class="col-sm-4">Monate:</dt>
+                        <dd class="col-sm-8">{{ object.months_display }}</dd>
+                    </dl>
+                    
+                    <form method="post">
+                        {% csrf_token %}
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'catalog:family_discount_list' %}?year={{ object.year }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left"></i>
+                                Abbrechen
+                            </a>
+                            <button type="submit" class="btn btn-danger">
+                                <i class="bi bi-trash"></i>
+                                Endgültig löschen
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

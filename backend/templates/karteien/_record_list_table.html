@@ -1,0 +1,79 @@
+{% comment %}
+Partial template for Kartei record table body.
+Used by record_list.html and live-search API.
+{% endcomment %}
+
+{% for record in records %}
+<tr>
+    <td>{{ record.id }}</td>
+    <td>
+        {{ record.family_id }}
+        {% if user.is_admin_role %}
+        <a href="{% url 'karteien:family_dashboard' %}?year={{ current_year }}&family_id={{ record.family_id }}" 
+           class="btn btn-sm btn-outline-info py-0 px-1 ms-1"
+           title="Familien-Dashboard öffnen">
+            <i class="bi bi-people"></i>
+        </a>
+        {% endif %}
+    </td>
+    <td>{{ record.parent_name }}</td>
+    <td>{{ record.child_name }}</td>
+    <td>{{ record.subject1|default:"-" }}</td>
+    <td>{{ record.subject2|default:"-" }}</td>
+    <td>
+        {% if record.status == "PENDING" %}
+        <span class="badge bg-primary">
+            <i class="bi bi-hourglass-split"></i>
+            Wartend
+        </span>
+        {% elif record.status == "DECLINED" %}
+        <span class="badge bg-danger">
+            <i class="bi bi-x-circle"></i>
+            Abgelehnt
+        </span>
+        {% else %}
+        <span class="badge bg-success">
+            <i class="bi bi-check-circle"></i>
+            Normal
+        </span>
+        {% endif %}
+    </td>
+    <td>
+        {% if record.is_sepa %}
+        <span class="badge bg-warning text-dark">SEPA</span>
+        {% endif %}
+    </td>
+    <td>
+        <a href="{% url 'karteien:record_detail' record.pk %}" 
+           class="btn btn-sm btn-outline-primary"
+           title="Anzeigen">
+            <i class="bi bi-eye"></i>
+        </a>
+        {% if not record.status %}
+        <a href="{% url 'karteien:record_update' record.pk %}" 
+           class="btn btn-sm btn-outline-secondary"
+           title="Bearbeiten">
+            <i class="bi bi-pencil"></i>
+        </a>
+        {% elif record.status == "PENDING" %}
+        <span class="btn btn-sm btn-outline-secondary disabled"
+              title="Bearbeitung gesperrt – wartet auf Freigabe">
+            <i class="bi bi-hourglass-split"></i>
+        </span>
+        {% elif record.status == "DECLINED" %}
+        <a href="{% url 'approvals:declined_overview' %}?family_id={{ record.family_id }}" 
+           class="btn btn-sm btn-outline-danger"
+           title="Zur Abgelehnt-Übersicht">
+            <i class="bi bi-x-circle"></i>
+        </a>
+        {% endif %}
+    </td>
+</tr>
+{% empty %}
+<tr>
+    <td colspan="9" class="text-center py-5">
+        <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
+        <p class="text-muted mt-3">Keine Datensätze gefunden.</p>
+    </td>
+</tr>
+{% endfor %}

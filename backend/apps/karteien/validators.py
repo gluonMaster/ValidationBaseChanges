@@ -65,7 +65,7 @@ def validate_family_id_parent_unique(
     family_id: str,
     parent_name: str,
     year: int,
-    exclude_id: int | None = None,
+    exclude_pk: int | None = None,
 ) -> ValidationResult:
     """
     Check for duplicate FamilyID with different Parent names.
@@ -79,7 +79,7 @@ def validate_family_id_parent_unique(
         family_id: The FamilyID to check.
         parent_name: The parent name for the new/updated record.
         year: The year context.
-        exclude_id: Record ID to exclude (for updates).
+        exclude_pk: Record pkid (surrogate PK) to exclude (for updates).
         
     Returns:
         ValidationResult with any errors found.
@@ -93,8 +93,8 @@ def validate_family_id_parent_unique(
         family_id__iexact=family_id,
     )
     
-    if exclude_id is not None:
-        qs = qs.exclude(id=exclude_id)
+    if exclude_pk is not None:
+        qs = qs.exclude(pk=exclude_pk)
     
     # Check if any existing record has a different parent name
     for record in qs:
@@ -498,9 +498,9 @@ def validate_kartei_record(
     parent_name = data.get("parent_name", "")
     
     # FamilyID + Parent uniqueness
-    exclude_id = existing_record.id if existing_record else None
+    exclude_pk = existing_record.pk if existing_record else None
     unique_result = validate_family_id_parent_unique(
-        family_id, parent_name, year, exclude_id
+        family_id, parent_name, year, exclude_pk
     )
     if not unique_result.is_valid:
         errors.extend(unique_result.errors)

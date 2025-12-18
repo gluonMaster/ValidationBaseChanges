@@ -1,0 +1,808 @@
+"""
+Billing calculation module for KarteiRecord monthly charges.
+
+This module implements the automatic calculation of month_1..month_12 values
+based on:
+- Semester assignment (1st semester: months 1-6, 2nd semester: months 7-12)
+- Subject type (Individual/Nachhilfe = per-hour pricing, otherwise per-month)
+- Start month for each semester (months before start = 0.00)
+- Discounts (family and record-level, percent and fixed)
+
+Key functions:
+- get_semester_month_ranges(year): Get month ranges for each semester
+- is_individual_subject(name): Check if subject is Individual type
+- is_nachhilfe_subject(name): Check if subject is Nachhilfe type
+- round_money_up(value): Round money to 2 decimals, always up
+- build_base_amounts(record): Calculate base amounts before discounts
+- calculate_month_values(record, ...): Calculate final month values with discounts
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .models import KarteiRecord
+
+
+# =============================================================================
+# Constants and Patterns
+# =============================================================================
+
+# Default semester boundaries (can be customized per year in future)
+DEFAULT_SEMESTER_1_MONTHS = list(range(1, 7))   # [1, 2, 3, 4, 5, 6]
+DEFAULT_SEMESTER_2_MONTHS = list(range(7, 13))  # [7, 8, 9, 10, 11, 12]
+
+# Patterns for detecting subject types
+# Individual: contains "ind." or starts with "vspe_" (case-insensitive)
+INDIVIDUAL_PATTERN = re.compile(r'\bInd\.|VSpE_', re.IGNORECASE)
+# Nachhilfe: contains "nachhilfe" or "nh" as standalone token
+NACHHILFE_PATTERN = re.compile(r'\bNH\b|Nachhilfe', re.IGNORECASE)
+
+# Decimal constants
+ZERO = Decimal('0.00')
+MAX_PERCENT_DISCOUNT = Decimal('0.99')
+
+
+# =============================================================================
+# Semester Configuration
+# =============================================================================
+
+def get_semester_month_ranges(year: int) -> tuple[list[int], list[int]]:
+    """
+    Get the month ranges for each semester of a given year.
+    
+    Currently returns default boundaries:
+    - 1st semester: months 1-6
+    - 2nd semester: months 7-12
+    
+    In the future, this function can be extended to read from a configuration
+    table to support different boundaries per year (e.g., 1-7 and 8-12).
+    
+    Args:
+        year: The year to get semester ranges for.
+        
+    Returns:
+        Tuple of (semester_1_months, semester_2_months) as lists of integers.
+    """
+    # Future: query YearConfig table for custom boundaries
+    # For now, use defaults
+    return (DEFAULT_SEMESTER_1_MONTHS.copy(), DEFAULT_SEMESTER_2_MONTHS.copy())
+
+
+def get_semester_for_month(month: int, year: int) -> int:
+    """
+    Determine which semester a month belongs to.
+    
+    Args:
+        month: Month number (1-12).
+        year: The year for semester configuration.
+        
+    Returns:
+        1 for first semester, 2 for second semester.
+        
+    Raises:
+        ValueError: If month is not in range 1-12.
+    """
+    if not 1 <= month <= 12:
+        raise ValueError(f"Month must be 1-12, got {month}")
+    
+    sem1_months, sem2_months = get_semester_month_ranges(year)
+    
+    if month in sem1_months:
+        return 1
+    elif month in sem2_months:
+        return 2
+    else:
+        # Should not happen with default config
+        raise ValueError(f"Month {month} not in any semester for year {year}")
+
+
+# =============================================================================
+# Subject Type Detection
+# =============================================================================
+
+def is_individual_subject(name: str | None) -> bool:
+    """
+    Check if a subject name indicates Individual lessons (per-hour pricing).
+    
+    Individual subjects contain:
+    - "Ind." (case-insensitive)
+    - "VSpE_" prefix (case-insensitive)
+    
+    Args:
+        name: Subject name to check.
+        
+    Returns:
+        True if subject is Individual type, False otherwise.
+    """
+    if not name:
+        return False
+    return bool(INDIVIDUAL_PATTERN.search(name))
+
+
+def is_nachhilfe_subject(name: str | None) -> bool:
+    """
+    Check if a subject name indicates Nachhilfe (tutoring, per-hour pricing).
+    
+    Nachhilfe subjects contain:
+    - "Nachhilfe" (case-insensitive)
+    - "NH" as a standalone word (case-insensitive)
+    
+    Args:
+        name: Subject name to check.
+        
+    Returns:
+        True if subject is Nachhilfe type, False otherwise.
+    """
+    if not name:
+        return False
+    return bool(NACHHILFE_PATTERN.search(name))
+
+
+def is_per_hour_subject(name: str | None) -> bool:
+    """
+    Check if a subject uses per-hour pricing.
+    
+    This includes both Individual and Nachhilfe subjects.
+    
+    Args:
+        name: Subject name to check.
+        
+    Returns:
+        True if subject uses per-hour pricing, False otherwise.
+    """
+    return is_individual_subject(name) or is_nachhilfe_subject(name)
+
+
+# =============================================================================
+# Money Rounding Functions
+# =============================================================================
+
+def round_money_up(value: Decimal | float | str | None) -> Decimal:
+    """
+    Round a monetary value UP to 2 decimal places.
+    
+    Always rounds up (ceiling), as per business requirements.
+    Examples:
+    - 37.473 -> 37.48
+    - 37.471 -> 37.48
+    - 37.47  -> 37.47
+    - 37.00  -> 37.00
+    
+    Args:
+        value: The value to round. Can be Decimal, float, str, or None.
+        
+    Returns:
+        Rounded Decimal with 2 decimal places.
+        Returns 0.00 for None or empty values.
+    """
+    if value is None or value == '':
+        return ZERO
+    
+    if not isinstance(value, Decimal):
+        value = Decimal(str(value))
+    
+    # Round up (ceiling) to 2 decimal places
+    # We use quantize with ROUND_CEILING
+    return value.quantize(Decimal('0.01'), rounding=ROUND_CEILING)
+
+
+def normalize_hours(value: Decimal | float | str | None) -> Decimal:
+    """
+    Normalize hours value to 2 decimal places with standard rounding.
+    
+    Uses ROUND_HALF_UP (standard rounding) for hours, not ceiling.
+    Hours must be >= 0.
+    
+    Args:
+        value: The hours value to normalize.
+        
+    Returns:
+        Normalized Decimal with 2 decimal places.
+        Returns 0.00 for None, empty, or negative values.
+    """
+    if value is None or value == '':
+        return ZERO
+    
+    if not isinstance(value, Decimal):
+        value = Decimal(str(value))
+    
+    if value < 0:
+        return ZERO
+    
+    return value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+
+def normalize_money(value: Decimal | float | str | None) -> Decimal:
+    """
+    Normalize a monetary value to 2 decimal places using ceiling rounding.
+    
+    Alias for round_money_up for clarity in form handling.
+    
+    Args:
+        value: The value to normalize.
+        
+    Returns:
+        Normalized Decimal with 2 decimal places.
+    """
+    return round_money_up(value)
+
+
+# =============================================================================
+# Data Classes for Calculation Results
+# =============================================================================
+
+@dataclass
+class CalculationFlags:
+    """Flags and warnings from month value calculation."""
+    
+    # Months where discount clamped negative value to zero
+    clamped_to_zero_months: list[int] = field(default_factory=list)
+    
+    # Warning if total percent discount exceeded 99%
+    percent_discount_exceeded: bool = False
+    original_percent_sum: Decimal = field(default_factory=lambda: ZERO)
+    
+    # Months where Nachhilfe exemption applied (no discounts)
+    nachhilfe_exempt_months: list[int] = field(default_factory=list)
+    
+    # Months where discounts_disabled flag applied
+    discounts_disabled_months: list[int] = field(default_factory=list)
+    
+    @property
+    def has_warnings(self) -> bool:
+        """Check if there are any warnings."""
+        return (
+            bool(self.clamped_to_zero_months) or
+            self.percent_discount_exceeded
+        )
+    
+    @property
+    def requires_confirmation(self) -> bool:
+        """Check if user confirmation is required."""
+        return bool(self.clamped_to_zero_months)
+
+
+# =============================================================================
+# Base Amount Calculation
+# =============================================================================
+
+def get_subject_name_for_semester(record: "KarteiRecord", semester: int) -> str | None:
+    """
+    Get the subject name for a semester.
+    
+    Prefers catalog reference, falls back to legacy field.
+    
+    Args:
+        record: The KarteiRecord instance.
+        semester: 1 or 2.
+        
+    Returns:
+        Subject name or None if not set.
+    """
+    if semester == 1:
+        if record.subject1_ref_id:
+            return record.subject1_ref.name
+        return record.subject1 or None
+    else:
+        if record.subject2_ref_id:
+            return record.subject2_ref.name
+        return record.subject2 or None
+
+
+def get_price_for_semester(record: "KarteiRecord", semester: int) -> Decimal | None:
+    """
+    Get the price amount for a semester.
+    
+    Prefers catalog reference, falls back to legacy field.
+    
+    Args:
+        record: The KarteiRecord instance.
+        semester: 1 or 2.
+        
+    Returns:
+        Price amount or None if not set.
+    """
+    if semester == 1:
+        if record.price1_ref_id:
+            return record.price1_ref.amount
+        return record.price1
+    else:
+        if record.price2_ref_id:
+            return record.price2_ref.amount
+        return record.price2
+
+
+def get_start_month_for_semester(record: "KarteiRecord", semester: int) -> int:
+    """
+    Get the start month for billing in a semester.
+    
+    Args:
+        record: The KarteiRecord instance.
+        semester: 1 or 2.
+        
+    Returns:
+        Start month number (1-6 for semester 1, 7-12 for semester 2).
+    """
+    if semester == 1:
+        return record.start_month_1 or 1
+    else:
+        return record.start_month_2 or 7
+
+
+def build_base_amounts(
+    record: "KarteiRecord",
+    *,
+    apply_from_month_1: int | None = None,
+    apply_from_month_2: int | None = None,
+    hours_amounts: dict[str, Decimal | str] | None = None,
+) -> dict[str, Decimal]:
+    """
+    Build base amounts for all months (before discounts).
+    
+    For each month:
+    - Determine which semester it belongs to
+    - Check if month is >= start_month for that semester
+    - Calculate base amount based on subject type:
+      - Regular: base = price_per_month
+      - Individual/Nachhilfe: base = hours * price_per_hour
+    
+    Args:
+        record: The KarteiRecord instance.
+        apply_from_month_1: If set, only update months >= this value in semester 1.
+            Months before this keep their current base_amounts.
+        apply_from_month_2: If set, only update months >= this value in semester 2.
+            Months before this keep their current base_amounts.
+        hours_amounts: Optional hours data to use instead of record.hours_amounts.
+            Format: {"month_1": "2.00", "month_2": "1.50", ...}
+    
+    Returns:
+        Dict mapping "month_1".."month_12" to Decimal base amounts.
+    """
+    result: dict[str, Decimal] = {}
+    
+    # Get existing base_amounts for partial updates
+    existing_bases = getattr(record, 'base_amounts', None) or {}
+    
+    # Get hours data
+    hours_data = hours_amounts if hours_amounts is not None else (
+        getattr(record, 'hours_amounts', None) or {}
+    )
+    
+    # Get semester ranges
+    sem1_months, sem2_months = get_semester_month_ranges(record.year)
+    
+    for month_num in range(1, 13):
+        field_key = f"month_{month_num}"
+        
+        # Determine semester
+        semester = get_semester_for_month(month_num, record.year)
+        
+        # Check if we should skip this month (partial update)
+        apply_from = apply_from_month_1 if semester == 1 else apply_from_month_2
+        if apply_from is not None and month_num < apply_from:
+            # Keep existing base
+            existing_value = existing_bases.get(field_key)
+            if existing_value is not None:
+                result[field_key] = Decimal(str(existing_value))
+            else:
+                result[field_key] = ZERO
+            continue
+        
+        # Get semester parameters
+        subject_name = get_subject_name_for_semester(record, semester)
+        price = get_price_for_semester(record, semester)
+        start_month = get_start_month_for_semester(record, semester)
+        
+        # Month before start_month: 0.00
+        if month_num < start_month:
+            result[field_key] = ZERO
+            continue
+        
+        # No subject or price: 0.00
+        if not subject_name or price is None:
+            result[field_key] = ZERO
+            continue
+        
+        # Calculate base based on subject type
+        if is_per_hour_subject(subject_name):
+            # Per-hour pricing: base = hours * price_per_hour
+            hours_value = hours_data.get(field_key, ZERO)
+            if hours_value is None or hours_value == '':
+                hours_value = ZERO
+            hours_decimal = normalize_hours(hours_value)
+            base = hours_decimal * Decimal(str(price))
+        else:
+            # Per-month pricing: base = price
+            base = Decimal(str(price))
+        
+        result[field_key] = round_money_up(base)
+    
+    return result
+
+
+# =============================================================================
+# Discount Application
+# =============================================================================
+
+def collect_discounts_for_month(
+    month: int,
+    family_discounts: list,
+    record_discounts: list,
+) -> tuple[Decimal, Decimal]:
+    """
+    Collect all applicable discounts for a specific month.
+    
+    Args:
+        month: The month number (1-12).
+        family_discounts: List of FamilyDiscount instances.
+        record_discounts: List of RecordDiscount instances.
+        
+    Returns:
+        Tuple of (total_percent_sum, total_fixed_sum).
+        Percent sum is a fraction (e.g., 0.25 = 25%).
+    """
+    from apps.catalog.models import DiscountKind
+    
+    percent_sum = ZERO
+    fixed_sum = ZERO
+    
+    all_discounts = list(family_discounts) + list(record_discounts)
+    
+    for discount_assignment in all_discounts:
+        applicable_months = discount_assignment.get_applicable_months()
+        
+        if month not in applicable_months:
+            continue
+        
+        discount = discount_assignment.discount
+        if discount.kind == DiscountKind.PERCENT:
+            percent_sum += discount.value
+        else:  # FIXED
+            fixed_sum += discount.value
+    
+    return (percent_sum, fixed_sum)
+
+
+def calculate_month_values(
+    record: "KarteiRecord",
+    family_discounts: list | None = None,
+    record_discounts: list | None = None,
+    *,
+    base_amounts: dict[str, Decimal] | None = None,
+) -> tuple[dict[str, Decimal], CalculationFlags]:
+    """
+    Calculate final month values after applying discounts.
+    
+    Discount application rules:
+    1. Percent discounts are summed (clamped to 99% max)
+    2. Fixed discounts are summed and subtracted after percent
+    3. Fixed discounts only apply if base > 0
+    4. Nachhilfe subjects: discounts never apply
+    5. If record.discounts_disabled: discounts never apply
+    6. Negative results are clamped to 0 and flagged
+    
+    Args:
+        record: The KarteiRecord instance.
+        family_discounts: List of FamilyDiscount instances for this family/year.
+            If None, will be fetched from database.
+        record_discounts: List of RecordDiscount instances for this record.
+            If None, will be fetched from database.
+        base_amounts: Pre-calculated base amounts. If None, will be calculated.
+        
+    Returns:
+        Tuple of (month_values dict, CalculationFlags).
+    """
+    from apps.catalog.models import FamilyDiscount, RecordDiscount
+    
+    flags = CalculationFlags()
+    result: dict[str, Decimal] = {}
+    
+    # Get base amounts
+    if base_amounts is None:
+        base_amounts = build_base_amounts(record)
+    
+    # Fetch discounts if not provided
+    if family_discounts is None:
+        family_discounts = list(
+            FamilyDiscount.objects.filter(
+                year=record.year,
+                family_id=record.family_id,
+            ).select_related('discount')
+        )
+    
+    if record_discounts is None:
+        record_discounts = list(
+            record.record_discounts.select_related('discount')
+        ) if record.pk else []
+    
+    # Check if discounts are globally disabled for this record
+    discounts_disabled = getattr(record, 'discounts_disabled', False)
+    
+    # Get semester ranges
+    sem1_months, sem2_months = get_semester_month_ranges(record.year)
+    
+    for month_num in range(1, 13):
+        field_key = f"month_{month_num}"
+        base = base_amounts.get(field_key, ZERO)
+        
+        # Determine subject for this month
+        semester = get_semester_for_month(month_num, record.year)
+        subject_name = get_subject_name_for_semester(record, semester)
+        
+        # Check discount exemptions
+        apply_discounts = True
+        
+        if discounts_disabled:
+            apply_discounts = False
+            flags.discounts_disabled_months.append(month_num)
+        elif is_nachhilfe_subject(subject_name):
+            apply_discounts = False
+            flags.nachhilfe_exempt_months.append(month_num)
+        
+        if not apply_discounts or base == ZERO:
+            # No discounts: final = base
+            result[field_key] = round_money_up(base)
+            continue
+        
+        # Collect discounts for this month
+        percent_sum, fixed_sum = collect_discounts_for_month(
+            month_num, family_discounts, record_discounts
+        )
+        
+        # Clamp percent sum to 99%
+        if percent_sum > MAX_PERCENT_DISCOUNT:
+            flags.percent_discount_exceeded = True
+            flags.original_percent_sum = percent_sum
+            percent_sum = MAX_PERCENT_DISCOUNT
+        
+        # Apply percent discount
+        after_percent = base * (Decimal('1') - percent_sum)
+        
+        # Apply fixed discount (only if base > 0, which we already checked)
+        after_fixed = after_percent - fixed_sum
+        
+        # Clamp negative to zero
+        if after_fixed < ZERO:
+            flags.clamped_to_zero_months.append(month_num)
+            after_fixed = ZERO
+        
+        result[field_key] = round_money_up(after_fixed)
+    
+    return (result, flags)
+
+
+# =============================================================================
+# High-level Calculation Functions
+# =============================================================================
+
+def get_month_breakdown(
+    record: "KarteiRecord",
+    month: int,
+    family_discounts: list | None = None,
+    record_discounts: list | None = None,
+) -> dict:
+    """
+    Get detailed breakdown of month charge calculation.
+    
+    Returns a dict with all calculation details for UI display.
+    For LEGACY or OVERRIDE mode, returns minimal info with available=False.
+    
+    Args:
+        record: The KarteiRecord instance.
+        month: Month number (1-12).
+        family_discounts: Optional list of FamilyDiscount instances.
+        record_discounts: Optional list of RecordDiscount instances.
+        
+    Returns:
+        Dict with breakdown data suitable for JSON serialization.
+    """
+    from apps.catalog.models import FamilyDiscount, RecordDiscount, DiscountKind
+    
+    result: dict = {
+        'month': month,
+        'available': False,
+        'reason': None,
+        'source_mode': record.months_mode,
+    }
+    
+    # Check modes that cannot provide breakdown
+    if record.months_mode == 'LEGACY':
+        result['reason'] = 'LEGACY_NO_DATA'
+        result['final'] = str(getattr(record, f'month_{month}', None) or '0.00')
+        return result
+    
+    if record.months_mode == 'OVERRIDE':
+        result['reason'] = 'OVERRIDE_MODE'
+        result['final'] = str(getattr(record, f'month_{month}', None) or '0.00')
+        return result
+    
+    # AUTO mode - full breakdown available
+    result['available'] = True
+    
+    # Determine semester
+    semester = get_semester_for_month(month, record.year)
+    result['semester'] = semester
+    
+    # Get subject info
+    subject_name = get_subject_name_for_semester(record, semester)
+    result['subject_name'] = subject_name or ''
+    
+    # Determine billing kind
+    is_hourly = is_per_hour_subject(subject_name)
+    result['billing_kind'] = 'HOURLY' if is_hourly else 'MONTHLY'
+    
+    # Get base amount
+    base_amounts = getattr(record, 'base_amounts', None) or {}
+    field_key = f'month_{month}'
+    base = Decimal(str(base_amounts.get(field_key, '0.00') or '0.00'))
+    result['base'] = str(base)
+    
+    # For HOURLY, get hours and calculate unit price
+    if is_hourly:
+        hours_amounts = getattr(record, 'hours_amounts', None) or {}
+        hours = Decimal(str(hours_amounts.get(field_key, '0.00') or '0.00'))
+        result['hours'] = str(hours)
+        
+        # Calculate unit price (price per hour used)
+        if hours > 0:
+            unit_price = base / hours
+            result['unit_price'] = str(round_money_up(unit_price))
+        else:
+            # Get price from reference
+            price = get_price_for_semester(record, semester)
+            result['unit_price'] = str(price) if price else None
+    
+    # Discount info
+    discounts_disabled = getattr(record, 'discounts_disabled', False)
+    result['discounts_disabled'] = discounts_disabled
+    
+    # Check if Nachhilfe
+    is_nh = is_nachhilfe_subject(subject_name)
+    
+    if is_nh:
+        result['discounts_skipped_reason'] = 'NACHHILFE'
+    elif discounts_disabled:
+        result['discounts_skipped_reason'] = 'DISABLED'
+    else:
+        result['discounts_skipped_reason'] = None
+    
+    # Fetch discounts if not provided
+    if family_discounts is None:
+        family_discounts = list(
+            FamilyDiscount.objects.filter(
+                year=record.year,
+                family_id=record.family_id,
+            ).select_related('discount')
+        )
+    
+    if record_discounts is None:
+        record_discounts = list(
+            record.record_discounts.select_related('discount')
+        ) if record.pk else []
+    
+    # Collect applicable discounts
+    percent_discounts_applied = []
+    fixed_discounts_applied = []
+    percent_sum = ZERO
+    fixed_sum = ZERO
+    
+    if not is_nh and not discounts_disabled and base > 0:
+        all_discounts = list(family_discounts) + list(record_discounts)
+        
+        for discount_assignment in all_discounts:
+            applicable_months = discount_assignment.get_applicable_months()
+            
+            if month not in applicable_months:
+                continue
+            
+            discount = discount_assignment.discount
+            discount_info = {
+                'id': discount.pk,
+                'description': discount.description,
+                'value': str(discount.value),
+                'kind': discount.kind,
+                'months_display': discount_assignment.months_display(),
+            }
+            
+            if discount.kind == DiscountKind.PERCENT:
+                percent_discounts_applied.append(discount_info)
+                percent_sum += discount.value
+            else:
+                fixed_discounts_applied.append(discount_info)
+                fixed_sum += discount.value
+    
+    result['percent_discounts_applied'] = percent_discounts_applied
+    result['fixed_discounts_applied'] = fixed_discounts_applied
+    result['percent_sum'] = str(percent_sum)
+    result['fixed_sum'] = str(fixed_sum)
+    
+    # Calculation steps
+    percent_clamped = False
+    original_percent_sum = percent_sum
+    if percent_sum > MAX_PERCENT_DISCOUNT:
+        percent_clamped = True
+        percent_sum = MAX_PERCENT_DISCOUNT
+    result['percent_clamped'] = percent_clamped
+    if percent_clamped:
+        result['original_percent_sum'] = str(original_percent_sum)
+    
+    # Skip discounts for Nachhilfe or if disabled
+    if is_nh or discounts_disabled or base == ZERO:
+        result['after_percent'] = str(base)
+        result['after_fixed'] = str(base)
+        result['final'] = str(round_money_up(base))
+        result['clamped_to_zero'] = False
+        result['fixed_applied'] = False
+        return result
+    
+    # Apply percent discount
+    after_percent = base * (Decimal('1') - percent_sum)
+    result['after_percent'] = str(round_money_up(after_percent))
+    
+    # Apply fixed discount
+    result['fixed_applied'] = base > 0
+    after_fixed = after_percent - fixed_sum
+    
+    # Clamp to zero
+    clamped_to_zero = after_fixed < ZERO
+    if clamped_to_zero:
+        after_fixed = ZERO
+    result['clamped_to_zero'] = clamped_to_zero
+    result['after_fixed'] = str(round_money_up(after_fixed))
+    result['final'] = str(round_money_up(after_fixed))
+    
+    return result
+
+
+def recalculate_record_months(
+    record: "KarteiRecord",
+    *,
+    apply_from_month_1: int | None = None,
+    apply_from_month_2: int | None = None,
+    hours_amounts: dict[str, Decimal | str] | None = None,
+) -> CalculationFlags:
+    """
+    Recalculate all month values for a record.
+    
+    This is the main entry point for billing calculation. It:
+    1. Builds base amounts
+    2. Applies discounts
+    3. Updates record.base_amounts and record.month_* fields
+    
+    Args:
+        record: The KarteiRecord instance to update.
+        apply_from_month_1: If set, only update months >= this in semester 1.
+        apply_from_month_2: If set, only update months >= this in semester 2.
+        hours_amounts: Optional hours data to use.
+        
+    Returns:
+        CalculationFlags with any warnings.
+    """
+    # Build base amounts
+    base_amounts = build_base_amounts(
+        record,
+        apply_from_month_1=apply_from_month_1,
+        apply_from_month_2=apply_from_month_2,
+        hours_amounts=hours_amounts,
+    )
+    
+    # Store base amounts on record
+    record.base_amounts = {k: str(v) for k, v in base_amounts.items()}
+    
+    # Calculate final values with discounts
+    month_values, flags = calculate_month_values(
+        record, base_amounts=base_amounts
+    )
+    
+    # Update record month fields
+    for month_num in range(1, 13):
+        field_key = f"month_{month_num}"
+        value = month_values.get(field_key, ZERO)
+        setattr(record, field_key, value)
+    
+    return flags

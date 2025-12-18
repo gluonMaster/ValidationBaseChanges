@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% comment %}
+Price options list view - Shows all prices with filters.
+{% endcomment %}
+
+{% block title %}Katalog - Preise{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:index' %}">Katalog</a>
+                    </li>
+                    <li class="breadcrumb-item active">Preise</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-currency-euro"></i>
+                Preisliste
+            </h1>
+            <p class="text-muted">Jahr: {{ current_year }}</p>
+        </div>
+        <div class="col-auto">
+            <a href="{% url 'catalog:copy_prices_year' %}" class="btn btn-warning me-2">
+                <i class="bi bi-copy"></i>
+                Jahr kopieren
+            </a>
+            <a href="{% url 'catalog:price_create' %}?year={{ current_year }}" class="btn btn-success">
+                <i class="bi bi-plus-lg"></i>
+                Neuer Preis
+            </a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-funnel"></i>
+            Filter
+        </div>
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-2">
+                    <label for="year" class="form-label">Jahr</label>
+                    <select name="year" id="year" class="form-select">
+                        {% for y in available_years %}
+                        <option value="{{ y }}" {% if y|stringformat:"s" == current_year %}selected{% endif %}>{{ y }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label for="subject" class="form-label">Fach</label>
+                    <select name="subject" id="subject" class="form-select">
+                        <option value="">Alle Fächer</option>
+                        {% for s in subjects %}
+                        <option value="{{ s.pk }}" {% if s.pk|stringformat:"s" == current_subject %}selected{% endif %}>{{ s.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">&nbsp;</label>
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" 
+                               name="show_inactive" id="show_inactive" value="1"
+                               {% if show_inactive %}checked{% endif %}>
+                        <label class="form-check-label" for="show_inactive">
+                            Inaktive anzeigen
+                        </label>
+                    </div>
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary me-2">
+                        <i class="bi bi-search"></i>
+                        Suchen
+                    </button>
+                    <a href="{% url 'catalog:price_list' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-x-lg"></i>
+                        Zurücksetzen
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Info about pricing units -->
+    <div class="alert alert-info mb-4">
+        <i class="bi bi-info-circle"></i>
+        <strong>Preiseinheiten:</strong>
+        <ul class="mb-0 mt-2">
+            <li><strong>€/Monat</strong> – Gruppenunterricht (reguläre Fächer)</li>
+            <li><strong>€/UE</strong> – Einzelunterricht (Fächer mit "Ind.", "VSpE_") und Nachhilfe (Fächer mit "NH", "Nachhilfe")</li>
+        </ul>
+    </div>
+
+    <!-- Results -->
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-table"></i>
+            Preise ({{ page_obj.paginator.count }} Einträge)
+        </div>
+        <div class="card-body">
+            {% if prices %}
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>Jahr</th>
+                        <th>Fach</th>
+                        <th class="text-end">Betrag</th>
+                        <th>Einheit</th>
+                        <th>Kommentar</th>
+                        <th>Status</th>
+                        <th>Aktionen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for price in prices %}
+                    <tr {% if not price.is_active %}class="table-secondary"{% endif %}>
+                        <td>{{ price.year }}</td>
+                        <td>{{ price.subject.name }}</td>
+                        <td class="text-end">
+                            <strong>{{ price.amount|floatformat:2 }} €</strong>
+                        </td>
+                        <td>
+                            {% if price.is_per_hour %}
+                            <span class="badge bg-info" title="Pro Unterrichtseinheit (akademische Stunde)">€/UE</span>
+                            {% else %}
+                            <span class="badge bg-secondary" title="Pro Monat">€/Monat</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if price.comment %}
+                            <span data-bs-toggle="tooltip" data-bs-placement="top" 
+                                  title="{{ price.comment }}">
+                                {{ price.comment|truncatechars:40 }}
+                            </span>
+                            {% else %}
+                            <span class="text-muted">–</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if price.is_active %}
+                            <span class="badge bg-success">Aktiv</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Inaktiv</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="{% url 'catalog:price_edit' price.pk %}" 
+                                   class="btn btn-outline-primary"
+                                   title="Bearbeiten">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                <form action="{% url 'catalog:price_delete' price.pk %}" 
+                                      method="post" class="d-inline"
+                                      onsubmit="return confirm('Preis wirklich löschen?');">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-outline-danger"
+                                            title="Löschen">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <!-- Pagination -->
+            {% if page_obj.has_other_pages %}
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}&year={{ current_year }}{% if current_subject %}&subject={{ current_subject }}{% endif %}{% if show_inactive %}&show_inactive=1{% endif %}">
+                            &laquo; Zurück
+                        </a>
+                    </li>
+                    {% endif %}
+                    
+                    <li class="page-item disabled">
+                        <span class="page-link">
+                            Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}
+                        </span>
+                    </li>
+                    
+                    {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.next_page_number }}&year={{ current_year }}{% if current_subject %}&subject={{ current_subject }}{% endif %}{% if show_inactive %}&show_inactive=1{% endif %}">
+                            Weiter &raquo;
+                        </a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i>
+                Keine Preise gefunden für Jahr {{ current_year }}.
+                <a href="{% url 'catalog:price_create' %}?year={{ current_year }}">Neuen Preis erstellen</a>
+                oder
+                <a href="{% url 'catalog:copy_prices_year' %}">aus anderem Jahr kopieren</a>.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Initialize tooltips -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,326 @@
+{% extends "base.html" %}
+{% comment %}
+Template for editing DeclinedChange.snapshot.
+Allows Admin to fix proposed values before resubmitting to pending.
+{% endcomment %}
+{% block title %}Abgelehnte Änderung bearbeiten - {{ record.id }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-4">
+  <!-- Header -->
+  <div class="row mb-4">
+    <div class="col">
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+          <li class="breadcrumb-item">
+            <a href="{% url 'approvals:declined_overview' %}">Abgelehnt</a>
+          </li>
+          <li class="breadcrumb-item">
+            <a href="{% url 'approvals:declined_detail' declined_change.pk %}">Datensatz {{ record.id }}</a>
+          </li>
+          <li class="breadcrumb-item active">Bearbeiten</li>
+        </ol>
+      </nav>
+      <h1>
+        <i class="bi bi-pencil-square text-primary"></i>
+        Abgelehnte Werte bearbeiten
+      </h1>
+      <p class="text-muted">
+        Datensatz ID: {{ record.id }} | Familie: {{ record.family_id }} | 
+        {{ record.child_name|default:"(Kein Name)" }}
+      </p>
+    </div>
+  </div>
+
+  <!-- Decline Info -->
+  <div class="alert alert-danger mb-4">
+    <div class="row">
+      <div class="col-md-8">
+        <strong><i class="bi bi-x-circle"></i> Ablehnungsgrund:</strong>
+        <p class="mb-0 mt-2">
+          {{ declined_change.decline_reason|default:"Kein Grund angegeben." }}
+        </p>
+      </div>
+      <div class="col-md-4 text-md-end">
+        <small class="text-muted">
+          Abgelehnt von: {{ declined_change.declined_by.username|default:"-" }}<br />
+          Am: {{ declined_change.created_at|date:"d.m.Y H:i" }}
+        </small>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hint -->
+  <div class="alert alert-info mb-4">
+    <i class="bi bi-info-circle"></i>
+    <strong>Hinweis:</strong>
+    Hier bearbeiten Sie die <em>vorgeschlagenen Werte</em>, die abgelehnt wurden.
+    Nach dem Speichern können Sie "Korrektur anwenden" auf der Detailseite klicken, 
+    um die korrigierten Werte erneut zur Genehmigung einzureichen.
+    <a href="{% url 'approvals:declined_detail' declined_change.pk %}" class="alert-link">
+      Zur Detailansicht (War/Ist-Vergleich)
+    </a>
+  </div>
+
+  <!-- Form -->
+  <form method="post" novalidate>
+    {% csrf_token %}
+
+    <!-- Validation Errors -->
+    {% if form.non_field_errors %}
+    <div class="alert alert-danger" role="alert">
+      <i class="bi bi-exclamation-triangle"></i>
+      <strong>Fehler:</strong>
+      <ul class="mb-0">
+        {% for error in form.non_field_errors %}
+        <li>{{ error }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    <div class="row">
+      <!-- Basic Info -->
+      <div class="col-md-6">
+        <div class="card mb-4">
+          <div class="card-header">
+            <i class="bi bi-person"></i>
+            Grunddaten
+          </div>
+          <div class="card-body">
+            <div class="mb-3">
+              <label for="{{ form.family_id.id_for_label }}" class="form-label">
+                FamilyID
+              </label>
+              {{ form.family_id }}
+              {% if form.family_id.errors %}
+              <div class="invalid-feedback d-block">
+                {{ form.family_id.errors.0 }}
+              </div>
+              {% endif %}
+            </div>
+
+            <div class="mb-3">
+              <label for="{{ form.parent_name.id_for_label }}" class="form-label">
+                Eltern
+              </label>
+              {{ form.parent_name }}
+              {% if form.parent_name.errors %}
+              <div class="invalid-feedback d-block">
+                {{ form.parent_name.errors.0 }}
+              </div>
+              {% endif %}
+            </div>
+
+            <div class="mb-3">
+              <label for="{{ form.child_name.id_for_label }}" class="form-label">
+                Kind
+              </label>
+              {{ form.child_name }}
+              {% if form.child_name.errors %}
+              <div class="invalid-feedback d-block">
+                {{ form.child_name.errors.0 }}
+              </div>
+              {% endif %}
+            </div>
+
+            <div class="mb-3">
+              <label for="{{ form.birthdate.id_for_label }}" class="form-label">
+                Geburtsdatum
+              </label>
+              {{ form.birthdate }}
+              {% if form.birthdate.errors %}
+              <div class="invalid-feedback d-block">
+                {{ form.birthdate.errors.0 }}
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-4">
+          <div class="card-header">
+            <i class="bi bi-geo-alt"></i>
+            Kontaktdaten
+          </div>
+          <div class="card-body">
+            <div class="mb-3">
+              <label for="{{ form.address.id_for_label }}" class="form-label">
+                Adresse
+              </label>
+              {{ form.address }}
+            </div>
+
+            <div class="mb-3">
+              <label for="{{ form.phone.id_for_label }}" class="form-label">
+                Telefon
+              </label>
+              {{ form.phone }}
+            </div>
+
+            <div class="mb-3">
+              <label for="{{ form.mobile.id_for_label }}" class="form-label">
+                Mobil
+              </label>
+              {{ form.mobile }}
+            </div>
+
+            <div class="mb-3">
+              <label for="{{ form.email.id_for_label }}" class="form-label">
+                E-Mail
+              </label>
+              {{ form.email }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Subjects and Months -->
+      <div class="col-md-6">
+        <div class="card mb-4">
+          <div class="card-header">
+            <i class="bi bi-book"></i>
+            Fächer und Preise
+          </div>
+          <div class="card-body">
+            <div class="row">
+              <div class="col-8">
+                <div class="mb-3">
+                  <label for="{{ form.subject1.id_for_label }}" class="form-label">
+                    Fach 1
+                  </label>
+                  {{ form.subject1 }}
+                </div>
+              </div>
+              <div class="col-4">
+                <div class="mb-3">
+                  <label for="{{ form.price1.id_for_label }}" class="form-label">
+                    Preis 1
+                  </label>
+                  {{ form.price1 }}
+                </div>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col-8">
+                <div class="mb-3">
+                  <label for="{{ form.subject2.id_for_label }}" class="form-label">
+                    Fach 2
+                  </label>
+                  {{ form.subject2 }}
+                </div>
+              </div>
+              <div class="col-4">
+                <div class="mb-3">
+                  <label for="{{ form.price2.id_for_label }}" class="form-label">
+                    Preis 2
+                  </label>
+                  {{ form.price2 }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-4">
+          <div class="card-header">
+            <i class="bi bi-calendar-month"></i>
+            Monate
+          </div>
+          <div class="card-body">
+            <div class="row">
+              <div class="col-6 col-lg-3 mb-3">
+                <label class="form-label">M1</label>
+                {{ form.month_1 }}
+              </div>
+              <div class="col-6 col-lg-3 mb-3">
+                <label class="form-label">M2</label>
+                {{ form.month_2 }}
+              </div>
+              <div class="col-6 col-lg-3 mb-3">
+                <label class="form-label">M3</label>
+                {{ form.month_3 }}
+              </div>
+              <div class="col-6 col-lg-3 mb-3">
+                <label class="form-label">M4</label>
+                {{ form.month_4 }}
+              </div>
+              <div class="col-6 col-lg-3 mb-3">
+                <label class="form-label">M5</label>
+                {{ form.month_5 }}
+              </div>
+              <div class="col-6 col-lg-3 mb-3">
+                <label class="form-label">M6</label>
+                {{ form.month_6 }}
+              </div>
+              <div class="col-6 col-lg-3 mb-3">
+                <label class="form-label">M7</label>
+                {{ form.month_7 }}
+              </div>
+              <div class="col-6 col-lg-3 mb-3">
+                <label class="form-label">M8</label>
+                {{ form.month_8 }}
+              </div>
+              <div class="col-6 col-lg-3 mb-3">
+                <label class="form-label">M9</label>
+                {{ form.month_9 }}
+              </div>
+              <div class="col-6 col-lg-3 mb-3">
+                <label class="form-label">M10</label>
+                {{ form.month_10 }}
+              </div>
+              <div class="col-6 col-lg-3 mb-3">
+                <label class="form-label">M11</label>
+                {{ form.month_11 }}
+              </div>
+              <div class="col-6 col-lg-3 mb-3">
+                <label class="form-label">M12</label>
+                {{ form.month_12 }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-4">
+          <div class="card-header">
+            <i class="bi bi-plus-circle"></i>
+            Extra-Felder
+          </div>
+          <div class="card-body">
+            <div class="mb-3">
+              <label for="{{ form.extra1.id_for_label }}" class="form-label">
+                Extra 1
+              </label>
+              {{ form.extra1 }}
+            </div>
+            <div class="mb-3">
+              <label for="{{ form.extra2.id_for_label }}" class="form-label">
+                Extra 2
+              </label>
+              {{ form.extra2 }}
+            </div>
+            <div class="mb-3">
+              <label for="{{ form.extra3.id_for_label }}" class="form-label">
+                Extra 3
+              </label>
+              {{ form.extra3 }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="d-flex gap-2 mb-4">
+      <button type="submit" class="btn btn-primary">
+        <i class="bi bi-save"></i>
+        Speichern
+      </button>
+      <a href="{% url 'approvals:declined_detail' declined_change.pk %}" class="btn btn-outline-secondary">
+        <i class="bi bi-x-lg"></i>
+        Abbrechen
+      </a>
+    </div>
+  </form>
+</div>
+{% endblock %}

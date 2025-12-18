@@ -36,12 +36,14 @@ from django.views.generic import DetailView, ListView, TemplateView
 
 from apps.karteien.models import KarteiRecord, RecordStatus, TRACKED_FIELDS
 
+from .forms import DeclinedChangeEditForm
 from .models import DeclinedChange, PendingChange
 from .services import (
     apply_decision,
     approve_all_pending,
     build_snapshot,
     create_or_update_pending_change,
+    create_or_update_pending_change_from_snapshot,
     decline_all_pending,
     get_changed_tracked_fields,
     get_new_records,
@@ -124,7 +126,7 @@ class DeclinedOverviewView(AdminEditorMixin, ListView):
     paginate_by = 50
     
     def get_queryset(self):
-        """Get declined changes, optionally filtered by year."""
+        """Get declined changes, optionally filtered by year, family_id, parent, child."""
         qs = DeclinedChange.objects.select_related(
             "record", "declined_by"
         ).order_by("-created_at")
@@ -139,6 +141,21 @@ class DeclinedOverviewView(AdminEditorMixin, ListView):
         else:
             # Default to current year
             qs = qs.filter(record__year=date.today().year)
+        
+        # Filter by family_id if specified
+        family_id = self.request.GET.get("family_id")
+        if family_id:
+            qs = qs.filter(record__family_id__icontains=family_id)
+        
+        # Filter by parent name if specified
+        parent = self.request.GET.get("parent")
+        if parent:
+            qs = qs.filter(record__parent_name__icontains=parent)
+        
+        # Filter by child name if specified
+        child = self.request.GET.get("child")
+        if child:
+            qs = qs.filter(record__child_name__icontains=child)
         
         return qs
     
@@ -209,6 +226,59 @@ class DeclinedDetailView(AdminEditorMixin, DetailView):
         return context
 
 
+class DeclinedChangeEditView(AdminEditorMixin, View):
+    """
+    Edit view for DeclinedChange.snapshot.
+    
+    Allows Admin to edit the proposed values that were declined,
+    without modifying the actual KarteiRecord.
+    
+    GET: Display form prefilled with snapshot values.
+    POST: Validate and update snapshot, redirect to detail view.
+    """
+    
+    template_name = "approvals/declined_edit.html"
+    
+    def get(self, request: HttpRequest, pk: int) -> HttpResponse:
+        """Show edit form prefilled with snapshot values."""
+        declined = get_object_or_404(DeclinedChange, pk=pk)
+        record = declined.record
+        
+        form = DeclinedChangeEditForm(snapshot=declined.snapshot)
+        
+        return render(request, self.template_name, {
+            "form": form,
+            "declined_change": declined,
+            "record": record,
+        })
+    
+    def post(self, request: HttpRequest, pk: int) -> HttpResponse:
+        """Validate and update snapshot."""
+        declined = get_object_or_404(DeclinedChange, pk=pk)
+        record = declined.record
+        
+        form = DeclinedChangeEditForm(request.POST, snapshot=declined.snapshot)
+        
+        if form.is_valid():
+            # Update snapshot with new values
+            declined.snapshot = form.to_snapshot()
+            declined.save(update_fields=["snapshot"])
+            
+            messages.success(
+                request,
+                f"Snapshot für Datensatz {record.id} wurde aktualisiert."
+            )
+            
+            return redirect("approvals:declined_detail", pk=pk)
+        
+        # Form invalid - re-render with errors
+        return render(request, self.template_name, {
+            "form": form,
+            "declined_change": declined,
+            "record": record,
+        })
+
+
 # =============================================================================
 # Apply Fixes
 # =============================================================================
@@ -220,9 +290,9 @@ class ApplyDeclinedFixView(AdminEditorMixin, View):
     Mirrors VBA: Export_DeclinedTools.ApplyDeclinedFixes
     
     Process:
-    1. Take current data from KarteiRecord (with admin's corrections)
-    2. Create new PendingChange with corrected data
-    3. Mark the DeclinedChange as processed
+    1. Take snapshot from DeclinedChange (with admin's corrections)
+    2. Create new PendingChange with the corrected snapshot
+    3. Delete the DeclinedChange
     4. Change record status from DECLINED to PENDING
     """
     
@@ -232,8 +302,8 @@ class ApplyDeclinedFixView(AdminEditorMixin, View):
         record = declined.record
         
         with transaction.atomic():
-            # Create new pending change with current record data
-            pending = create_or_update_pending_change(record)
+            # Create new pending change with the declined snapshot (which may have been edited)
+            pending = create_or_update_pending_change_from_snapshot(record, declined.snapshot)
             
             # Update record status to PENDING
             record.status = RecordStatus.PENDING
@@ -282,8 +352,8 @@ class ApplyAllDeclinedFixesView(AdminEditorMixin, View):
                 try:
                     record = declined.record
                     
-                    # Create pending change
-                    create_or_update_pending_change(record)
+                    # Create pending change with the declined snapshot
+                    create_or_update_pending_change_from_snapshot(record, declined.snapshot)
                     
                     # Update status
                     record.status = RecordStatus.PENDING

@@ -319,6 +319,53 @@ def create_or_update_pending_change(record: KarteiRecord) -> PendingChange:
     return pending
 
 
+def create_or_update_pending_change_from_snapshot(
+    record: KarteiRecord,
+    snapshot: dict[str, Any],
+) -> PendingChange:
+    """
+    Create or update a pending change with an explicit snapshot.
+
+    Unlike create_or_update_pending_change which builds snapshot from record,
+    this function uses the provided snapshot directly. This is used when
+    resubmitting a declined change that was edited - we want to use the
+    corrected snapshot from DeclinedChange, not the current record state.
+
+    Args:
+        record: The KarteiRecord to create pending change for.
+        snapshot: The snapshot dict with proposed field values.
+
+    Returns:
+        The created or updated PendingChange instance.
+
+    Raises:
+        ValueError: If record has no primary key (not saved).
+
+    Example:
+        >>> # Resubmit corrected declined change
+        >>> pending = create_or_update_pending_change_from_snapshot(
+        ...     record=declined.record,
+        ...     snapshot=declined.snapshot,  # edited snapshot
+        ... )
+    """
+    if record.pk is None:
+        raise ValueError("Cannot create pending change for unsaved record")
+
+    pending, created = PendingChange.objects.update_or_create(
+        record=record,
+        defaults={
+            "snapshot": snapshot,
+            "is_processed": False,
+        },
+    )
+
+    # Create notifications for Superadmins
+    from apps.notifications.services import notify_pending_created
+    notify_pending_created(record, pending)
+
+    return pending
+
+
 def create_declined_change(
     record: KarteiRecord,
     reason: str,

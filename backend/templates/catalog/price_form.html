@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% comment %}
+Price option create/edit form.
+{% endcomment %}
+
+{% block title %}Katalog - {{ page_title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:index' %}">Katalog</a>
+                    </li>
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:price_list' %}">Preise</a>
+                    </li>
+                    <li class="breadcrumb-item active">
+                        {% if is_create %}Neu{% else %}Bearbeiten{% endif %}
+                    </li>
+                </ol>
+            </nav>
+            <h1>
+                {% if is_create %}
+                <i class="bi bi-plus-circle"></i>
+                {% else %}
+                <i class="bi bi-pencil"></i>
+                {% endif %}
+                {{ page_title }}
+            </h1>
+        </div>
+    </div>
+
+    <!-- Form -->
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-currency-euro"></i>
+                    Preisdaten
+                </div>
+                <div class="card-body">
+                    <form method="post" novalidate>
+                        {% csrf_token %}
+                        
+                        <!-- Validation Errors -->
+                        {% if form.non_field_errors %}
+                        <div class="alert alert-danger" role="alert">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>Fehler:</strong>
+                            <ul class="mb-0">
+                                {% for error in form.non_field_errors %}
+                                <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                        
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="{{ form.year.id_for_label }}" class="form-label">
+                                        Jahr <span class="text-danger">*</span>
+                                    </label>
+                                    {{ form.year }}
+                                    {% if form.year.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {{ form.year.errors.0 }}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="col-md-8">
+                                <div class="mb-3">
+                                    <label for="{{ form.subject.id_for_label }}" class="form-label">
+                                        Fach <span class="text-danger">*</span>
+                                    </label>
+                                    {{ form.subject }}
+                                    {% if form.subject.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {{ form.subject.errors.0 }}
+                                    </div>
+                                    {% endif %}
+                                    <small class="text-muted">
+                                        <a href="{% url 'catalog:subject_create' %}" target="_blank">
+                                            <i class="bi bi-plus-circle"></i> Neues Fach erstellen
+                                        </a>
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="{{ form.amount.id_for_label }}" class="form-label">
+                                        Betrag (€) <span class="text-danger">*</span>
+                                    </label>
+                                    <div class="input-group">
+                                        {{ form.amount }}
+                                        <span class="input-group-text">€</span>
+                                    </div>
+                                    {% if form.amount.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {{ form.amount.errors.0 }}
+                                    </div>
+                                    {% endif %}
+                                    <small class="text-muted">
+                                        Preis pro Monat oder pro UE (je nach Fach)
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="{{ form.comment.id_for_label }}" class="form-label">
+                                Kommentar
+                            </label>
+                            {{ form.comment }}
+                            {% if form.comment.errors %}
+                            <div class="invalid-feedback d-block">
+                                {{ form.comment.errors.0 }}
+                            </div>
+                            {% endif %}
+                            <small class="text-muted">
+                                Begründung für diesen Preis (z.B. "Standardpreis", "Ermäßigt", "Intensivkurs")
+                            </small>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="form-check">
+                                {{ form.is_active }}
+                                <label class="form-check-label" for="{{ form.is_active.id_for_label }}">
+                                    Aktiv
+                                </label>
+                            </div>
+                            <small class="text-muted">
+                                Nur aktive Preise werden in Formularen zur Auswahl angeboten.
+                            </small>
+                        </div>
+                        
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            <strong>Preiseinheit:</strong> 
+                            Die Einheit (€/Monat oder €/UE) wird automatisch anhand des Fachnamens bestimmt:
+                            <ul class="mb-0 mt-2">
+                                <li><strong>€/UE</strong> – Fächer mit "Ind.", "VSpE_", "NH" oder "Nachhilfe" im Namen</li>
+                                <li><strong>€/Monat</strong> – alle anderen Fächer</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-lg"></i>
+                                Speichern
+                            </button>
+                            <a href="{% url 'catalog:price_list' %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-x-lg"></i>
+                                Abbrechen
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Sidebar Help -->
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-question-circle"></i>
+                    Hilfe
+                </div>
+                <div class="card-body">
+                    <h6>Preise anlegen</h6>
+                    <p class="small">
+                        Ein Preis ist immer mit einem Jahr und einem Fach verbunden. 
+                        Sie können mehrere Preise für dasselbe Fach anlegen (z.B. Standard, Ermäßigt).
+                    </p>
+                    
+                    <h6>Einheiten</h6>
+                    <p class="small">
+                        <strong>€/Monat</strong>: Für Gruppenunterricht – der Schüler zahlt einen festen Monatsbeitrag.
+                    </p>
+                    <p class="small">
+                        <strong>€/UE</strong>: Für Einzelunterricht (Ind., VSpE_) und Nachhilfe (NH, Nachhilfe) – 
+                        Abrechnung pro Unterrichtseinheit.
+                    </p>
+                    
+                    <h6>Jahr kopieren</h6>
+                    <p class="small">
+                        Verwenden Sie 
+                        <a href="{% url 'catalog:copy_prices_year' %}">Jahr kopieren</a>, 
+                        um alle Preise eines Jahres in ein anderes zu übernehmen.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+{% comment %}
+Template for Family Dashboard view.
+Admin-only page showing all records for a family in a year, with discount management.
+{% endcomment %}
+
+{% block title %}Familie {{ family_id }} – {{ year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'karteien:record_list' %}?year={{ year }}">Kartei</a>
+                    </li>
+                    <li class="breadcrumb-item active">Familie {{ family_id }}</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-people"></i>
+                Familie: {{ family_id }}
+                <span class="badge bg-secondary fs-6">{{ year }}</span>
+            </h1>
+        </div>
+        <div class="col-auto">
+            <a href="{% url 'karteien:record_list' %}?year={{ year }}&family_id={{ family_id }}" 
+               class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i>
+                Zurück zur Übersicht
+            </a>
+        </div>
+    </div>
+
+    <!-- Summary Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-2 col-sm-4 col-6 mb-2">
+            <div class="card text-center">
+                <div class="card-body py-2">
+                    <div class="h4 mb-0 text-primary">{{ total_records }}</div>
+                    <small class="text-muted">Gesamt</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2 col-sm-4 col-6 mb-2">
+            <div class="card text-center">
+                <div class="card-body py-2">
+                    <div class="h4 mb-0 text-success">{{ normal_auto_records }}</div>
+                    <small class="text-muted">NORMAL+AUTO</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2 col-sm-4 col-6 mb-2">
+            <div class="card text-center">
+                <div class="card-body py-2">
+                    <div class="h4 mb-0 text-warning">{{ pending_records }}</div>
+                    <small class="text-muted">PENDING</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2 col-sm-4 col-6 mb-2">
+            <div class="card text-center">
+                <div class="card-body py-2">
+                    <div class="h4 mb-0 text-danger">{{ declined_records }}</div>
+                    <small class="text-muted">DECLINED</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2 col-sm-4 col-6 mb-2">
+            <div class="card text-center">
+                <div class="card-body py-2">
+                    <div class="h4 mb-0 text-secondary">{{ legacy_records }}</div>
+                    <small class="text-muted">LEGACY</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Family Discounts Section -->
+        <div class="col-lg-5 mb-4">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>
+                        <i class="bi bi-percent"></i>
+                        Familienrabatte
+                    </span>
+                    <button type="button" class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#addDiscountModal">
+                        <i class="bi bi-plus-lg"></i>
+                        Hinzufügen
+                    </button>
+                </div>
+                <div class="card-body p-0">
+                    {% if family_discounts %}
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Rabatt</th>
+                                    <th>Monate</th>
+                                    <th class="text-end">Aktionen</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for fd in family_discounts %}
+                                <tr>
+                                    <td>
+                                        <span class="badge {% if fd.discount.kind == 'PERCENT' %}bg-info{% else %}bg-warning text-dark{% endif %}">
+                                            {% if fd.discount.kind == 'PERCENT' %}
+                                                {% widthratio fd.discount.value 1 100 %}%
+                                            {% else %}
+                                                {{ fd.discount.value|floatformat:2 }} €
+                                            {% endif %}
+                                        </span>
+                                        {% if fd.discount.description %}
+                                        <small class="text-muted ms-1" title="{{ fd.discount.description }}">
+                                            {{ fd.discount.description|truncatechars:20 }}
+                                        </small>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <small>{{ fd.months_display }}</small>
+                                    </td>
+                                    <td class="text-end">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" 
+                                                data-bs-toggle="modal" 
+                                                data-bs-target="#editDiscountModal{{ fd.pk }}">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        <form action="{% url 'karteien:family_discount_delete' fd.pk %}" method="post" class="d-inline"
+                                              onsubmit="return confirm('Rabatt wirklich löschen?');">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-percent text-muted" style="font-size: 2rem;"></i>
+                        <p class="text-muted mt-2 mb-0">Keine Familienrabatte definiert.</p>
+                    </div>
+                    {% endif %}
+                </div>
+                
+                <!-- Apply Discounts Button -->
+                <div class="card-footer">
+                    <form action="{% url 'karteien:apply_discounts' %}" method="post" class="d-grid"
+                          onsubmit="return confirm('Rabatte für alle NORMAL+AUTO Datensätze der Familie anwenden?\n\nDies erstellt PendingChange-Einträge, die vom Superadmin geprüft werden müssen.');">
+                        {% csrf_token %}
+                        <input type="hidden" name="year" value="{{ year }}">
+                        <input type="hidden" name="family_id" value="{{ family_id }}">
+                        <button type="submit" class="btn btn-primary" {% if normal_auto_records == 0 %}disabled{% endif %}>
+                            <i class="bi bi-check2-all"></i>
+                            Rabatte anwenden ({{ normal_auto_records }} Datensätze)
+                        </button>
+                    </form>
+                    {% if normal_auto_records == 0 %}
+                    <small class="text-muted d-block text-center mt-2">
+                        Keine NORMAL+AUTO Datensätze zum Verarbeiten.
+                    </small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Records List -->
+        <div class="col-lg-7 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-card-list"></i>
+                    Datensätze der Familie ({{ total_records }})
+                </div>
+                <div class="card-body p-0">
+                    {% if records %}
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Kind</th>
+                                    <th>Fach 1</th>
+                                    <th>Fach 2</th>
+                                    <th>Modus</th>
+                                    <th>Status</th>
+                                    <th class="text-end">Aktion</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for record in records %}
+                                <tr>
+                                    <td>{{ record.id }}</td>
+                                    <td>{{ record.child_name|default:"-" }}</td>
+                                    <td>
+                                        <small>{{ record.subject1|default:"-"|truncatechars:20 }}</small>
+                                    </td>
+                                    <td>
+                                        <small>{{ record.subject2|default:"-"|truncatechars:20 }}</small>
+                                    </td>
+                                    <td>
+                                        <span class="badge {% if record.months_mode == 'AUTO' %}bg-success{% elif record.months_mode == 'LEGACY' %}bg-secondary{% else %}bg-danger{% endif %}">
+                                            {{ record.months_mode }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        {% if record.status == "PENDING" %}
+                                        <span class="badge bg-primary">
+                                            <i class="bi bi-hourglass-split"></i>
+                                            Wartend
+                                        </span>
+                                        {% elif record.status == "DECLINED" %}
+                                        <span class="badge bg-danger">
+                                            <i class="bi bi-x-circle"></i>
+                                            Abgelehnt
+                                        </span>
+                                        {% else %}
+                                        <span class="badge bg-success">
+                                            <i class="bi bi-check-circle"></i>
+                                            Normal
+                                        </span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end">
+                                        <a href="{% url 'karteien:record_detail' record.pk %}" 
+                                           class="btn btn-sm btn-outline-primary"
+                                           title="Anzeigen">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-3">Keine Datensätze gefunden.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Discount Modal -->
+<div class="modal fade" id="addDiscountModal" tabindex="-1" aria-labelledby="addDiscountModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="{% url 'karteien:family_discount_create' %}" method="post">
+                {% csrf_token %}
+                <input type="hidden" name="year" value="{{ year }}">
+                <input type="hidden" name="family_id" value="{{ family_id }}">
+                
+                <div class="modal-header">
+                    <h5 class="modal-title" id="addDiscountModalLabel">
+                        <i class="bi bi-plus-lg"></i>
+                        Familienrabatt hinzufügen
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="discount" class="form-label">Rabatt</label>
+                        <select name="discount" id="discount" class="form-select" required>
+                            <option value="">-- Rabatt wählen --</option>
+                            {% for d in available_discounts %}
+                            <option value="{{ d.pk }}">
+                                {% if d.kind == 'PERCENT' %}
+                                    {% widthratio d.value 1 100 %}%
+                                {% else %}
+                                    {{ d.value|floatformat:2 }} € (fest)
+                                {% endif %}
+                                {% if d.description %} – {{ d.description|truncatechars:30 }}{% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="row">
+                        <div class="col-6">
+                            <label for="start_month" class="form-label">Von Monat</label>
+                            <select name="start_month" id="start_month" class="form-select">
+                                {% for m in "123456789" %}
+                                <option value="{{ forloop.counter }}">{{ forloop.counter }}</option>
+                                {% endfor %}
+                                <option value="10">10</option>
+                                <option value="11">11</option>
+                                <option value="12">12</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label for="end_month" class="form-label">Bis Monat</label>
+                            <select name="end_month" id="end_month" class="form-select">
+                                {% for m in "123456789" %}
+                                <option value="{{ forloop.counter }}" {% if forloop.counter == 12 %}selected{% endif %}>{{ forloop.counter }}</option>
+                                {% endfor %}
+                                <option value="10">10</option>
+                                <option value="11">11</option>
+                                <option value="12" selected>12</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+                    <button type="submit" class="btn btn-success">
+                        <i class="bi bi-plus-lg"></i>
+                        Hinzufügen
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Discount Modals (one per discount) -->
+{% for fd in family_discounts %}
+<div class="modal fade" id="editDiscountModal{{ fd.pk }}" tabindex="-1" aria-labelledby="editDiscountModalLabel{{ fd.pk }}" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="{% url 'karteien:family_discount_edit' fd.pk %}" method="post">
+                {% csrf_token %}
+                
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editDiscountModalLabel{{ fd.pk }}">
+                        <i class="bi bi-pencil"></i>
+                        Familienrabatt bearbeiten
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="discount{{ fd.pk }}" class="form-label">Rabatt</label>
+                        <select name="discount" id="discount{{ fd.pk }}" class="form-select" required>
+                            {% for d in available_discounts %}
+                            <option value="{{ d.pk }}" {% if d.pk == fd.discount.pk %}selected{% endif %}>
+                                {% if d.kind == 'PERCENT' %}
+                                    {% widthratio d.value 1 100 %}%
+                                {% else %}
+                                    {{ d.value|floatformat:2 }} € (fest)
+                                {% endif %}
+                                {% if d.description %} – {{ d.description|truncatechars:30 }}{% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="row">
+                        <div class="col-6">
+                            <label for="start_month{{ fd.pk }}" class="form-label">Von Monat</label>
+                            <select name="start_month" id="start_month{{ fd.pk }}" class="form-select">
+                                {% for m in "123456789" %}
+                                <option value="{{ forloop.counter }}" {% if forloop.counter == fd.start_month %}selected{% endif %}>{{ forloop.counter }}</option>
+                                {% endfor %}
+                                <option value="10" {% if fd.start_month == 10 %}selected{% endif %}>10</option>
+                                <option value="11" {% if fd.start_month == 11 %}selected{% endif %}>11</option>
+                                <option value="12" {% if fd.start_month == 12 %}selected{% endif %}>12</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label for="end_month{{ fd.pk }}" class="form-label">Bis Monat</label>
+                            <select name="end_month" id="end_month{{ fd.pk }}" class="form-select">
+                                {% for m in "123456789" %}
+                                <option value="{{ forloop.counter }}" {% if forloop.counter == fd.end_month %}selected{% endif %}>{{ forloop.counter }}</option>
+                                {% endfor %}
+                                <option value="10" {% if fd.end_month == 10 %}selected{% endif %}>10</option>
+                                <option value="11" {% if fd.end_month == 11 %}selected{% endif %}>11</option>
+                                <option value="12" {% if fd.end_month == 12 %}selected{% endif %}>12</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg"></i>
+                        Speichern
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}

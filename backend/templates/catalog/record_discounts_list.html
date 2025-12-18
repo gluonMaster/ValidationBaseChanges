@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% comment %}
+Record discounts list view - Shows discounts assigned to individual records.
+{% endcomment %}
+
+{% block title %}Katalog - Eintragsrabatte{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:index' %}">Katalog</a>
+                    </li>
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:discount_list' %}">Rabatte</a>
+                    </li>
+                    <li class="breadcrumb-item active">Eintragsrabatte</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-file-earmark"></i>
+                Eintragsrabatte
+            </h1>
+            <p class="text-muted">Rabatte für einzelne Karteieinträge</p>
+        </div>
+        <div class="col-auto">
+            <a href="{% url 'catalog:record_discount_create' %}{% if record_pk %}?record_pk={{ record_pk }}{% endif %}" class="btn btn-success">
+                <i class="bi bi-plus-lg"></i>
+                Neuer Eintragsrabatt
+            </a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-funnel"></i>
+            Filter
+        </div>
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-2">
+                    <label for="record_pk" class="form-label">PKID</label>
+                    <input type="number" name="record_pk" id="record_pk" class="form-control" 
+                           value="{{ record_pk }}" placeholder="Kartei-PKID">
+                </div>
+                <div class="col-md-2">
+                    <label for="year" class="form-label">Jahr</label>
+                    <input type="number" name="year" id="year" class="form-control" 
+                           value="{{ year }}" placeholder="{{ current_year }}">
+                </div>
+                <div class="col-md-3">
+                    <label for="family_id" class="form-label">FamilyID</label>
+                    <input type="text" name="family_id" id="family_id" class="form-control" 
+                           value="{{ family_id }}" placeholder="z.B. FAM001">
+                </div>
+                <div class="col-md-5 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary me-2">
+                        <i class="bi bi-search"></i>
+                        Suchen
+                    </button>
+                    <a href="{% url 'catalog:record_discount_list' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-x-lg"></i>
+                        Reset
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Results -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>
+                <i class="bi bi-list"></i>
+                Ergebnisse
+            </span>
+            <span class="badge bg-secondary">{{ record_discounts|length }} Zuweisungen</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 80px;">PKID</th>
+                            <th style="width: 80px;">Jahr</th>
+                            <th style="width: 150px;">FamilyID</th>
+                            <th>Rabatt</th>
+                            <th style="width: 150px;">Monate</th>
+                            <th style="width: 150px;">Erstellt</th>
+                            <th style="width: 150px;">Aktionen</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for rd in record_discounts %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'karteien:record_edit' rd.record.pkid %}" 
+                                   class="text-decoration-none" title="Karteieintrag anzeigen">
+                                    <strong>#{{ rd.record.pkid }}</strong>
+                                </a>
+                            </td>
+                            <td>{{ rd.record.year }}</td>
+                            <td>{{ rd.record.family_id }}</td>
+                            <td>
+                                {% if rd.discount.kind == 'PERCENT' %}
+                                <span class="badge bg-primary">{% widthratio rd.discount.value 1 100 %}%</span>
+                                {% else %}
+                                <span class="badge bg-success">{{ rd.discount.value|floatformat:2 }} €</span>
+                                {% endif %}
+                                {% if rd.discount.description %}
+                                <small class="text-muted">– {{ rd.discount.description|truncatechars:30 }}</small>
+                                {% endif %}
+                            </td>
+                            <td>{{ rd.months_display }}</td>
+                            <td>
+                                <small class="text-muted">{{ rd.created_at|date:"d.m.Y H:i" }}</small>
+                            </td>
+                            <td>
+                                <a href="{% url 'catalog:record_discount_edit' rd.pk %}" 
+                                   class="btn btn-sm btn-outline-primary" title="Bearbeiten">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                <a href="{% url 'catalog:record_discount_delete' rd.pk %}" 
+                                   class="btn btn-sm btn-outline-danger" title="Löschen">
+                                    <i class="bi bi-trash"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-center text-muted py-4">
+                                <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                                Keine Eintragsrabatte gefunden.
+                                {% if not record_pk and not year and not family_id %}
+                                <br><small>Geben Sie eine PKID, Jahr oder FamilyID ein.</small>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <nav aria-label="Seitennavigation" class="mt-4">
+        <ul class="pagination justify-content-center">
+            {% if page_obj.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if record_pk %}&record_pk={{ record_pk }}{% endif %}{% if year %}&year={{ year }}{% endif %}{% if family_id %}&family_id={{ family_id }}{% endif %}">
+                    <i class="bi bi-chevron-left"></i>
+                </a>
+            </li>
+            {% endif %}
+            
+            <li class="page-item disabled">
+                <span class="page-link">
+                    Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}
+                </span>
+            </li>
+            
+            {% if page_obj.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if record_pk %}&record_pk={{ record_pk }}{% endif %}{% if year %}&year={{ year }}{% endif %}{% if family_id %}&family_id={{ family_id }}{% endif %}">
+                    <i class="bi bi-chevron-right"></i>
+                </a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+{% endblock %}
