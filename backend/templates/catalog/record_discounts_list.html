@@ -99,7 +99,7 @@ Record discounts list view - Shows discounts assigned to individual records.
                         {% for rd in record_discounts %}
                         <tr>
                             <td>
-                                <a href="{% url 'karteien:record_edit' rd.record.pkid %}" 
+                                <a href="{% url 'karteien:record_detail' rd.record.pkid %}" 
                                    class="text-decoration-none" title="Karteieintrag anzeigen">
                                     <strong>#{{ rd.record.pkid }}</strong>
                                 </a>
