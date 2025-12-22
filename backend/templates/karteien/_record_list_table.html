@@ -5,7 +5,10 @@ Used by record_list.html and live-search API.
 
 {% for record in records %}
 <tr>
-    <td>{{ record.id }}</td>
+    <td>
+        <strong>{{ record.pkid }}</strong>
+        <br><small class="text-muted">ID: {{ record.id }}</small>
+    </td>
     <td>
         {{ record.family_id }}
         {% if user.is_admin_role %}
@@ -39,6 +42,19 @@ Used by record_list.html and live-search API.
         {% endif %}
     </td>
     <td>
+        {% comment %}Contract type and status badges{% endcomment %}
+        {% if record.is_monthly_contract %}
+        <span class="badge bg-info text-dark" title="Monatlicher Vertrag">M</span>
+        {% else %}
+        <span class="badge bg-secondary" title="Jährlicher Vertrag">J</span>
+        {% endif %}
+        {% if record.is_contract_terminated %}
+        <span class="badge bg-danger" title="Gekündigt">KN</span>
+        {% else %}
+        <span class="badge bg-success" title="Aktiv">OK</span>
+        {% endif %}
+    </td>
+    <td>
         {% if record.is_sepa %}
         <span class="badge bg-warning text-dark">SEPA</span>
         {% endif %}
@@ -49,6 +65,7 @@ Used by record_list.html and live-search API.
            title="Anzeigen">
             <i class="bi bi-eye"></i>
         </a>
+        {% if user.can_edit_kartei %}
         {% if not record.status %}
         <a href="{% url 'karteien:record_update' record.pk %}" 
            class="btn btn-sm btn-outline-secondary"
@@ -67,11 +84,12 @@ Used by record_list.html and live-search API.
             <i class="bi bi-x-circle"></i>
         </a>
         {% endif %}
+        {% endif %}
     </td>
 </tr>
 {% empty %}
 <tr>
-    <td colspan="9" class="text-center py-5">
+    <td colspan="10" class="text-center py-5">
         <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
         <p class="text-muted mt-3">Keine Datensätze gefunden.</p>
     </td>

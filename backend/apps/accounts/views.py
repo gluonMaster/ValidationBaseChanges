@@ -205,6 +205,22 @@ class UserKarteiSearchView(UserRoleMixin, ListView):
         if child:
             qs = qs.filter(child_name__icontains=child)
         
+        # Filter by contract type (monthly/yearly)
+        contract_type = self.request.GET.get("contract_type", "").strip()
+        if contract_type:
+            if contract_type == "monthly":
+                qs = qs.filter(is_monthly_contract=True)
+            elif contract_type == "yearly":
+                qs = qs.filter(is_monthly_contract=False)
+        
+        # Filter by contract status (active/terminated)
+        contract_status = self.request.GET.get("contract_status", "").strip()
+        if contract_status:
+            if contract_status == "active":
+                qs = qs.filter(is_contract_terminated=False)
+            elif contract_status == "terminated":
+                qs = qs.filter(is_contract_terminated=True)
+        
         return qs.order_by("family_id", "parent_name", "child_name")[:50]
     
     def get_context_data(self, **kwargs) -> dict[str, Any]:
@@ -217,6 +233,8 @@ class UserKarteiSearchView(UserRoleMixin, ListView):
             "parent": self.request.GET.get("parent", ""),
             "child": self.request.GET.get("child", ""),
             "year": self.request.GET.get("year", str(date.today().year)),
+            "contract_type": self.request.GET.get("contract_type", ""),
+            "contract_status": self.request.GET.get("contract_status", ""),
         }
         
         # Check if search was performed

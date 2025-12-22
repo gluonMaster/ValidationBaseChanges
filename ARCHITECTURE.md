@@ -111,8 +111,11 @@
   - Статус строки (PENDING/DECLINED/normal) и ID (аналог колонки AV).
 - Операции Admin:
   - Создание/редактирование/удаление записей.
+  - Мастер **Neue Familie**: создание новой семьи с несколькими детьми за один проход (`/karteien/family/new/`), с назначением скидок и пересчётом `AUTO`.
   - Синхронизация изменений в БД (внутри веб‑системы).
   - Правила по годам и ограничениям (аналог `ExportProtection.ValidateAndFixPastMonths`).
+- Просмотр (read-only):
+  - Superadmin и User могут открывать `/karteien/` (list/detail + AJAX live-search) без edit/delete.
 - Валидации:
   - Уникальность FamilyID + Parent (аналог `Export_ValidationKartei`).
   - Ограничения по прошлым месяцам и ролям.
@@ -120,12 +123,14 @@
 **Ключевые модели:**
 
 - `KarteiRecord` (`apps/karteien/models.py`):
-  - Primary key: `id` (соответствует Access ID и Excel AV/48).
+  - Primary key: `pkid` (surrogate Django PK).
+  - Access/Excel ID: `id` (Access `ID` / Excel AV/48), доменный ключ вместе с `year`.
   - Обязательное поле `year` для разделения 2024/2025/… (вместо отдельных файлов).
   - Основные поля: `family_id`, `parent_name`, `child_name`, `birthdate`, `address`, `phone`, `mobile`, `email`.
   - Предметы и цены: `subject1`, `price1`, `subject2`, `price2`, `extra1..3`.
   - Месячные поля: `month_1` … `month_12` (DecimalField для платежей).
   - Служебные: `sepa_marker`, `status`, `last_change_role/date/time`, `history_raw`.
+  - Контракт (legacy): `teacher1_legacy_name`, `teacher2_legacy_name`, `contract_type_raw`/`is_monthly_contract`, `contract_status_raw`/`is_contract_terminated`.
   - Поле `status` (enum: normal/pending/declined) для быстрых фильтров.
   - Уникальное ограничение: `(year, id)`.
 - В дальнейшем возможно выделение отдельных сущностей (`Family`, `Child`, `Subscription`), но первый шаг максимально близок к текущей структуре.
@@ -586,6 +591,7 @@
 ```bash
 python manage.py import_access_year --year 2025 \
     --access-file KindElternDaten_25_front.accdb \
+    [--patch-fields] \
     [--dry-run] \
     [--familyid-policy=report|auto-merge] \
     [--sync-history] \
@@ -598,6 +604,7 @@ python manage.py import_access_year --year 2025 \
 
 - `--skip-pending` — пропустить импорт `pre_tblKartei` (pending-изменения).
 - `--skip-declined` — пропустить импорт `decl_tblKartei` (declined-изменения).
+- `--patch-fields` — patch‑режим: читает только `tblKartei` и обновляет только доп.поля (учителя Value11/16, контракт Value14/20 + derived bool, `sepa_marker` Value47) у уже импортированных записей, найденных по `(year, id)`.
 - `--report-dir` — каталог для сохранения CSV/JSON-отчётов (по умолчанию — текущий каталог).
 
 **Границы анализа FamilyID:**

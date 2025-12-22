@@ -1,0 +1,677 @@
+{% extends "base.html" %}
+{% comment %}
+Template for New Family Wizard view.
+Admin-only page for creating a new family with multiple children in one pass.
+{% endcomment %}
+
+{% block title %}Neue Familie erstellen{% endblock %}
+
+{% block extra_css %}
+<style>
+    .child-form {
+        border: 1px solid #dee2e6;
+        border-radius: 0.375rem;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        background: #f8f9fa;
+    }
+    .child-form .child-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.75rem;
+    }
+    .child-form .child-header h5 {
+        margin: 0;
+    }
+    .remove-child-btn {
+        color: #dc3545;
+    }
+    .semester-section {
+        background: #fff;
+        border-radius: 0.25rem;
+        padding: 0.75rem;
+        margin-bottom: 0.5rem;
+    }
+    .semester-section h6 {
+        color: #6c757d;
+        font-size: 0.875rem;
+        margin-bottom: 0.5rem;
+    }
+    .discount-checkboxes {
+        max-height: 150px;
+        overflow-y: auto;
+        border: 1px solid #dee2e6;
+        border-radius: 0.25rem;
+        padding: 0.5rem;
+    }
+    .discount-checkboxes .form-check {
+        margin-bottom: 0.25rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'karteien:record_list' %}">Kartei</a>
+                    </li>
+                    <li class="breadcrumb-item active">Neue Familie</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-people-fill"></i>
+                Neue Familie erstellen
+            </h1>
+            <p class="text-muted">
+                Erstellen Sie eine neue Familie mit mehreren Kindern in einem Schritt.
+                Die FamilyID wird automatisch generiert.
+            </p>
+        </div>
+    </div>
+
+    <form method="post" id="wizardForm" novalidate>
+        {% csrf_token %}
+        
+        <div class="row">
+            <!-- Left Column: Family Header -->
+            <div class="col-lg-5 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="bi bi-house-door"></i>
+                        Familie &amp; Kontakt
+                    </div>
+                    <div class="card-body">
+                        <!-- Year -->
+                        <div class="mb-3">
+                            <label for="id_year" class="form-label">{{ header_form.year.label }}</label>
+                            {{ header_form.year }}
+                            {% if header_form.year.help_text %}
+                            <div class="form-text">{{ header_form.year.help_text }}</div>
+                            {% endif %}
+                            {% if header_form.year.errors %}
+                            <div class="invalid-feedback d-block">{{ header_form.year.errors.0 }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- FamilyID (readonly) -->
+                        <div class="mb-3">
+                            <label for="id_family_id" class="form-label">{{ header_form.family_id.label }}</label>
+                            {{ header_form.family_id }}
+                            {% if header_form.family_id.help_text %}
+                            <div class="form-text">{{ header_form.family_id.help_text }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Parent Name -->
+                        <div class="mb-3">
+                            <label for="id_parent_name" class="form-label">{{ header_form.parent_name.label }} *</label>
+                            {{ header_form.parent_name }}
+                            {% if header_form.parent_name.errors %}
+                            <div class="invalid-feedback d-block">{{ header_form.parent_name.errors.0 }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Address -->
+                        <div class="mb-3">
+                            <label for="id_address" class="form-label">{{ header_form.address.label }}</label>
+                            {{ header_form.address }}
+                        </div>
+                        
+                        <!-- Phone & Mobile -->
+                        <div class="row">
+                            <div class="col-6 mb-3">
+                                <label for="id_phone" class="form-label">{{ header_form.phone.label }}</label>
+                                {{ header_form.phone }}
+                            </div>
+                            <div class="col-6 mb-3">
+                                <label for="id_mobile" class="form-label">{{ header_form.mobile.label }}</label>
+                                {{ header_form.mobile }}
+                            </div>
+                        </div>
+                        
+                        <!-- Email -->
+                        <div class="mb-3">
+                            <label for="id_email" class="form-label">{{ header_form.email.label }}</label>
+                            {{ header_form.email }}
+                            {% if header_form.email.errors %}
+                            <div class="invalid-feedback d-block">{{ header_form.email.errors.0 }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- SEPA Marker -->
+                        <div class="mb-3">
+                            <label for="id_sepa_marker" class="form-label">{{ header_form.sepa_marker.label }}</label>
+                            {{ header_form.sepa_marker }}
+                            {% if header_form.sepa_marker.help_text %}
+                            <div class="form-text">{{ header_form.sepa_marker.help_text }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Contract Type -->
+                        <div class="mb-3 form-check">
+                            {{ header_form.is_monthly_contract }}
+                            <label class="form-check-label" for="id_is_monthly_contract">
+                                {{ header_form.is_monthly_contract.label }}
+                            </label>
+                            {% if header_form.is_monthly_contract.help_text %}
+                            <div class="form-text">{{ header_form.is_monthly_contract.help_text }}</div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Contract Status -->
+                        <div class="mb-3 form-check">
+                            {{ header_form.is_contract_terminated }}
+                            <label class="form-check-label" for="id_is_contract_terminated">
+                                {{ header_form.is_contract_terminated.label }}
+                            </label>
+                            {% if header_form.is_contract_terminated.help_text %}
+                            <div class="form-text">{{ header_form.is_contract_terminated.help_text }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <hr>
+                        
+                        <!-- Family Discount -->
+                        <div class="mb-3">
+                            <label for="id_family_discount" class="form-label">
+                                <i class="bi bi-percent"></i>
+                                {{ header_form.family_discount.label }}
+                            </label>
+                            {{ header_form.family_discount }}
+                            {% if header_form.family_discount.help_text %}
+                            <div class="form-text">{{ header_form.family_discount.help_text }}</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Right Column: Children -->
+            <div class="col-lg-7">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>
+                            <i class="bi bi-person-lines-fill"></i>
+                            Kinder
+                        </span>
+                        <button type="button" class="btn btn-sm btn-success" id="addChildBtn">
+                            <i class="bi bi-plus-lg"></i>
+                            Kind hinzufügen
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        {{ child_formset.management_form }}
+                        
+                        {% if child_formset.non_form_errors %}
+                        <div class="alert alert-danger">
+                            {{ child_formset.non_form_errors }}
+                        </div>
+                        {% endif %}
+                        
+                        <div id="childFormsContainer">
+                            {% for child_form in child_formset %}
+                            <div class="child-form" data-form-index="{{ forloop.counter0 }}">
+                                <div class="child-header">
+                                    <h5>
+                                        <i class="bi bi-person"></i>
+                                        Kind {{ forloop.counter }}
+                                    </h5>
+                                    {% if forloop.counter > 1 %}
+                                    <button type="button" class="btn btn-sm btn-outline-danger remove-child-btn" title="Kind entfernen">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                    {% endif %}
+                                </div>
+                                
+                                <!-- Child Name & Birthdate -->
+                                <div class="row mb-3">
+                                    <div class="col-md-8">
+                                        <label class="form-label">Kind (Name) *</label>
+                                        {{ child_form.child_name }}
+                                        {% if child_form.child_name.errors %}
+                                        <div class="invalid-feedback d-block">{{ child_form.child_name.errors.0 }}</div>
+                                        {% endif %}
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Geburtsdatum</label>
+                                        {{ child_form.birthdate }}
+                                    </div>
+                                </div>
+                                
+                                <!-- Semester 1 -->
+                                <div class="semester-section">
+                                    <h6><i class="bi bi-1-circle"></i> 1. Halbjahr (Monate 1-6)</h6>
+                                    <div class="row">
+                                        <div class="col-md-4 mb-2">
+                                            <label class="form-label form-label-sm">Fach</label>
+                                            {{ child_form.subject1_ref }}
+                                            {% if child_form.subject1_ref.errors %}
+                                            <div class="invalid-feedback d-block">{{ child_form.subject1_ref.errors.0 }}</div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="col-md-4 mb-2">
+                                            <label class="form-label form-label-sm">Lehrer</label>
+                                            {{ child_form.teacher1_ref }}
+                                            {% if child_form.teacher1_ref.errors %}
+                                            <div class="invalid-feedback d-block">{{ child_form.teacher1_ref.errors.0 }}</div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="col-md-4 mb-2">
+                                            <label class="form-label form-label-sm">Preis</label>
+                                            {{ child_form.price1_ref }}
+                                            {% if child_form.price1_ref.errors %}
+                                            <div class="invalid-feedback d-block">{{ child_form.price1_ref.errors.0 }}</div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-2">
+                                            <label class="form-label form-label-sm">Ab Monat</label>
+                                            {{ child_form.start_month_1 }}
+                                        </div>
+                                        <div class="col-md-6 mb-2">
+                                            <label class="form-label form-label-sm">Stunden/Monat (Ind./NH)</label>
+                                            {{ child_form.hours_per_month_1 }}
+                                            {% if child_form.hours_per_month_1.help_text %}
+                                            <div class="form-text small">{{ child_form.hours_per_month_1.help_text }}</div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Semester 2 -->
+                                <div class="semester-section">
+                                    <h6><i class="bi bi-2-circle"></i> 2. Halbjahr (Monate 7-12)</h6>
+                                    <div class="row">
+                                        <div class="col-md-4 mb-2">
+                                            <label class="form-label form-label-sm">Fach</label>
+                                            {{ child_form.subject2_ref }}
+                                            {% if child_form.subject2_ref.errors %}
+                                            <div class="invalid-feedback d-block">{{ child_form.subject2_ref.errors.0 }}</div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="col-md-4 mb-2">
+                                            <label class="form-label form-label-sm">Lehrer</label>
+                                            {{ child_form.teacher2_ref }}
+                                            {% if child_form.teacher2_ref.errors %}
+                                            <div class="invalid-feedback d-block">{{ child_form.teacher2_ref.errors.0 }}</div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="col-md-4 mb-2">
+                                            <label class="form-label form-label-sm">Preis</label>
+                                            {{ child_form.price2_ref }}
+                                            {% if child_form.price2_ref.errors %}
+                                            <div class="invalid-feedback d-block">{{ child_form.price2_ref.errors.0 }}</div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-2">
+                                            <label class="form-label form-label-sm">Ab Monat</label>
+                                            {{ child_form.start_month_2 }}
+                                        </div>
+                                        <div class="col-md-6 mb-2">
+                                            <label class="form-label form-label-sm">Stunden/Monat (Ind./NH)</label>
+                                            {{ child_form.hours_per_month_2 }}
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Discounts & Options -->
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label class="form-label">
+                                            <i class="bi bi-percent"></i>
+                                            Eintragrabatte
+                                        </label>
+                                        <div class="discount-checkboxes">
+                                            {{ child_form.record_discounts }}
+                                        </div>
+                                        {% if child_form.record_discounts.help_text %}
+                                        <div class="form-text small">{{ child_form.record_discounts.help_text }}</div>
+                                        {% endif %}
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label class="form-label">&nbsp;</label>
+                                        <div class="form-check mt-2">
+                                            {{ child_form.discounts_disabled }}
+                                            <label class="form-check-label" for="{{ child_form.discounts_disabled.id_for_label }}">
+                                                {{ child_form.discounts_disabled.label }}
+                                            </label>
+                                            {% if child_form.discounts_disabled.help_text %}
+                                            <div class="form-text small">{{ child_form.discounts_disabled.help_text }}</div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% empty %}
+                            <div class="alert alert-info">
+                                Klicken Sie auf "Kind hinzufügen", um ein Kind anzulegen.
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Submit Buttons -->
+        <div class="row mt-4">
+            <div class="col">
+                <div class="d-flex justify-content-between">
+                    <a href="{% url 'karteien:record_list' %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-x-lg"></i>
+                        Abbrechen
+                    </a>
+                    <button type="submit" class="btn btn-primary btn-lg">
+                        <i class="bi bi-check-lg"></i>
+                        Familie erstellen
+                    </button>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- Empty child form template for JS -->
+<template id="childFormTemplate">
+    <div class="child-form" data-form-index="__prefix__">
+        <div class="child-header">
+            <h5>
+                <i class="bi bi-person"></i>
+                Kind <span class="child-number">__number__</span>
+            </h5>
+            <button type="button" class="btn btn-sm btn-outline-danger remove-child-btn" title="Kind entfernen">
+                <i class="bi bi-trash"></i>
+            </button>
+        </div>
+        
+        <!-- Child Name & Birthdate -->
+        <div class="row mb-3">
+            <div class="col-md-8">
+                <label class="form-label">Kind (Name) *</label>
+                <input type="text" name="form-__prefix__-child_name" id="id_form-__prefix__-child_name" class="form-control" maxlength="255" required>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Geburtsdatum</label>
+                <input type="date" name="form-__prefix__-birthdate" id="id_form-__prefix__-birthdate" class="form-control">
+            </div>
+        </div>
+        
+        <!-- Semester 1 -->
+        <div class="semester-section">
+            <h6><i class="bi bi-1-circle"></i> 1. Halbjahr (Monate 1-6)</h6>
+            <div class="row">
+                <div class="col-md-4 mb-2">
+                    <label class="form-label form-label-sm">Fach</label>
+                    <select name="form-__prefix__-subject1_ref" id="id_form-__prefix__-subject1_ref" class="form-select" data-semester="1">
+                        <option value="">---------</option>
+                    </select>
+                </div>
+                <div class="col-md-4 mb-2">
+                    <label class="form-label form-label-sm">Lehrer</label>
+                    <select name="form-__prefix__-teacher1_ref" id="id_form-__prefix__-teacher1_ref" class="form-select" data-semester="1">
+                        <option value="">---------</option>
+                    </select>
+                </div>
+                <div class="col-md-4 mb-2">
+                    <label class="form-label form-label-sm">Preis</label>
+                    <select name="form-__prefix__-price1_ref" id="id_form-__prefix__-price1_ref" class="form-select" data-semester="1">
+                        <option value="">---------</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-2">
+                    <label class="form-label form-label-sm">Ab Monat</label>
+                    <select name="form-__prefix__-start_month_1" id="id_form-__prefix__-start_month_1" class="form-select">
+                        <option value="1">Monat 1</option>
+                        <option value="2">Monat 2</option>
+                        <option value="3">Monat 3</option>
+                        <option value="4">Monat 4</option>
+                        <option value="5">Monat 5</option>
+                        <option value="6">Monat 6</option>
+                    </select>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <label class="form-label form-label-sm">Stunden/Monat (Ind./NH)</label>
+                    <input type="number" name="form-__prefix__-hours_per_month_1" id="id_form-__prefix__-hours_per_month_1" class="form-control" step="0.01" min="0" placeholder="0.00">
+                </div>
+            </div>
+        </div>
+        
+        <!-- Semester 2 -->
+        <div class="semester-section">
+            <h6><i class="bi bi-2-circle"></i> 2. Halbjahr (Monate 7-12)</h6>
+            <div class="row">
+                <div class="col-md-4 mb-2">
+                    <label class="form-label form-label-sm">Fach</label>
+                    <select name="form-__prefix__-subject2_ref" id="id_form-__prefix__-subject2_ref" class="form-select" data-semester="2">
+                        <option value="">---------</option>
+                    </select>
+                </div>
+                <div class="col-md-4 mb-2">
+                    <label class="form-label form-label-sm">Lehrer</label>
+                    <select name="form-__prefix__-teacher2_ref" id="id_form-__prefix__-teacher2_ref" class="form-select" data-semester="2">
+                        <option value="">---------</option>
+                    </select>
+                </div>
+                <div class="col-md-4 mb-2">
+                    <label class="form-label form-label-sm">Preis</label>
+                    <select name="form-__prefix__-price2_ref" id="id_form-__prefix__-price2_ref" class="form-select" data-semester="2">
+                        <option value="">---------</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-2">
+                    <label class="form-label form-label-sm">Ab Monat</label>
+                    <select name="form-__prefix__-start_month_2" id="id_form-__prefix__-start_month_2" class="form-select">
+                        <option value="7">Monat 7</option>
+                        <option value="8">Monat 8</option>
+                        <option value="9">Monat 9</option>
+                        <option value="10">Monat 10</option>
+                        <option value="11">Monat 11</option>
+                        <option value="12">Monat 12</option>
+                    </select>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <label class="form-label form-label-sm">Stunden/Monat (Ind./NH)</label>
+                    <input type="number" name="form-__prefix__-hours_per_month_2" id="id_form-__prefix__-hours_per_month_2" class="form-control" step="0.01" min="0" placeholder="0.00">
+                </div>
+            </div>
+        </div>
+        
+        <!-- Discounts & Options -->
+        <div class="row">
+            <div class="col-md-6 mb-3">
+                <label class="form-label">
+                    <i class="bi bi-percent"></i>
+                    Eintragrabatte
+                </label>
+                <div class="discount-checkboxes">
+                    <!-- Will be populated from existing options -->
+                </div>
+            </div>
+            <div class="col-md-6 mb-3">
+                <label class="form-label">&nbsp;</label>
+                <div class="form-check mt-2">
+                    <input type="checkbox" name="form-__prefix__-discounts_disabled" id="id_form-__prefix__-discounts_disabled" class="form-check-input">
+                    <label class="form-check-label" for="id_form-__prefix__-discounts_disabled">
+                        Rabatte deaktiviert
+                    </label>
+                    <div class="form-text small">Keine Rabatte für dieses Kind anwenden.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    'use strict';
+    
+    const container = document.getElementById('childFormsContainer');
+    const addBtn = document.getElementById('addChildBtn');
+    const template = document.getElementById('childFormTemplate');
+    const totalFormsInput = document.querySelector('input[name="form-TOTAL_FORMS"]');
+    const maxForms = parseInt(document.querySelector('input[name="form-MAX_NUM_FORMS"]').value) || 10;
+    
+    // Get options from first form for cloning
+    let subjectOptions = '';
+    let teacherOptions = '';
+    let price1Options = '';
+    let price2Options = '';
+    let discountCheckboxesHtml = '';
+    
+    const firstForm = container.querySelector('.child-form');
+    if (firstForm) {
+        const subject1Select = firstForm.querySelector('[name$="-subject1_ref"]');
+        const teacher1Select = firstForm.querySelector('[name$="-teacher1_ref"]');
+        const price1Select = firstForm.querySelector('[name$="-price1_ref"]');
+        const price2Select = firstForm.querySelector('[name$="-price2_ref"]');
+        const discountsDiv = firstForm.querySelector('.discount-checkboxes');
+        
+        if (subject1Select) subjectOptions = subject1Select.innerHTML;
+        if (teacher1Select) teacherOptions = teacher1Select.innerHTML;
+        if (price1Select) price1Options = price1Select.innerHTML;
+        if (price2Select) price2Options = price2Select.innerHTML;
+        if (discountsDiv) discountCheckboxesHtml = discountsDiv.innerHTML;
+    }
+    
+    // Add child form
+    addBtn.addEventListener('click', function() {
+        const currentCount = parseInt(totalFormsInput.value);
+        if (currentCount >= maxForms) {
+            alert('Maximale Anzahl von Kindern erreicht.');
+            return;
+        }
+        
+        const newIndex = currentCount;
+        const newNumber = currentCount + 1;
+        
+        // Clone template
+        let newFormHtml = template.innerHTML
+            .replace(/__prefix__/g, newIndex)
+            .replace(/__number__/g, newNumber);
+        
+        // Create new form element
+        const newFormDiv = document.createElement('div');
+        newFormDiv.innerHTML = newFormHtml;
+        const newForm = newFormDiv.firstElementChild;
+        
+        // Populate select options
+        const subject1 = newForm.querySelector('[name$="-subject1_ref"]');
+        const subject2 = newForm.querySelector('[name$="-subject2_ref"]');
+        const teacher1 = newForm.querySelector('[name$="-teacher1_ref"]');
+        const teacher2 = newForm.querySelector('[name$="-teacher2_ref"]');
+        const price1 = newForm.querySelector('[name$="-price1_ref"]');
+        const price2 = newForm.querySelector('[name$="-price2_ref"]');
+        const discountsDiv = newForm.querySelector('.discount-checkboxes');
+        
+        if (subject1 && subjectOptions) subject1.innerHTML = subjectOptions;
+        if (subject2 && subjectOptions) subject2.innerHTML = subjectOptions;
+        if (teacher1 && teacherOptions) teacher1.innerHTML = teacherOptions;
+        if (teacher2 && teacherOptions) teacher2.innerHTML = teacherOptions;
+        if (price1 && price1Options) price1.innerHTML = price1Options;
+        if (price2 && price2Options) price2.innerHTML = price2Options;
+        
+        // Clone discount checkboxes with updated names
+        if (discountsDiv && discountCheckboxesHtml) {
+            let updatedDiscounts = discountCheckboxesHtml
+                .replace(/form-\d+-record_discounts/g, 'form-' + newIndex + '-record_discounts')
+                .replace(/id_form-\d+-record_discounts/g, 'id_form-' + newIndex + '-record_discounts');
+            discountsDiv.innerHTML = updatedDiscounts;
+        }
+        
+        container.appendChild(newForm);
+        
+        // Update form count
+        totalFormsInput.value = newNumber;
+        
+        // Add remove handler
+        attachRemoveHandler(newForm.querySelector('.remove-child-btn'));
+        
+        // Update all child numbers
+        updateChildNumbers();
+    });
+    
+    // Remove child form
+    function attachRemoveHandler(btn) {
+        if (!btn) return;
+        
+        btn.addEventListener('click', function() {
+            const form = this.closest('.child-form');
+            if (form) {
+                form.remove();
+                
+                // Update form count
+                const forms = container.querySelectorAll('.child-form');
+                totalFormsInput.value = forms.length;
+                
+                // Renumber forms
+                forms.forEach((f, idx) => {
+                    f.dataset.formIndex = idx;
+                    
+                    // Update all input/select names and ids
+                    f.querySelectorAll('input, select, textarea').forEach(input => {
+                        if (input.name) {
+                            input.name = input.name.replace(/form-\d+-/, 'form-' + idx + '-');
+                        }
+                        if (input.id) {
+                            input.id = input.id.replace(/form-\d+-/, 'form-' + idx + '-');
+                        }
+                    });
+                    
+                    // Update labels
+                    f.querySelectorAll('label').forEach(label => {
+                        if (label.htmlFor) {
+                            label.htmlFor = label.htmlFor.replace(/form-\d+-/, 'form-' + idx + '-');
+                        }
+                    });
+                });
+                
+                updateChildNumbers();
+            }
+        });
+    }
+    
+    // Attach remove handlers to existing forms
+    container.querySelectorAll('.remove-child-btn').forEach(attachRemoveHandler);
+    
+    // Update child numbers in headers
+    function updateChildNumbers() {
+        const forms = container.querySelectorAll('.child-form');
+        forms.forEach((form, idx) => {
+            const numberSpan = form.querySelector('.child-number');
+            if (numberSpan) {
+                numberSpan.textContent = idx + 1;
+            } else {
+                const header = form.querySelector('.child-header h5');
+                if (header) {
+                    header.innerHTML = '<i class="bi bi-person"></i> Kind ' + (idx + 1);
+                }
+            }
+        });
+    }
+    
+    // Year change handler - regenerate FamilyID
+    const yearSelect = document.getElementById('id_year');
+    if (yearSelect) {
+        yearSelect.addEventListener('change', function() {
+            // Optionally reload to get fresh FamilyID
+            // For now, FamilyID is regenerated on submit anyway
+        });
+    }
+})();
+</script>
+{% endblock %}

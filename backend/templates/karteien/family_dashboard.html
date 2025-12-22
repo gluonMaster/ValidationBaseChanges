@@ -184,7 +184,7 @@ Admin-only page showing all records for a family in a year, with discount manage
                         <table class="table table-sm table-hover mb-0">
                             <thead class="table-light">
                                 <tr>
-                                    <th>ID</th>
+                                    <th>PKID</th>
                                     <th>Kind</th>
                                     <th>Fach 1</th>
                                     <th>Fach 2</th>
@@ -196,7 +196,10 @@ Admin-only page showing all records for a family in a year, with discount manage
                             <tbody>
                                 {% for record in records %}
                                 <tr>
-                                    <td>{{ record.id }}</td>
+                                    <td>
+                                        <strong>{{ record.pkid }}</strong>
+                                        <br><small class="text-muted">ID: {{ record.id }}</small>
+                                    </td>
                                     <td>{{ record.child_name|default:"-" }}</td>
                                     <td>
                                         <small>{{ record.subject1|default:"-"|truncatechars:20 }}</small>

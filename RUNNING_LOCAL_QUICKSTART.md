@@ -230,6 +230,25 @@ Django PK (`pkid`) — суррогатный ключ `BigAutoField`, испо�
        --report-dir ..\import_reports
    ```
 
+4. (Опционально) **Patch-доимпорт отдельных полей** (без полного реимпорта).
+
+   Используйте, если нужно дописать в уже импортированные записи поля, которые раньше не импортировались
+   (учителя Value11/Value16, маркеры контракта Value14/Value20, `sepa_marker` Value47).
+
+   > **Важно (миграции):** перед `--patch-fields` убедитесь, что миграции применены к этой базе данных,  
+   > иначе будет ошибка вида `UndefinedColumn ... teacher1_legacy_name does not exist`.  
+   > - если Django запущен в Docker: `docker compose exec web python manage.py migrate`  
+   > - если импорт запускаете локальным Python: `python manage.py migrate` (при том же `DATABASE_URL`)
+
+   ```powershell
+   # Patch-доимпорт 2025 (пример)
+   python manage.py import_access_year `
+       --year 2025 `
+       --access-file KindElternDaten_25_front.accdb `
+       --patch-fields `
+       --report-dir ..\import_reports
+   ```
+
    > **Важно:** Убедитесь, что контейнер `db` запущен (`docker compose up -d db`),  
    > чтобы PostgreSQL был доступен на `localhost:5432`.
 

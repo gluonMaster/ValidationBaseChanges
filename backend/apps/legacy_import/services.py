@@ -50,13 +50,16 @@ ACCESS_TO_DJANGO_FIELD_MAP: dict[str, str] = {
     "Value8": "mobile",          # H - Mobile
     "Value9": "email",           # I - Email
     "Value10": "subject1",       # J - Subject1
-    # Value11, Value12 - skipped (intermediate)
+    "Value11": "teacher1_legacy_name",  # K - Teacher 1st semester (legacy text)
+    # Value12 - skipped (intermediate)
     "Value13": "price1",         # M - Price1
-    # Value14 - skipped
+    "Value14": "contract_type_raw",  # N - Contract type marker (raw text, may contain 'O/V')
     "Value15": "subject2",       # O - Subject2
-    # Value16, Value17 - skipped
+    "Value16": "teacher2_legacy_name",  # P - Teacher 2nd semester (legacy text)
+    # Value17 - skipped
     "Value18": "price2",         # R - Price2
-    # Value19, Value20 - skipped
+    # Value19 - skipped
+    "Value20": "contract_status_raw",  # T - Contract status marker (raw text, may contain 'KN')
     # Months: Value21-Value32 -> month_1..month_12
     "Value21": "month_1",
     "Value22": "month_2",
@@ -83,6 +86,17 @@ ACCESS_TO_DJANGO_FIELD_MAP: dict[str, str] = {
     "Value52": "history_raw",       # AZ - History
 }
 
+# Fields that are only set during patch import (--patch-fields mode)
+PATCH_ONLY_FIELDS: tuple[str, ...] = (
+    "teacher1_legacy_name",
+    "teacher2_legacy_name",
+    "contract_type_raw",
+    "is_monthly_contract",
+    "contract_status_raw",
+    "is_contract_terminated",
+    "sepa_marker",
+)
+
 # Green color value for marker rows (Excel interior color for family separator)
 # This is the typical RGB value for green marker rows
 MARKER_GREEN_COLOR = 5287936  # RGB(0, 176, 80) as Long
@@ -94,6 +108,64 @@ MARKER_GREEN_COLORS = {
     32768,     # Dark green
     65280,     # Bright green
 }
+
+
+# =============================================================================
+# Contract Type / Status Detection (Pure Functions)
+# =============================================================================
+
+def detect_is_monthly_contract(contract_type_raw: str) -> bool:
+    """
+    Detect if the contract is a monthly contract (Monatsvertrag).
+    
+    The raw string may contain 'O/V' anywhere in the text, possibly adjacent
+    to numbers or other characters. Case-insensitive search.
+    
+    Examples:
+        - "O/V" -> True
+        - "12O/V" -> True
+        - "o/v45" -> True
+        - "Something O/V else" -> True
+        - "OV" (no slash) -> False
+        - "" -> False
+    
+    Args:
+        contract_type_raw: Raw text from Access Value14.
+        
+    Returns:
+        True if 'O/V' substring is found (case-insensitive).
+    """
+    if not contract_type_raw:
+        return False
+    return "o/v" in contract_type_raw.lower()
+
+
+def detect_is_contract_terminated(contract_status_raw: str) -> bool:
+    """
+    Detect if the contract is terminated (gekündigt).
+    
+    Looks for 'KN' as a separate token (word boundary). The token must be
+    separated by whitespace or be at the start/end of the string.
+    
+    Examples:
+        - "KN" -> True
+        - "KN something" -> True
+        - "text KN" -> True
+        - "a KN b" -> True
+        - "UNKNOWN" -> False (KN is part of a larger word)
+        - "AKN" -> False
+        - "" -> False
+    
+    Args:
+        contract_status_raw: Raw text from Access Value20.
+        
+    Returns:
+        True if 'KN' token is found (word boundary, case-insensitive).
+    """
+    if not contract_status_raw:
+        return False
+    # Regex: word boundary + KN + word boundary, case-insensitive
+    return bool(re.search(r"(?:^|\s)KN(?:\s|$)", contract_status_raw, re.IGNORECASE))
 
 
 # =============================================================================
@@ -459,6 +531,12 @@ def row_to_model_data(row: "RowDict", year: int) -> dict[str, Any]:
     for access_field, django_field in ACCESS_TO_DJANGO_FIELD_MAP.items():
         value = extract_field_value(row, access_field, django_field)
         data[django_field] = value
+    
+    # Compute derived boolean flags from raw contract fields
+    contract_type_raw = data.get("contract_type_raw", "")
+    contract_status_raw = data.get("contract_status_raw", "")
+    data["is_monthly_contract"] = detect_is_monthly_contract(contract_type_raw)
+    data["is_contract_terminated"] = detect_is_contract_terminated(contract_status_raw)
     
     return data
 
@@ -1057,3 +1135,164 @@ def sync_history_for_records(
             total_events += len(created_events)
     
     return total_events
+
+
+# =============================================================================
+# Patch Import (Update only specific fields without full re-import)
+# =============================================================================
+
+@dataclass
+class PatchStats:
+    """
+    Statistics collected during a patch import operation.
+    """
+    total_rows: int = 0
+    records_found: int = 0
+    records_updated: int = 0
+    records_not_found: int = 0
+    marker_skipped: int = 0
+    parse_errors: int = 0
+    error_details: list[dict[str, Any]] = field(default_factory=list)
+    not_found_ids: list[int] = field(default_factory=list)
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "total_rows": self.total_rows,
+            "records_found": self.records_found,
+            "records_updated": self.records_updated,
+            "records_not_found": self.records_not_found,
+            "marker_skipped": self.marker_skipped,
+            "parse_errors": self.parse_errors,
+            "not_found_ids_sample": self.not_found_ids[:20],  # First 20 for brevity
+            "error_count": len(self.error_details),
+        }
+
+
+def patch_tbl_kartei(
+    rows: list["RowDict"],
+    year: int,
+    dry_run: bool = False,
+) -> PatchStats:
+    """
+    Patch existing KarteiRecord entries with additional fields from Access.
+    
+    This function updates ONLY the patch-specific fields (teacher names,
+    contract type/status, sepa_marker) without modifying other fields.
+    It is used for adding missing data to already-imported records.
+    
+    Lookup is by domain key (year, id), NOT by pkid.
+    
+    Updated fields:
+        - teacher1_legacy_name (from Value11)
+        - teacher2_legacy_name (from Value16)
+        - contract_type_raw (from Value14)
+        - is_monthly_contract (computed from contract_type_raw)
+        - contract_status_raw (from Value20)
+        - is_contract_terminated (computed from contract_status_raw)
+        - sepa_marker (from Value47)
+    
+    Args:
+        rows: List of RowDict from Access tblKartei.
+        year: Year for the records.
+        dry_run: If True, don't write to database, just collect stats.
+        
+    Returns:
+        PatchStats with counts of operations performed.
+    """
+    from apps.karteien.models import KarteiRecord
+    
+    stats = PatchStats()
+    
+    for row in rows:
+        stats.total_rows += 1
+        
+        # Skip marker rows
+        if is_marker_row(row):
+            stats.marker_skipped += 1
+            logger.debug("Patch: Skipping marker row")
+            continue
+        
+        # Extract record ID
+        record_id = extract_record_id(row)
+        if record_id is None:
+            stats.parse_errors += 1
+            stats.error_details.append({
+                "type": "missing_id",
+                "row_sample": {k: v for k, v in list(row.items())[:5]},
+            })
+            logger.warning("Patch: Row without ID, skipping")
+            continue
+        
+        # Find existing record by (year, id)
+        try:
+            existing = KarteiRecord.objects.filter(year=year, id=record_id).first()
+        except Exception as e:
+            stats.parse_errors += 1
+            stats.error_details.append({
+                "type": "db_lookup_error",
+                "year": year,
+                "id": record_id,
+                "error": str(e),
+            })
+            logger.exception("Patch: DB lookup error for year=%d, id=%d", year, record_id)
+            continue
+        
+        if existing is None:
+            stats.records_not_found += 1
+            stats.not_found_ids.append(record_id)
+            logger.debug("Patch: Record not found year=%d, id=%d", year, record_id)
+            continue
+        
+        stats.records_found += 1
+        
+        # Extract only patch-specific fields
+        teacher1 = _clean_string(row.get("Value11"))
+        teacher2 = _clean_string(row.get("Value16"))
+        contract_type_raw = _clean_string(row.get("Value14"))
+        contract_status_raw = _clean_string(row.get("Value20"))
+        sepa_marker = _clean_string(row.get("Value47"))
+        
+        # Compute derived flags
+        is_monthly = detect_is_monthly_contract(contract_type_raw)
+        is_terminated = detect_is_contract_terminated(contract_status_raw)
+        
+        if dry_run:
+            stats.records_updated += 1
+            continue
+        
+        # Update only patch fields
+        try:
+            with transaction.atomic():
+                existing.teacher1_legacy_name = teacher1
+                existing.teacher2_legacy_name = teacher2
+                existing.contract_type_raw = contract_type_raw
+                existing.is_monthly_contract = is_monthly
+                existing.contract_status_raw = contract_status_raw
+                existing.is_contract_terminated = is_terminated
+                existing.sepa_marker = sepa_marker
+                
+                existing.save(update_fields=[
+                    "teacher1_legacy_name",
+                    "teacher2_legacy_name",
+                    "contract_type_raw",
+                    "is_monthly_contract",
+                    "contract_status_raw",
+                    "is_contract_terminated",
+                    "sepa_marker",
+                ])
+                
+                stats.records_updated += 1
+                logger.debug("Patch: Updated record year=%d, id=%d", year, record_id)
+                
+        except Exception as e:
+            stats.parse_errors += 1
+            stats.error_details.append({
+                "type": "patch_save_error",
+                "year": year,
+                "id": record_id,
+                "error": str(e),
+            })
+            logger.exception("Patch: Error saving record year=%d, id=%d", year, record_id)
+    
+    return stats

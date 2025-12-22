@@ -8,6 +8,7 @@ Admin/Operator UI for managing Kartei records:
 - Emergency months override (admin-only)
 - Family Dashboard (admin-only)
 - FamilyDiscount CRUD (admin-only)
+- New Family Wizard (admin-only)
 - API: Month breakdown
 - API: Live search
 - API: Autocomplete parents/children
@@ -19,6 +20,7 @@ from django.urls import path
 from . import views
 from . import families
 from . import api
+from . import wizard
 
 app_name = 'karteien'
 
@@ -56,6 +58,9 @@ urlpatterns = [
     
     # Family Dashboard (admin-only)
     path('family/', families.FamilyDashboardView.as_view(), name='family_dashboard'),
+    
+    # New Family Wizard (admin-only)
+    path('family/new/', wizard.NewFamilyWizardView.as_view(), name='new_family_wizard'),
     
     # FamilyDiscount CRUD (admin-only)
     path('family/discounts/create/', families.FamilyDiscountCreateView.as_view(), name='family_discount_create'),

@@ -77,6 +77,25 @@ This is a read-only interface. Users cannot modify any data.
                                 </button>
                             </div>
                         </div>
+                        <!-- Contract type & status filters row -->
+                        <div class="row g-3 mt-2 border-top pt-3">
+                            <div class="col-md-3">
+                                <label for="contract_type" class="form-label">Vertragstyp</label>
+                                <select class="form-select" id="contract_type" name="contract_type">
+                                    <option value="">Alle</option>
+                                    <option value="monthly" {% if search_params.contract_type == "monthly" %}selected{% endif %}>Monatlich</option>
+                                    <option value="yearly" {% if search_params.contract_type == "yearly" %}selected{% endif %}>Jährlich</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="contract_status" class="form-label">Vertragsstatus</label>
+                                <select class="form-select" id="contract_status" name="contract_status">
+                                    <option value="">Alle</option>
+                                    <option value="active" {% if search_params.contract_status == "active" %}selected{% endif %}>Aktiv</option>
+                                    <option value="terminated" {% if search_params.contract_status == "terminated" %}selected{% endif %}>Gekündigt</option>
+                                </select>
+                            </div>
+                        </div>
                     </form>
                 </div>
             </div>
@@ -108,6 +127,7 @@ This is a read-only interface. Users cannot modify any data.
                                     <th>Eltern</th>
                                     <th>Kind</th>
                                     <th>Status</th>
+                                    <th>Vertrag</th>
                                     <th>Aktionen</th>
                                 </tr>
                             </thead>
@@ -125,6 +145,19 @@ This is a read-only interface. Users cannot modify any data.
                                         <span class="badge bg-danger">Abgelehnt</span>
                                         {% else %}
                                         <span class="badge bg-success">Normal</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% comment %}Contract type and status badges{% endcomment %}
+                                        {% if record.is_monthly_contract %}
+                                        <span class="badge bg-info text-dark" title="Monatlicher Vertrag">M</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary" title="Jährlicher Vertrag">J</span>
+                                        {% endif %}
+                                        {% if record.is_contract_terminated %}
+                                        <span class="badge bg-danger" title="Gekündigt">KN</span>
+                                        {% else %}
+                                        <span class="badge bg-success" title="Aktiv">OK</span>
                                         {% endif %}
                                     </td>
                                     <td>

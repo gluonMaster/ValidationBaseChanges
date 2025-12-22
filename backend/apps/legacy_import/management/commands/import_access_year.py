@@ -8,16 +8,27 @@ Usage:
     python manage.py import_access_year --year 2025 --access-file /path/to/file.accdb --dry-run
     python manage.py import_access_year --year 2024 --access-file data.accdb --familyid-policy=auto-merge
     python manage.py import_access_year --year 2025 --access-file data.accdb --sync-history
+    python manage.py import_access_year --year 2025 --access-file data.accdb --patch-fields --dry-run
 
 Options:
     --year            (required) Year for the imported records
     --access-file     (required) Access database file name or path
     --dry-run         Analyze only, don't write to database
+    --patch-fields    Patch mode: update only teacher names, contract type/status,
+                      and sepa_marker for existing records (no full re-import)
     --familyid-policy Policy for handling FamilyID issues: 'report' (default) or 'auto-merge'
     --sync-history    After import, sync history_raw to HistoryEvent models
     --skip-pending    Skip importing pre_tblKartei (pending changes)
     --skip-declined   Skip importing decl_tblKartei (declined changes)
     --report-dir      Directory for CSV/JSON reports (default: current dir)
+
+Patch mode (--patch-fields):
+    Updates ONLY these fields for existing records (by year, id):
+    - teacher1_legacy_name (from Value11)
+    - teacher2_legacy_name (from Value16)
+    - contract_type_raw (from Value14) + computed is_monthly_contract
+    - contract_status_raw (from Value20) + computed is_contract_terminated
+    - sepa_marker (from Value47)
 
 See PROMPT_07_LEGACY_IMPORT.md for detailed documentation.
 """
@@ -27,11 +38,13 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from django.core.management.base import BaseCommand, CommandError
+from django.db import connection
 
 if TYPE_CHECKING:
     from apps.legacy_import.services import FamilyIdIssue, ImportStats
@@ -41,6 +54,49 @@ logger = logging.getLogger(__name__)
 
 class Command(BaseCommand):
     help = "Import data from Access database (.accdb) into Django for a specific year"
+
+    def _ensure_utf8_stdio(self) -> None:
+        """
+        Best-effort: ensure we can print Unicode (German UI texts) without crashing
+        on Windows consoles with legacy code pages.
+        """
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                if hasattr(stream, "reconfigure"):
+                    stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+
+    def _ensure_patch_schema_ready(self, required_columns: set[str]) -> None:
+        from apps.karteien.models import KarteiRecord
+
+        table_name = KarteiRecord._meta.db_table
+        with connection.cursor() as cursor:
+            try:
+                description = connection.introspection.get_table_description(cursor, table_name)
+            except Exception as exc:
+                raise CommandError(
+                    "Patch-Import kann nicht starten: Tabellenstruktur kann nicht gelesen werden.\n"
+                    f"Tabelle: {table_name}\n"
+                    f"Fehler: {exc}"
+                ) from exc
+
+        existing_columns = {getattr(col, "name", col[0]) for col in description}
+        missing = sorted(required_columns - existing_columns)
+        if not missing:
+            return
+
+        missing_list = ", ".join(missing)
+        raise CommandError(
+            "Patch-Import kann nicht starten, weil die Datenbank-Schema veraltet ist.\n"
+            f"Fehlende Spalten in Tabelle '{table_name}': {missing_list}\n\n"
+            "Bitte Migrationen gegen dieselbe Datenbank ausführen, z.B.:\n"
+            "  python manage.py migrate\n"
+            "oder (nur App karteien):\n"
+            "  python manage.py migrate karteien\n\n"
+            "Wenn du Docker verwendest (DB im Container):\n"
+            "  docker compose exec web python manage.py migrate"
+        )
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -60,6 +116,13 @@ class Command(BaseCommand):
             action="store_true",
             default=False,
             help="Analyze only, don't write to database",
+        )
+        parser.add_argument(
+            "--patch-fields",
+            action="store_true",
+            default=False,
+            help="Patch mode: update only teacher names, contract type/status, and sepa_marker "
+                 "for existing records (does not import new records or modify other fields)",
         )
         parser.add_argument(
             "--familyid-policy",
@@ -94,14 +157,21 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        self._ensure_utf8_stdio()
+
         year = options["year"]
         access_file = options["access_file"]
         dry_run = options["dry_run"]
+        patch_fields = options["patch_fields"]
         familyid_policy = options["familyid_policy"]
         sync_history = options["sync_history"]
         skip_pending = options["skip_pending"]
         skip_declined = options["skip_declined"]
         report_dir = Path(options["report_dir"])
+
+        # Patch mode is a separate workflow
+        if patch_fields:
+            return self._handle_patch_mode(year, access_file, dry_run, report_dir)
 
         # Ensure report directory exists
         report_dir.mkdir(parents=True, exist_ok=True)
@@ -413,3 +483,130 @@ class Command(BaseCommand):
             json.dump(report, f, indent=2, ensure_ascii=False)
 
         self.stdout.write(f"  Wrote stats report: {filename}")
+
+    # =========================================================================
+    # Patch Mode: Update only specific fields without full re-import
+    # =========================================================================
+
+    def _handle_patch_mode(
+        self,
+        year: int,
+        access_file: str,
+        dry_run: bool,
+        report_dir: Path,
+    ):
+        """
+        Handle --patch-fields mode: update only teacher names, contract
+        type/status, and sepa_marker for existing records.
+        
+        This mode:
+        - Reads ONLY tblKartei (skips pre_tblKartei and decl_tblKartei)
+        - Finds existing records by (year, id)
+        - Updates only patch-specific fields without touching other data
+        - Supports --dry-run for preview
+        """
+        report_dir.mkdir(parents=True, exist_ok=True)
+
+        self.stdout.write(self.style.NOTICE(f"\n{'='*60}"))
+        self.stdout.write(self.style.NOTICE("Access → Django PATCH Import"))
+        self.stdout.write(self.style.NOTICE(f"{'='*60}"))
+        self.stdout.write(f"Year: {year}")
+        self.stdout.write(f"Access file: {access_file}")
+        self.stdout.write(f"Dry run: {dry_run}")
+        self.stdout.write(f"Report directory: {report_dir}")
+        self.stdout.write("")
+        self.stdout.write(self.style.WARNING(
+            "PATCH MODE: Nur Lehrer, Vertragstyp, Status und SEPA-Marker werden aktualisiert.\n"
+            "Andere Felder bleiben unverändert.\n"
+        ))
+
+        if dry_run:
+            self.stdout.write(self.style.WARNING(
+                "DRY RUN MODE - Keine Änderungen werden in die Datenbank geschrieben\n"
+            ))
+
+        # Import modules
+        try:
+            from apps.legacy_import.access_client import (
+                resolve_access_file,
+                open_access_connection,
+                load_tbl_kartei,
+            )
+            from apps.legacy_import.services import (
+                PatchStats,
+                patch_tbl_kartei,
+                PATCH_ONLY_FIELDS,
+            )
+        except ImportError as e:
+            raise CommandError(f"Failed to import required modules: {e}")
+
+        self._ensure_patch_schema_ready(set(PATCH_ONLY_FIELDS))
+
+        # Resolve Access file path
+        try:
+            file_path = resolve_access_file(access_file)
+        except FileNotFoundError as e:
+            raise CommandError(str(e))
+        except ValueError as e:
+            raise CommandError(str(e))
+
+        self.stdout.write(f"Resolved file path: {file_path}")
+
+        # Open connection and load tblKartei only
+        try:
+            with open_access_connection(file_path) as conn:
+                self.stdout.write(self.style.NOTICE("\nLade Daten aus Access (nur tblKartei)..."))
+                tbl_kartei_rows = list(load_tbl_kartei(conn, year))
+                self.stdout.write(f"  Geladen: {len(tbl_kartei_rows)} Zeilen aus tblKartei")
+
+        except ImportError as e:
+            raise CommandError(
+                f"pyodbc is not installed. Install it with: pip install pyodbc\n"
+                f"Error: {e}"
+            )
+        except Exception as e:
+            raise CommandError(f"Failed to connect to Access database: {e}")
+
+        # Run patch import
+        self.stdout.write(self.style.NOTICE("\nPatch-Import läuft..."))
+        patch_stats = patch_tbl_kartei(tbl_kartei_rows, year, dry_run=dry_run)
+
+        # Print statistics
+        self.stdout.write(self.style.NOTICE(f"\n{'='*60}"))
+        self.stdout.write(self.style.NOTICE("Patch-Import Zusammenfassung"))
+        self.stdout.write(self.style.NOTICE(f"{'='*60}"))
+        self.stdout.write(f"Zeilen verarbeitet: {patch_stats.total_rows}")
+        self.stdout.write(f"Datensätze gefunden: {patch_stats.records_found}")
+        self.stdout.write(f"Datensätze aktualisiert: {patch_stats.records_updated}")
+        self.stdout.write(f"Datensätze nicht gefunden: {patch_stats.records_not_found}")
+        self.stdout.write(f"Marker-Zeilen übersprungen: {patch_stats.marker_skipped}")
+        
+        if patch_stats.parse_errors:
+            self.stdout.write(
+                self.style.WARNING(f"Fehler: {patch_stats.parse_errors}")
+            )
+
+        if patch_stats.not_found_ids:
+            self.stdout.write(self.style.WARNING(
+                f"  Nicht gefundene IDs (erste 20): {patch_stats.not_found_ids[:20]}"
+            ))
+
+        # Write JSON report
+        filename = report_dir / f"patch_stats_{year}.json"
+        report = {
+            "timestamp": datetime.now().isoformat(),
+            "year": year,
+            "dry_run": dry_run,
+            "mode": "patch-fields",
+            "stats": patch_stats.to_dict(),
+        }
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+        self.stdout.write(f"\n  Report geschrieben: {filename}")
+
+        if dry_run:
+            self.stdout.write(
+                self.style.WARNING("\nDRY RUN abgeschlossen. Keine Änderungen wurden vorgenommen.")
+            )
+        else:
+            self.stdout.write(self.style.SUCCESS("\nPatch-Import erfolgreich abgeschlossen!"))

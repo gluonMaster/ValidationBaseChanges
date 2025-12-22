@@ -49,11 +49,46 @@ from .validators import validate_kartei_record, apply_operator_filters
 # Permission Mixins
 # =============================================================================
 
+class KarteiViewerMixin(LoginRequiredMixin, UserPassesTestMixin):
+    """
+    Mixin for read-only access to Kartei.
+    
+    Allows Admin, Operator, Superadmin, and User to view Kartei records.
+    - Admin/Operator: full edit access
+    - Superadmin/User: read-only access (list/detail), no edit/delete
+    """
+    
+    def test_func(self) -> bool:
+        """Check if user can view Kartei records (Admin/Operator/Superadmin/User)."""
+        user = self.request.user
+        return user.is_authenticated and (
+            user.can_edit_kartei or user.is_superadmin or user.is_user_role
+        )
+    
+    def handle_no_permission(self) -> HttpResponse:
+        """Redirect to login or show error for unauthorized users."""
+        if not self.request.user.is_authenticated:
+            return super().handle_no_permission()
+        
+        user = self.request.user
+        messages.error(
+            self.request,
+            "Sie haben keine Berechtigung, Kartei-Einträge anzuzeigen."
+        )
+        
+        # Redirect based on role to avoid infinite loops
+        if user.is_user_role:
+            return redirect("accounts:user_dashboard")
+        else:
+            return redirect("login")
+
+
 class KarteiEditorMixin(LoginRequiredMixin, UserPassesTestMixin):
     """
     Mixin that restricts access to users who can edit Kartei.
     
     Only Admin and Operator roles can access views using this mixin.
+    Superadmin is explicitly excluded from editing.
     """
     
     def test_func(self) -> bool:
@@ -74,7 +109,7 @@ class KarteiEditorMixin(LoginRequiredMixin, UserPassesTestMixin):
         
         # Redirect based on role to avoid infinite loops
         if user.is_superadmin:
-            return redirect("approvals:superadmin_pending_overview")
+            return redirect("karteien:record_list")
         elif user.is_user_role:
             return redirect("accounts:user_dashboard")
         else:
@@ -85,7 +120,7 @@ class KarteiEditorMixin(LoginRequiredMixin, UserPassesTestMixin):
 # List View
 # =============================================================================
 
-class KarteiRecordListView(KarteiEditorMixin, ListView):
+class KarteiRecordListView(KarteiViewerMixin, ListView):
     """
     List view for KarteiRecord entries.
     
@@ -95,6 +130,8 @@ class KarteiRecordListView(KarteiEditorMixin, ListView):
     - Parent name (partial match)
     - Child name (partial match)
     - Status (PENDING, DECLINED, normal)
+    
+    Access: Admin, Operator (full), Superadmin (read-only)
     """
     
     model = KarteiRecord
@@ -141,6 +178,22 @@ class KarteiRecordListView(KarteiEditorMixin, ListView):
             elif status == "NORMAL":
                 qs = qs.filter(status=RecordStatus.NORMAL)
         
+        # Filter by contract type (monthly/yearly)
+        contract_type = self.request.GET.get("contract_type")
+        if contract_type:
+            if contract_type == "monthly":
+                qs = qs.filter(is_monthly_contract=True)
+            elif contract_type == "yearly":
+                qs = qs.filter(is_monthly_contract=False)
+        
+        # Filter by contract status (active/terminated)
+        contract_status = self.request.GET.get("contract_status")
+        if contract_status:
+            if contract_status == "active":
+                qs = qs.filter(is_contract_terminated=False)
+            elif contract_status == "terminated":
+                qs = qs.filter(is_contract_terminated=True)
+        
         return qs.order_by("family_id", "parent_name", "child_name")
     
     def get_context_data(self, **kwargs) -> dict[str, Any]:
@@ -165,6 +218,8 @@ class KarteiRecordListView(KarteiEditorMixin, ListView):
             "parent": self.request.GET.get("parent", ""),
             "child": self.request.GET.get("child", ""),
             "status": self.request.GET.get("status", ""),
+            "contract_type": self.request.GET.get("contract_type", ""),
+            "contract_status": self.request.GET.get("contract_status", ""),
         }
         
         return context
@@ -174,9 +229,11 @@ class KarteiRecordListView(KarteiEditorMixin, ListView):
 # Detail View
 # =============================================================================
 
-class KarteiRecordDetailView(KarteiEditorMixin, DetailView):
+class KarteiRecordDetailView(KarteiViewerMixin, DetailView):
     """
     Detail view for a single KarteiRecord.
+    
+    Access: Admin, Operator (full), Superadmin (read-only)
     """
     
     model = KarteiRecord
@@ -295,6 +352,13 @@ class KarteiRecordCreateView(KarteiEditorMixin, CreateView):
         
         # TODO: Add to history_raw (requires history module)
         # See Export_HistoryBuilder for format
+        
+        # If Admin clicked "Erstellen & Rabatt hinzufügen", redirect to record discount create
+        if (
+            self.request.POST.get("save_add_record_discount")
+            and self.request.user.is_admin_role
+        ):
+            return redirect(f"/catalog/record-discounts/create/?record_pk={record.pkid}")
         
         return redirect("karteien:record_detail", pk=record.pk)
     

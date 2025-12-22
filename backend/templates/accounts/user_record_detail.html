@@ -100,6 +100,24 @@ This is a read-only interface. No edit buttons are shown.
               <a href="mailto:{{ record.email }}">{{ record.email }}</a>
               {% else %}-{% endif %}
             </dd>
+
+            <dt class="col-sm-4">Vertragstyp</dt>
+            <dd class="col-sm-8">
+              {% if record.is_monthly_contract %}
+              <span class="badge bg-info text-dark">Monatlich</span>
+              {% else %}
+              <span class="badge bg-secondary">Jährlich</span>
+              {% endif %}
+            </dd>
+
+            <dt class="col-sm-4">Vertragsstatus</dt>
+            <dd class="col-sm-8">
+              {% if record.is_contract_terminated %}
+              <span class="badge bg-danger">Gekündigt</span>
+              {% else %}
+              <span class="badge bg-success">Aktiv</span>
+              {% endif %}
+            </dd>
           </dl>
         </div>
       </div>

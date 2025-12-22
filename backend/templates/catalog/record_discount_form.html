@@ -1,9 +1,70 @@
 {% extends "base.html" %}
 {% comment %}
 Record discount create/edit form.
+Includes autocomplete for finding Kartei records by parent/child name.
 {% endcomment %}
 
 {% block title %}Katalog - {{ page_title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* Autocomplete dropdown styles for record picker */
+  .autocomplete-wrapper {
+    position: relative;
+  }
+  .autocomplete-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 250px;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-top: none;
+    border-radius: 0 0 0.375rem 0.375rem;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    z-index: 1050;
+    display: none;
+  }
+  .autocomplete-dropdown.show {
+    display: block;
+  }
+  .autocomplete-item {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .autocomplete-item:last-child {
+    border-bottom: none;
+  }
+  .autocomplete-item:hover,
+  .autocomplete-item.active {
+    background-color: #e9ecef;
+  }
+  .autocomplete-item.fallback {
+    background-color: #fff3cd;
+  }
+  .autocomplete-item.fallback:hover,
+  .autocomplete-item.fallback.active {
+    background-color: #ffe69c;
+  }
+  .autocomplete-empty {
+    padding: 0.5rem 0.75rem;
+    color: #6c757d;
+    font-style: italic;
+  }
+  .autocomplete-loading {
+    padding: 0.5rem 0.75rem;
+    color: #6c757d;
+  }
+  /* Selected record preview styling */
+  .record-preview {
+    background-color: #d1ecf1;
+    border-color: #bee5eb;
+  }
+</style>
+{% endblock %}
 
 {% block content %}
 <div class="container-fluid py-4">
@@ -62,6 +123,44 @@ Record discount create/edit form.
                         </div>
                         {% endif %}
                         
+                        <!-- Kartei suchen (autocomplete picker) -->
+                        <div class="card bg-light mb-3">
+                            <div class="card-header py-2">
+                                <i class="bi bi-search"></i>
+                                Kartei suchen
+                            </div>
+                            <div class="card-body py-2">
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-md-3">
+                                        <label for="ac-search-year" class="form-label small mb-1">Jahr</label>
+                                        <input type="number" id="ac-search-year" class="form-control form-control-sm"
+                                               value="{% if target_record %}{{ target_record.year }}{% else %}{% now 'Y' %}{% endif %}"
+                                               min="2000" max="2099">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="ac-search-parent" class="form-label small mb-1">Eltern suchen</label>
+                                        <div class="autocomplete-wrapper">
+                                            <input type="text" id="ac-search-parent" class="form-control form-control-sm"
+                                                   placeholder="Nachname eingeben…" autocomplete="off">
+                                            <div class="autocomplete-dropdown" id="ac-dropdown-parent"></div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="ac-search-child" class="form-label small mb-1">Kind suchen</label>
+                                        <div class="autocomplete-wrapper">
+                                            <input type="text" id="ac-search-child" class="form-control form-control-sm"
+                                                   placeholder="Vorname/Nachname eingeben…" autocomplete="off">
+                                            <div class="autocomplete-dropdown" id="ac-dropdown-child"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="ac-selected-preview" class="alert alert-success py-2 mt-2 mb-0 d-none">
+                                    <i class="bi bi-check-circle"></i>
+                                    <span id="ac-selected-text"></span>
+                                </div>
+                            </div>
+                        </div>
+                        
                         <div class="mb-3">
                             <label for="{{ form.record_pkid.id_for_label }}" class="form-label">
                                 Kartei-PKID <span class="text-danger">*</span>
@@ -73,7 +172,8 @@ Record discount create/edit form.
                             </div>
                             {% endif %}
                             <div class="form-text">
-                                Geben Sie die PKID des Karteieintrags ein (siehe Kartei-Liste)
+                                <strong>PKID</strong> = Django-Primärschlüssel (erste Spalte „PKID" in der Kartei-Liste). <br>
+                                <em>Nicht</em> die Access/Excel-ID verwenden!
                             </div>
                         </div>
                         
@@ -211,4 +311,179 @@ Record discount create/edit form.
         </div>
     </div>
 </div>
+
+<!-- JavaScript for Kartei record autocomplete picker -->
+<script>
+(function() {
+  // ==========================================================================
+  // Autocomplete functionality for parent/child names (record picker)
+  // ==========================================================================
+  
+  const DEBOUNCE_DELAY = 300; // ms
+  const MIN_QUERY_LENGTH = 2;
+  
+  // API endpoints
+  const autocompleteParentsUrl = '/api/karteien/autocomplete/parents/';
+  const autocompleteChildrenUrl = '/api/karteien/autocomplete/children/';
+  
+  // Elements
+  const yearInput = document.getElementById('ac-search-year');
+  const parentInput = document.getElementById('ac-search-parent');
+  const parentDropdown = document.getElementById('ac-dropdown-parent');
+  const childInput = document.getElementById('ac-search-child');
+  const childDropdown = document.getElementById('ac-dropdown-child');
+  const previewContainer = document.getElementById('ac-selected-preview');
+  const previewText = document.getElementById('ac-selected-text');
+  const recordPkidInput = document.getElementById('id_record_pkid');
+  
+  // Debounce helper
+  function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
+  
+  // Close all dropdowns
+  function closeAllDropdowns() {
+    parentDropdown.classList.remove('show');
+    childDropdown.classList.remove('show');
+  }
+  
+  // Close dropdowns when clicking outside
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.autocomplete-wrapper')) {
+      closeAllDropdowns();
+    }
+  });
+  
+  // Render dropdown content
+  function renderDropdown(dropdown, data, onSelect) {
+    dropdown.innerHTML = '';
+    
+    if (data.results.length === 0) {
+      dropdown.innerHTML = '<div class="autocomplete-empty">Keine Ergebnisse gefunden</div>';
+      dropdown.classList.add('show');
+      return;
+    }
+    
+    data.results.forEach(function(item, index) {
+      const div = document.createElement('div');
+      div.className = 'autocomplete-item' + (data.is_fallback ? ' fallback' : '');
+      div.textContent = item.label;
+      div.dataset.pkid = item.record_pkid;
+      div.dataset.index = index;
+      
+      div.addEventListener('click', function() {
+        onSelect(item, data);
+        dropdown.classList.remove('show');
+      });
+      
+      dropdown.appendChild(div);
+    });
+    
+    dropdown.classList.add('show');
+  }
+  
+  // Show loading in dropdown
+  function showLoading(dropdown) {
+    dropdown.innerHTML = '<div class="autocomplete-loading"><i class="bi bi-hourglass-split"></i> Suche...</div>';
+    dropdown.classList.add('show');
+  }
+  
+  // Fetch autocomplete suggestions
+  async function fetchSuggestions(url, query, dropdown, onSelect) {
+    if (query.length < MIN_QUERY_LENGTH) {
+      dropdown.classList.remove('show');
+      return;
+    }
+    
+    showLoading(dropdown);
+    
+    const year = yearInput.value || new Date().getFullYear();
+    
+    try {
+      const response = await fetch(url + '?year=' + encodeURIComponent(year) + '&q=' + encodeURIComponent(query));
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
+      }
+      const data = await response.json();
+      renderDropdown(dropdown, data, onSelect);
+    } catch (error) {
+      console.error('Autocomplete fetch error:', error);
+      dropdown.innerHTML = '<div class="autocomplete-empty">Fehler beim Laden</div>';
+      dropdown.classList.add('show');
+    }
+  }
+  
+  // Handle record selection
+  function selectRecord(item, data) {
+    // Fill the record_pkid field
+    if (recordPkidInput) {
+      recordPkidInput.value = item.record_pkid;
+    }
+    
+    // Build preview text: #<pkid> – <family_id> – <child_name> (<year>)
+    const yearInfo = data.results_year || yearInput.value;
+    const previewLine = '#' + item.record_pkid + ' – ' + item.family_id + ' – ' + item.child_name + ' (' + yearInfo + ')';
+    
+    // Show preview
+    previewText.textContent = previewLine;
+    previewContainer.classList.remove('d-none');
+    
+    // Clear search inputs
+    parentInput.value = '';
+    childInput.value = '';
+  }
+  
+  // Parent autocomplete handlers
+  const debouncedParentSearch = debounce(function(query) {
+    fetchSuggestions(autocompleteParentsUrl, query, parentDropdown, selectRecord);
+  }, DEBOUNCE_DELAY);
+  
+  if (parentInput) {
+    parentInput.addEventListener('input', function() {
+      debouncedParentSearch(this.value.trim());
+    });
+    
+    parentInput.addEventListener('focus', function() {
+      if (this.value.trim().length >= MIN_QUERY_LENGTH) {
+        debouncedParentSearch(this.value.trim());
+      }
+    });
+  }
+  
+  // Child autocomplete handlers
+  const debouncedChildSearch = debounce(function(query) {
+    fetchSuggestions(autocompleteChildrenUrl, query, childDropdown, selectRecord);
+  }, DEBOUNCE_DELAY);
+  
+  if (childInput) {
+    childInput.addEventListener('input', function() {
+      debouncedChildSearch(this.value.trim());
+    });
+    
+    childInput.addEventListener('focus', function() {
+      if (this.value.trim().length >= MIN_QUERY_LENGTH) {
+        debouncedChildSearch(this.value.trim());
+      }
+    });
+  }
+  
+  // Hide preview if PKID is manually cleared
+  if (recordPkidInput) {
+    recordPkidInput.addEventListener('input', function() {
+      if (!this.value) {
+        previewContainer.classList.add('d-none');
+      }
+    });
+  }
+  
+})();
+</script>
 {% endblock %}

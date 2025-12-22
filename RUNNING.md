@@ -334,11 +334,39 @@ python manage.py import_access_year `
 | `--year`            | Год для импортируемых записей (обязательный)                 |
 | `--access-file`     | Имя файла или путь к `.accdb` (обязательный)                 |
 | `--dry-run`         | Только анализ, без записи в БД                               |
+| `--patch-fields`    | Patch-режим: дополнить существующие записи (учителя/контракт/SEPA) без полного реимпорта |
 | `--familyid-policy` | `report` (по умолчанию) или `auto-merge` — политика FamilyID |
 | `--sync-history`    | Синхронизировать `history_raw` → `HistoryEvent`              |
 | `--skip-pending`    | Пропустить импорт `pre_tblKartei` (pending-изменения)        |
 | `--skip-declined`   | Пропустить импорт `decl_tblKartei` (declined-изменения)      |
 | `--report-dir`      | Каталог для CSV/JSON-отчётов                                 |
+
+### Patch-режим: доимпорт отдельных полей (без полного реимпорта)
+
+Используйте `--patch-fields`, когда нужно **дописать** в уже импортированные записи данные,
+которые раньше не импортировались (например, учителя Value11/Value16, маркеры контракта Value14/Value20, `sepa_marker` Value47).
+
+Важно: patch-режим требует, чтобы миграции уже были применены к этой базе данных, иначе возможна ошибка
+`UndefinedColumn ... teacher1_legacy_name does not exist`.
+
+- если Django работает в Docker: `docker compose exec web python manage.py migrate`
+- если импорт запускаете локальным Python: `python manage.py migrate` (при том же `DATABASE_URL`)
+
+Особенности:
+- Читает **только** `tblKartei`.
+- Ищет существующие записи по доменному ключу `(year, id)`.
+- Обновляет **только** patch-поля и derived flags, не трогая остальные данные.
+- Поддерживает `--dry-run` и пишет отдельный отчёт `patch_stats_YEAR.json`.
+
+Пример:
+
+```powershell
+python manage.py import_access_year `
+    --year 2025 `
+    --access-file KindElternDaten_25_front.accdb `
+    --patch-fields `
+    --report-dir ..\\import_reports
+```
 
 ### Где смотреть результат
 

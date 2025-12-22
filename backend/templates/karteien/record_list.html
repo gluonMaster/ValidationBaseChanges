@@ -19,11 +19,20 @@ Supports live-search via AJAX for instant filtering.
             <p class="text-muted">Jahr: {{ current_year }}</p>
         </div>
         <div class="col-auto">
+            {% if user.can_edit_kartei %}
             <a href="{% url 'karteien:record_create' %}?year={{ current_year }}" 
                class="btn btn-success">
                 <i class="bi bi-plus-lg"></i>
                 Neuer Datensatz
             </a>
+            {% if user.is_admin_role %}
+            <a href="{% url 'karteien:new_family_wizard' %}?year={{ current_year }}" 
+               class="btn btn-outline-success ms-2">
+                <i class="bi bi-people-fill"></i>
+                Neue Familie
+            </a>
+            {% endif %}
+            {% endif %}
         </div>
     </div>
 
@@ -80,6 +89,40 @@ Supports live-search via AJAX for instant filtering.
                     </a>
                 </div>
             </form>
+            <!-- Contract type & status filters row -->
+            <div class="row g-3 mt-2 border-top pt-3">
+                <div class="col-md-3">
+                    <label for="contract_type" class="form-label">Vertragstyp</label>
+                    <select name="contract_type" id="contract_type" class="form-select filter-input">
+                        <option value="">Alle</option>
+                        <option value="monthly" {% if current_filters.contract_type == "monthly" %}selected{% endif %}>Monatlich</option>
+                        <option value="yearly" {% if current_filters.contract_type == "yearly" %}selected{% endif %}>Jährlich</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="contract_status" class="form-label">Vertragsstatus</label>
+                    <select name="contract_status" id="contract_status" class="form-select filter-input">
+                        <option value="">Alle</option>
+                        <option value="active" {% if current_filters.contract_status == "active" %}selected{% endif %}>Aktiv</option>
+                        <option value="terminated" {% if current_filters.contract_status == "terminated" %}selected{% endif %}>Gekündigt</option>
+                    </select>
+                </div>
+                <div class="col-md-6 d-flex align-items-end flex-wrap gap-2">
+                    <span class="me-2 text-muted small align-self-center">Schnellfilter:</span>
+                    <button type="button" class="btn btn-sm btn-outline-info quick-filter-btn" data-filter="contract_type" data-value="monthly">
+                        <i class="bi bi-calendar-month"></i> Monatlich
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-info quick-filter-btn" data-filter="contract_type" data-value="yearly">
+                        <i class="bi bi-calendar-range"></i> Jährlich
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-success quick-filter-btn" data-filter="contract_status" data-value="active">
+                        <i class="bi bi-check-circle"></i> Aktiv
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-danger quick-filter-btn" data-filter="contract_status" data-value="terminated">
+                        <i class="bi bi-x-circle"></i> Gekündigt
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -94,6 +137,7 @@ Supports live-search via AJAX for instant filtering.
                 </span>
             </span>
             <div>
+                {% if user.can_edit_kartei %}
                 <a href="{% url 'approvals:pending_list' %}?year={{ current_year }}" 
                    class="btn btn-sm btn-outline-primary">
                     <i class="bi bi-hourglass-split"></i>
@@ -104,6 +148,7 @@ Supports live-search via AJAX for instant filtering.
                     <i class="bi bi-x-circle"></i>
                     Abgelehnt
                 </a>
+                {% endif %}
             </div>
         </div>
         <div class="card-body p-0">
@@ -111,13 +156,14 @@ Supports live-search via AJAX for instant filtering.
                 <table class="table table-striped table-hover mb-0">
                     <thead class="table-light">
                         <tr>
-                            <th>ID</th>
+                            <th>PKID</th>
                             <th>FamilyID</th>
                             <th>Eltern</th>
                             <th>Kind</th>
                             <th>Fach 1</th>
                             <th>Fach 2</th>
                             <th>Status</th>
+                            <th>Vertrag</th>
                             <th>SEPA</th>
                             <th>Aktionen</th>
                         </tr>
@@ -169,6 +215,8 @@ Supports live-search via AJAX for instant filtering.
             parent: document.getElementById('parent').value,
             child: document.getElementById('child').value,
             status: document.getElementById('status').value,
+            contract_type: document.getElementById('contract_type').value,
+            contract_status: document.getElementById('contract_status').value,
             page: currentPage
         };
     }
@@ -315,8 +363,29 @@ Supports live-search via AJAX for instant filtering.
             document.getElementById('parent').value = '';
             document.getElementById('child').value = '';
             document.getElementById('status').value = '';
+            document.getElementById('contract_type').value = '';
+            document.getElementById('contract_status').value = '';
             currentPage = 1;
             performSearch(true);
+        });
+        
+        // Handle quick filter buttons
+        const quickFilterBtns = document.querySelectorAll('.quick-filter-btn');
+        quickFilterBtns.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const filterName = this.getAttribute('data-filter');
+                const filterValue = this.getAttribute('data-value');
+                const selectEl = document.getElementById(filterName);
+                if (selectEl) {
+                    // Toggle: if already selected, reset to all
+                    if (selectEl.value === filterValue) {
+                        selectEl.value = '';
+                    } else {
+                        selectEl.value = filterValue;
+                    }
+                    performSearch(true);
+                }
+            });
         });
         
         // Initialize pagination listeners for server-rendered content

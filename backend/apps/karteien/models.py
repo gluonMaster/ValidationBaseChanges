@@ -515,6 +515,58 @@ class KarteiRecord(models.Model):
                   "Rows with SEPA have restrictions for Operator role.",
     )
     
+    # -------------------------------------------------------------------------
+    # Legacy Teacher Names (imported from Access Value11/Value16)
+    # -------------------------------------------------------------------------
+    
+    teacher1_legacy_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        verbose_name="Lehrer 1. HJ (Legacy)",
+        help_text="Teacher name for 1st semester (legacy text). Access: Value11.",
+    )
+    
+    teacher2_legacy_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        verbose_name="Lehrer 2. HJ (Legacy)",
+        help_text="Teacher name for 2nd semester (legacy text). Access: Value16.",
+    )
+    
+    # -------------------------------------------------------------------------
+    # Contract Type & Status (imported from Access Value14/Value20)
+    # -------------------------------------------------------------------------
+    
+    contract_type_raw = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        verbose_name="Vertragstyp (Rohtext)",
+        help_text="Raw contract type marker from Access Value14. May contain 'O/V' and other text.",
+    )
+    
+    is_monthly_contract = models.BooleanField(
+        default=False,
+        verbose_name="Monatsvertrag (O/V)",
+        help_text="True if contract_type_raw contains 'O/V' substring (case-insensitive).",
+    )
+    
+    contract_status_raw = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        verbose_name="Vertragsstatus (Rohtext)",
+        help_text="Raw contract status marker from Access Value20. May contain 'KN' and other text.",
+    )
+    
+    is_contract_terminated = models.BooleanField(
+        default=False,
+        verbose_name="Vertrag gekündigt (KN)",
+        help_text="True if contract_status_raw contains 'KN' as separate token (word boundary).",
+    )
+    
     status = models.CharField(
         max_length=20,
         choices=RecordStatus.choices,

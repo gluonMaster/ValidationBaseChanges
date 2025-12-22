@@ -368,7 +368,7 @@ def live_search_api(request: HttpRequest) -> JsonResponse:
     GET /api/karteien/live-search/?year=2025&family_id=...&parent=...&child=...&status=...&page=1
     
     Access control:
-    - Only Admin and Operator can access (same as list view)
+    - Admin, Operator, Superadmin, and User can access (same as list view)
     
     Returns:
         JSON with:
@@ -378,8 +378,8 @@ def live_search_api(request: HttpRequest) -> JsonResponse:
     """
     user = request.user
     
-    # Access control: Only users who can edit Kartei (Admin/Operator)
-    if not user.can_edit_kartei:
+    # Access control: Users who can view Kartei (Admin/Operator/Superadmin/User)
+    if not (user.can_edit_kartei or user.is_superadmin or user.is_user_role):
         return JsonResponse({
             'error': 'Access denied',
             'code': 'ACCESS_DENIED',
@@ -422,6 +422,22 @@ def live_search_api(request: HttpRequest) -> JsonResponse:
             qs = qs.filter(status=RecordStatus.DECLINED)
         elif status == "NORMAL":
             qs = qs.filter(status=RecordStatus.NORMAL)
+    
+    # Filter by contract type (monthly/yearly)
+    contract_type = request.GET.get("contract_type")
+    if contract_type:
+        if contract_type == "monthly":
+            qs = qs.filter(is_monthly_contract=True)
+        elif contract_type == "yearly":
+            qs = qs.filter(is_monthly_contract=False)
+    
+    # Filter by contract status (active/terminated)
+    contract_status = request.GET.get("contract_status")
+    if contract_status:
+        if contract_status == "active":
+            qs = qs.filter(is_contract_terminated=False)
+        elif contract_status == "terminated":
+            qs = qs.filter(is_contract_terminated=True)
     
     # Order results
     qs = qs.order_by("family_id", "parent_name", "child_name")

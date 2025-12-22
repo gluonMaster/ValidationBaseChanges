@@ -3,7 +3,7 @@
 Template for Kartei record detail view.
 Shows all fields of a single KarteiRecord.
 {% endcomment %}
-{% block title %}Kartei - Datensatz {{ record.id }}{% endblock %}
+{% block title %}Kartei - Datensatz PKID {{ record.pkid }}{% endblock %}
 {% block content %}
 <div class="container-fluid py-4">
   <!-- Header -->
@@ -14,7 +14,7 @@ Shows all fields of a single KarteiRecord.
           <li class="breadcrumb-item">
             <a href="{% url 'karteien:record_list' %}">Kartei</a>
           </li>
-          <li class="breadcrumb-item active">Datensatz {{ record.id }}</li>
+          <li class="breadcrumb-item active">Datensatz PKID {{ record.pkid }}</li>
         </ol>
       </nav>
       <h1>
@@ -27,10 +27,12 @@ Shows all fields of a single KarteiRecord.
         {% endif %}
       </h1>
       <p class="text-muted">
-        ID: {{ record.id }} | Jahr: {{ record.year }} | Familie: {{ record.family_id }}
+        <strong>PKID: {{ record.pkid }}</strong> | Access/Excel-ID: {{ record.id }} | Jahr: {{ record.year }} | Familie: {{ record.family_id }}
       </p>
     </div>
     <div class="col-auto">
+      {% comment %}Edit/Delete buttons - only for users with edit permission (not Superadmin){% endcomment %}
+      {% if user.can_edit_kartei %}
       {% if not record.status %}
       <a
         href="{% url 'karteien:record_update' record.pk %}"
@@ -56,7 +58,8 @@ Shows all fields of a single KarteiRecord.
         <i class="bi bi-x-circle"></i>
         Korrektur einreichen
       </a>
-      {% endif %} {% if user.is_admin_role %}
+      {% endif %}
+      {% if user.is_admin_role %}
       <a
         href="{% url 'karteien:record_delete' record.pk %}"
         class="btn btn-outline-danger"
@@ -64,6 +67,7 @@ Shows all fields of a single KarteiRecord.
         <i class="bi bi-trash"></i>
         Löschen
       </a>
+      {% endif %}
       {% endif %}
     </div>
   </div>
@@ -141,6 +145,24 @@ Shows all fields of a single KarteiRecord.
               {% if record.email %}
               <a href="mailto:{{ record.email }}">{{ record.email }}</a>
               {% else %} - {% endif %}
+            </dd>
+
+            <dt class="col-sm-4">Vertragstyp</dt>
+            <dd class="col-sm-8">
+              {% if record.is_monthly_contract %}
+              <span class="badge bg-info text-dark">Monatlich</span>
+              {% else %}
+              <span class="badge bg-secondary">Jährlich</span>
+              {% endif %}
+            </dd>
+
+            <dt class="col-sm-4">Vertragsstatus</dt>
+            <dd class="col-sm-8">
+              {% if record.is_contract_terminated %}
+              <span class="badge bg-danger">Gekündigt</span>
+              {% else %}
+              <span class="badge bg-success">Aktiv</span>
+              {% endif %}
             </dd>
           </dl>
         </div>

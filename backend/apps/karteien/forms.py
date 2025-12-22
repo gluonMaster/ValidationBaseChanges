@@ -17,6 +17,7 @@ Forms include validation for:
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -57,6 +58,83 @@ SEMESTER_2_MONTHS = (7, 8, 9, 10, 11, 12)
 # Start month choices
 START_MONTH_1_CHOICES = [(i, f"Monat {i}") for i in range(1, 7)]
 START_MONTH_2_CHOICES = [(i, f"Monat {i}") for i in range(7, 13)]
+
+# Contract type choices (form-only field)
+CONTRACT_TYPE_CHOICES = [
+    ("yearly", "Jährlich"),
+    ("monthly", "Monatlich (O/V)"),
+]
+
+# Contract status choices (form-only field)
+CONTRACT_STATUS_CHOICES = [
+    ("active", "Aktiv"),
+    ("terminated", "Gekündigt (KN)"),
+]
+
+
+# =============================================================================
+# Contract Raw Field Helpers
+# =============================================================================
+
+def add_ov_marker(raw_value: str) -> str:
+    """
+    Add 'O/V' marker to contract_type_raw if not present.
+    
+    Careful insertion: appends with space if raw is not empty.
+    """
+    raw_value = raw_value or ""
+    # Check if O/V already present (case-insensitive)
+    if re.search(r"O/V", raw_value, re.IGNORECASE):
+        return raw_value
+    # Append O/V
+    if raw_value.strip():
+        return raw_value.strip() + " O/V"
+    return "O/V"
+
+
+def remove_ov_marker(raw_value: str) -> str:
+    """
+    Remove all 'O/V' occurrences from contract_type_raw.
+    
+    Case-insensitive removal, then normalize whitespace.
+    O/V can appear directly attached to numbers, so we remove it carefully.
+    """
+    raw_value = raw_value or ""
+    # Remove all O/V occurrences (case-insensitive)
+    result = re.sub(r"O/V", "", raw_value, flags=re.IGNORECASE)
+    # Normalize whitespace: collapse multiple spaces, strip
+    result = re.sub(r"\s+", " ", result).strip()
+    return result
+
+
+def add_kn_marker(raw_value: str) -> str:
+    """
+    Add 'KN' token to contract_status_raw if not present.
+    
+    KN is always added as a separate token (space-separated).
+    """
+    raw_value = raw_value or ""
+    # Check if KN already present as separate token
+    if re.search(r"(^|\s)KN(\s|$)", raw_value, re.IGNORECASE):
+        return raw_value
+    # Append KN
+    if raw_value.strip():
+        return raw_value.strip() + " KN"
+    return "KN"
+
+
+def remove_kn_marker(raw_value: str) -> str:
+    """
+    Remove 'KN' token from contract_status_raw (only as separate token).
+    
+    Uses word boundary matching to only remove KN when it's a standalone token.
+    """
+    raw_value = raw_value or ""
+    # Remove KN only as a separate token (beginning/end or surrounded by whitespace)
+    result = re.sub(r"(^|\s)KN(\s|$)", r"\1\2", raw_value, flags=re.IGNORECASE)
+    # Normalize whitespace
+    result = re.sub(r"\s+", " ", result).strip()
+    return result
 
 
 # =============================================================================
@@ -233,6 +311,25 @@ class KarteiRecordForm(forms.ModelForm):
         help_text="Kommentar wird bei riskanten Änderungen in der Historie gespeichert.",
     )
     
+    # Contract type/status fields (form-only, Admin only)
+    # These control is_monthly_contract and is_contract_terminated boolean flags
+    # and update the raw fields (contract_type_raw, contract_status_raw)
+    contract_type = forms.ChoiceField(
+        required=False,
+        choices=CONTRACT_TYPE_CHOICES,
+        initial="yearly",
+        widget=forms.Select(attrs={"class": "form-select"}),
+        help_text="Jährlich (Standard) oder Monatlich (O/V-Marker).",
+    )
+    
+    contract_status = forms.ChoiceField(
+        required=False,
+        choices=CONTRACT_STATUS_CHOICES,
+        initial="active",
+        widget=forms.Select(attrs={"class": "form-select"}),
+        help_text="Aktiv (Standard) oder Gekündigt (KN-Marker).",
+    )
+    
     # Hours fields for Individual/Nachhilfe subjects (non-model fields)
     hours_month_1 = forms.DecimalField(
         required=False, max_digits=6, decimal_places=2,
@@ -334,6 +431,9 @@ class KarteiRecordForm(forms.ModelForm):
         # Configure hours fields from record
         self._configure_hours_fields()
         
+        # Configure contract type/status fields (Admin only)
+        self._configure_contract_fields()
+        
         # Configure AUTO mode restrictions
         self._configure_auto_mode()
         
@@ -357,6 +457,28 @@ class KarteiRecordForm(forms.ModelForm):
                     self.initial[hours_field] = Decimal(str(hours_value))
                 except (ValueError, TypeError):
                     pass
+    
+    def _configure_contract_fields(self) -> None:
+        """
+        Configure contract type/status fields based on record's boolean flags.
+        
+        For edit mode: initialize from is_monthly_contract / is_contract_terminated
+        For create mode: default to yearly + active
+        
+        These fields are only shown to Admin role users in the template.
+        """
+        if self.instance and self.instance.pk:
+            # Edit mode: initialize from record's boolean flags
+            self.initial["contract_type"] = (
+                "monthly" if self.instance.is_monthly_contract else "yearly"
+            )
+            self.initial["contract_status"] = (
+                "terminated" if self.instance.is_contract_terminated else "active"
+            )
+        else:
+            # Create mode: defaults (yearly + active)
+            self.initial["contract_type"] = "yearly"
+            self.initial["contract_status"] = "active"
     
     def _configure_auto_mode(self) -> None:
         """
@@ -933,6 +1055,51 @@ class KarteiRecordForm(forms.ModelForm):
             'calculated_base_amounts': getattr(self, '_calculated_base_amounts', None),
             'flags': getattr(self, '_calculation_flags', None),
         }
+    
+    def save(self, commit: bool = True) -> KarteiRecord:
+        """
+        Save the record with contract type/status updates.
+        
+        Updates both the boolean flags and raw text fields for contract type/status
+        if the user is an Admin.
+        """
+        record = super().save(commit=False)
+        
+        # Process contract fields (Admin only)
+        if self.user and self.user.is_admin_role:
+            self._apply_contract_fields(record)
+        
+        if commit:
+            record.save()
+        
+        return record
+    
+    def _apply_contract_fields(self, record: KarteiRecord) -> None:
+        """
+        Apply contract type/status changes to the record.
+        
+        Updates:
+        - is_monthly_contract and contract_type_raw based on contract_type field
+        - is_contract_terminated and contract_status_raw based on contract_status field
+        """
+        contract_type = self.cleaned_data.get("contract_type", "yearly")
+        contract_status = self.cleaned_data.get("contract_status", "active")
+        
+        # Process contract type
+        if contract_type == "monthly":
+            record.is_monthly_contract = True
+            record.contract_type_raw = add_ov_marker(record.contract_type_raw)
+        else:  # yearly
+            record.is_monthly_contract = False
+            record.contract_type_raw = remove_ov_marker(record.contract_type_raw)
+        
+        # Process contract status
+        if contract_status == "terminated":
+            record.is_contract_terminated = True
+            record.contract_status_raw = add_kn_marker(record.contract_status_raw)
+        else:  # active
+            record.is_contract_terminated = False
+            record.contract_status_raw = remove_kn_marker(record.contract_status_raw)
 
 
 # =============================================================================

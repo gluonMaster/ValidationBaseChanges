@@ -457,10 +457,10 @@ EXCEL_COL_TO_MONTH = {21: 1, 22: 2, ..., 32: 12}
 
 ### 8.1 Ключ записи: (year, ID)
 
-- **ID** — числовой идентификатор из Access поля `ID` (Excel: AV/48).
-- **year** — год, передаваемый параметром `--year` команды.
-- Уникальное ограничение в Django: `(year, id)` в `KarteiRecord`.
-- ID уникален в пределах одного года; один ID может существовать в разных годах.
+- **pkid** — surrogate PK Django (BigAutoField), используется во всех URL/FK внутри веб‑системы.
+- **id** — Access/Excel ID из Access поля `ID` (Excel: AV/48), **не** глобально уникален.
+- **year** — год, передаваемый параметром `--year` команды импорта.
+- Уникальное ограничение (доменный ключ) в Django: `(year, id)` в `KarteiRecord`. Импорт и patch‑импорт ищут записи по нему.
 
 **Границы анализа:** Команда `legacy_import.import_access_year` анализирует данные
 и FamilyID на уровне одного года (`--year`). Для расширенного межгодового анализа
@@ -470,7 +470,8 @@ FamilyID предполагаются отчёты поверх PostgreSQL бе�
 
 | Access Field | Django Field       | Тип                  | Примечание                       |
 | ------------ | ------------------ | -------------------- | -------------------------------- |
-| `ID`         | `id`               | PositiveIntegerField | PK в Django, ключ записи         |
+| `ID`         | `id`               | PositiveIntegerField | Access/Excel ID (не Django PK; доменный ключ с `year`) |
+| —            | `pkid`             | BigAutoField         | Django PK (surrogate), отсутствует в Access |
 | —            | `year`             | PositiveSmallInt     | Из параметра `--year`            |
 | `Value1`     | `family_id`        | CharField(50)        | A - FamilyID                     |
 | `Value2`     | `parent_name`      | CharField(255)       | B - Parent                       |
@@ -482,13 +483,18 @@ FamilyID предполагаются отчёты поверх PostgreSQL бе�
 | `Value8`     | `mobile`           | CharField(50)        | H - Mobile                       |
 | `Value9`     | `email`            | EmailField           | I - Email                        |
 | `Value10`    | `subject1`         | CharField(255)       | J - Subject1                     |
-| `Value11-12` | —                  | —                    | Пропускаются                     |
+| `Value11`    | `teacher1_legacy_name` | CharField(255)   | K - Lehrer (1. HJ, legacy text)  |
+| `Value12`    | —                  | —                    | Пропускается                     |
 | `Value13`    | `price1`           | DecimalField         | M - Price1                       |
-| `Value14`    | —                  | —                    | Пропускается                     |
+| `Value14`    | `contract_type_raw`| CharField(255)       | N - Vertragstyp (Rohtext; содержит `O/V` и др.) |
+| —            | `is_monthly_contract` | BooleanField      | Derived: содержит `O/V` (case-insensitive) |
 | `Value15`    | `subject2`         | CharField(255)       | O - Subject2                     |
-| `Value16-17` | —                  | —                    | Пропускаются                     |
+| `Value16`    | `teacher2_legacy_name` | CharField(255)   | P - Lehrer (2. HJ, legacy text)  |
+| `Value17`    | —                  | —                    | Пропускается                     |
 | `Value18`    | `price2`           | DecimalField         | R - Price2                       |
-| `Value19-20` | —                  | —                    | Пропускаются                     |
+| `Value19`    | —                  | —                    | Пропускается                     |
+| `Value20`    | `contract_status_raw` | CharField(255)    | T - Vertragsstatus (Rohtext; содержит `KN` и др.) |
+| —            | `is_contract_terminated` | BooleanField    | Derived: токен `KN` (case-insensitive, separated by whitespace) |
 | `Value21`    | `month_1`          | DecimalField         | U - Month 1                      |
 | `Value22`    | `month_2`          | DecimalField         | V - Month 2                      |
 | ...          | ...                | ...                  | ...                              |
@@ -504,6 +510,8 @@ FamilyID предполагаются отчёты поверх PostgreSQL бе�
 | `Value50`    | `last_change_date` | DateField            | AX - LastChangeDate              |
 | `Value51`    | `last_change_time` | TimeField            | AY - LastChangeTime              |
 | `Value52`    | `history_raw`      | TextField            | AZ - History (memo)              |
+
+Patch‑режим импорта: `python manage.py import_access_year --patch-fields` дополняет уже импортированные записи (по `(year, id)`) учителями/контрактными маркерами/SEPA, не трогая остальные поля.
 
 ### 8.3 Маркерные строки "Zahlung"
 
