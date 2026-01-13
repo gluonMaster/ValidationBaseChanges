@@ -15,6 +15,8 @@ Key functions:
 - round_money_up(value): Round money to 2 decimals, always up
 - build_base_amounts(record): Calculate base amounts before discounts
 - calculate_month_values(record, ...): Calculate final month values with discounts
+- detect_meaningful_changes(original, cleaned_data): Detect billing-relevant changes
+- recalculate_legacy_to_auto(record, touched_months): Convert LEGACY to AUTO mode
 """
 
 from __future__ import annotations
@@ -765,6 +767,7 @@ def recalculate_record_months(
     apply_from_month_1: int | None = None,
     apply_from_month_2: int | None = None,
     hours_amounts: dict[str, Decimal | str] | None = None,
+    touched_months: set[int] | None = None,
 ) -> CalculationFlags:
     """
     Recalculate all month values for a record.
@@ -779,6 +782,8 @@ def recalculate_record_months(
         apply_from_month_1: If set, only update months >= this in semester 1.
         apply_from_month_2: If set, only update months >= this in semester 2.
         hours_amounts: Optional hours data to use.
+        touched_months: If set, only update these specific months (for LEGACY->AUTO).
+            Other months will keep their current values.
         
     Returns:
         CalculationFlags with any warnings.
@@ -802,7 +807,166 @@ def recalculate_record_months(
     # Update record month fields
     for month_num in range(1, 13):
         field_key = f"month_{month_num}"
+        
+        # If touched_months is specified, only update those months
+        if touched_months is not None and month_num not in touched_months:
+            # Keep current value for untouched months
+            continue
+        
         value = month_values.get(field_key, ZERO)
         setattr(record, field_key, value)
+    
+    return flags
+
+
+# =============================================================================
+# LEGACY to AUTO Conversion Helpers
+# =============================================================================
+
+def detect_meaningful_changes(
+    original: "KarteiRecord",
+    cleaned_data: dict,
+    hours_amounts: dict[str, str] | None = None,
+) -> tuple[bool, set[int]]:
+    """
+    Detect if there are "meaningful" changes that should trigger LEGACY->AUTO conversion.
+    
+    Meaningful changes are those that affect billing calculations:
+    - price*_ref or start_month_* changes
+    - subject*_ref changes (may change pricing type)
+    - discounts_disabled changes
+    - contract_type/status changes (is_monthly_contract, is_contract_terminated)
+    - hours input for hourly subjects (touched months)
+    
+    Args:
+        original: The original KarteiRecord from database.
+        cleaned_data: Form cleaned_data with proposed changes.
+        hours_amounts: Hours data from form (optional).
+        
+    Returns:
+        Tuple of (has_meaningful_changes, touched_months_set).
+        touched_months_set contains month numbers (1-12) affected by the changes.
+    """
+    has_changes = False
+    touched_months: set[int] = set()
+    
+    sem1_months = set(range(1, 7))
+    sem2_months = set(range(7, 13))
+    
+    # Check price1_ref change
+    new_price1_ref = cleaned_data.get('price1_ref')
+    new_price1_ref_id = new_price1_ref.id if new_price1_ref else None
+    if new_price1_ref_id != original.price1_ref_id:
+        has_changes = True
+        touched_months.update(sem1_months)
+    
+    # Check price2_ref change
+    new_price2_ref = cleaned_data.get('price2_ref')
+    new_price2_ref_id = new_price2_ref.id if new_price2_ref else None
+    if new_price2_ref_id != original.price2_ref_id:
+        has_changes = True
+        touched_months.update(sem2_months)
+    
+    # Check subject1_ref change (may change pricing type - hourly vs monthly)
+    new_subject1_ref = cleaned_data.get('subject1_ref')
+    new_subject1_ref_id = new_subject1_ref.id if new_subject1_ref else None
+    if new_subject1_ref_id != original.subject1_ref_id:
+        has_changes = True
+        touched_months.update(sem1_months)
+    
+    # Check subject2_ref change
+    new_subject2_ref = cleaned_data.get('subject2_ref')
+    new_subject2_ref_id = new_subject2_ref.id if new_subject2_ref else None
+    if new_subject2_ref_id != original.subject2_ref_id:
+        has_changes = True
+        touched_months.update(sem2_months)
+    
+    # Check start_month_1 change
+    new_start_1 = cleaned_data.get('start_month_1') or 1
+    if new_start_1 != original.start_month_1:
+        has_changes = True
+        touched_months.update(sem1_months)
+    
+    # Check start_month_2 change
+    new_start_2 = cleaned_data.get('start_month_2') or 7
+    if new_start_2 != original.start_month_2:
+        has_changes = True
+        touched_months.update(sem2_months)
+    
+    # Check discounts_disabled change
+    new_discounts_disabled = cleaned_data.get('discounts_disabled', False)
+    if new_discounts_disabled != original.discounts_disabled:
+        has_changes = True
+        touched_months.update(range(1, 13))
+    
+    # Check contract type change (is_monthly_contract)
+    # Derived from contract_type form field
+    contract_type = cleaned_data.get('contract_type', 'yearly')
+    new_is_monthly = (contract_type == 'monthly')
+    if new_is_monthly != original.is_monthly_contract:
+        has_changes = True
+        touched_months.update(range(1, 13))
+    
+    # Check contract status change (is_contract_terminated)
+    contract_status = cleaned_data.get('contract_status', 'active')
+    new_is_terminated = (contract_status == 'terminated')
+    if new_is_terminated != original.is_contract_terminated:
+        has_changes = True
+        touched_months.update(range(1, 13))
+    
+    # Check hours changes for per-hour subjects
+    if hours_amounts:
+        original_hours = original.hours_amounts or {}
+        for month_num in range(1, 13):
+            field_key = f"month_{month_num}"
+            new_hours = hours_amounts.get(field_key, '0.00')
+            old_hours = original_hours.get(field_key, '0.00')
+            
+            # Normalize for comparison
+            try:
+                new_val = Decimal(str(new_hours or '0.00'))
+                old_val = Decimal(str(old_hours or '0.00'))
+                if new_val != old_val:
+                    has_changes = True
+                    touched_months.add(month_num)
+            except (ValueError, TypeError):
+                pass
+    
+    return has_changes, touched_months
+
+
+def recalculate_legacy_to_auto(
+    record: "KarteiRecord",
+    touched_months: set[int],
+    hours_amounts: dict[str, str] | None = None,
+) -> CalculationFlags:
+    """
+    Convert a LEGACY record to AUTO mode with partial month updates.
+    
+    Only touched months are recalculated; untouched months keep their legacy values.
+    
+    Args:
+        record: The KarteiRecord instance (will be modified).
+        touched_months: Set of month numbers (1-12) to recalculate.
+        hours_amounts: Hours data for per-hour subjects.
+        
+    Returns:
+        CalculationFlags with any warnings.
+    """
+    # Store original month values for preservation
+    original_month_values = {}
+    for month_num in range(1, 13):
+        field_key = f"month_{month_num}"
+        original_month_values[field_key] = getattr(record, field_key)
+    
+    # Recalculate only touched months
+    flags = recalculate_record_months(
+        record,
+        hours_amounts=hours_amounts,
+        touched_months=touched_months,
+    )
+    
+    # Set mode to AUTO
+    record.months_mode = 'AUTO'
     
     return flags

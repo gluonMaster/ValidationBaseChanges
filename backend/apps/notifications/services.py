@@ -99,22 +99,24 @@ def notify_pending_created(
     This is called when a risky change is made and a PendingChange is created.
     All Superadmin users receive a PENDING_CREATED notification.
     
-    Idempotency: Does not create duplicate notifications if an unread
-    notification already exists for this record and recipient.
+    Idempotency: Does not create duplicate notifications. If an unread
+    notification already exists for this record and recipient, it is
+    **updated** (payload refreshed, created_at bumped to now) so it
+    appears at the top of the notification list.
     
     Args:
         record: The KarteiRecord that has the pending change.
         pending: The PendingChange that was created.
     
     Returns:
-        List of created Notification instances.
+        List of created or updated Notification instances.
     
     Example:
         >>> pending = create_or_update_pending_change(record)
         >>> notifications = notify_pending_created(record, pending)
         >>> print(f"Notified {len(notifications)} superadmins")
     """
-    created_notifications: list[Notification] = []
+    result_notifications: list[Notification] = []
     
     # Get all Superadmin users
     superadmins = _get_users_by_role(ROLE_SUPERADMIN)
@@ -130,18 +132,25 @@ def notify_pending_created(
             record=record,
             type=NotificationType.PENDING_CREATED,
             read_at__isnull=True,
-        ).exists()
+        ).first()
         
-        if not existing:
+        if existing:
+            # Update existing notification: refresh payload and bump timestamp
+            existing.payload = payload
+            existing.created_at = timezone.now()
+            existing.save(update_fields=["payload", "created_at"])
+            result_notifications.append(existing)
+        else:
+            # Create new notification
             notification = Notification.objects.create(
                 recipient=user,
                 type=NotificationType.PENDING_CREATED,
                 record=record,
                 payload=payload,
             )
-            created_notifications.append(notification)
+            result_notifications.append(notification)
     
-    return created_notifications
+    return result_notifications
 
 
 def notify_declined_created(

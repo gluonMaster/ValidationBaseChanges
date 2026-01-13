@@ -49,12 +49,18 @@ urlpatterns = [
     # API: Month breakdown
     path('<int:pk>/month-breakdown/', api.month_breakdown_api, name='month_breakdown_api'),
     
+    # API: Billing preview (live preview in edit form)
+    path('<int:pk>/billing-preview/', api.billing_preview_api, name='billing_preview_api'),
+    
     # API: Autocomplete
     path('autocomplete/parents/', api.autocomplete_parents_api, name='autocomplete_parents'),
     path('autocomplete/children/', api.autocomplete_children_api, name='autocomplete_children'),
     
     # API: Prefill from record
     path('prefill-from-record/', api.prefill_from_record_api, name='prefill_from_record'),
+    
+    # API: Subject dependents (teachers/prices) for wizard filtering
+    path('subject-dependents/', api.subject_dependents_api, name='subject_dependents'),
     
     # Family Dashboard (admin-only)
     path('family/', families.FamilyDashboardView.as_view(), name='family_dashboard'),

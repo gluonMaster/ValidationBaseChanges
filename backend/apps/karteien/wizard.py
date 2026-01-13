@@ -64,11 +64,18 @@ def generate_next_family_id() -> str:
     Scans all existing family_id values across all years that match
     the pattern "1. <number>" and returns "1. <max+1>".
     
+    Only considers "valid" FamilyIDs with numbers < 10000 (4 digits max).
+    Values with 5+ digits (e.g., "1. 31431") are treated as erroneous
+    and are excluded from the maximum calculation.
+    
     Returns:
         str: Next FamilyID in format "1. <number>".
     """
     # Get all family_ids that match the pattern
     all_family_ids = KarteiRecord.objects.values_list('family_id', flat=True).distinct()
+    
+    # Maximum valid number in the "correct" 4-digit range (1-9999)
+    MAX_VALID_FAMILY_NUMBER = 9999
     
     max_number = 0
     for fid in all_family_ids:
@@ -77,7 +84,9 @@ def generate_next_family_id() -> str:
         match = FAMILY_ID_PATTERN.match(str(fid).strip())
         if match:
             number = int(match.group(1))
-            if number > max_number:
+            # Only consider "valid" FamilyIDs (4 digits or less, i.e., < 10000)
+            # Skip erroneous 5-digit values like "1. 31431"
+            if number <= MAX_VALID_FAMILY_NUMBER and number > max_number:
                 max_number = number
     
     # Generate next FamilyID
@@ -187,12 +196,12 @@ class FamilyHeaderForm(forms.Form):
         label="E-Mail",
     )
     
-    sepa_marker = forms.CharField(
-        max_length=100,
+    sepa_marker = forms.ChoiceField(
         required=False,
-        widget=forms.TextInput(attrs={"class": "form-control"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
         label="SEPA-Marker",
-        help_text="z.B. SEPA, Bar, Rechnung",
+        help_text="Zahlungsart für diese Familie.",
+        choices=[],  # Populated dynamically in __init__
     )
     
     is_monthly_contract = forms.BooleanField(
@@ -201,14 +210,6 @@ class FamilyHeaderForm(forms.Form):
         widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
         label="Monatsvertrag",
         help_text="Ankreuzen für Monatsvertrag (O/V), sonst Jahresvertrag.",
-    )
-
-    is_contract_terminated = forms.BooleanField(
-        required=False,
-        initial=False,
-        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
-        label="Vertrag gekündigt",
-        help_text="Ankreuzen für gekündigten Vertrag (KN).",
     )
     
     # Family discount (optional)
@@ -252,6 +253,22 @@ class FamilyHeaderForm(forms.Form):
         
         # Generate initial FamilyID
         self.fields["family_id"].initial = generate_next_family_id()
+        
+        # Build SEPA-Marker choices from database + ensure "SEPA" is always present
+        sepa_values = (
+            KarteiRecord.objects
+            .exclude(sepa_marker__isnull=True)
+            .exclude(sepa_marker="")
+            .values_list("sepa_marker", flat=True)
+            .distinct()
+        )
+        sepa_set = set(sepa_values)
+        # Always ensure "SEPA" is available as an option
+        sepa_set.add("SEPA")
+        # Build choices: empty option first, then sorted values
+        sepa_choices = [("", "— nicht gesetzt —")]
+        sepa_choices += [(v, v) for v in sorted(sepa_set)]
+        self.fields["sepa_marker"].choices = sepa_choices
 
 
 # =============================================================================
@@ -351,7 +368,7 @@ class ChildRecordForm(forms.Form):
     record_discounts = forms.ModelMultipleChoiceField(
         queryset=Discount.objects.filter(is_active=True).order_by('kind', '-value'),
         required=False,
-        widget=forms.CheckboxSelectMultiple(attrs={"class": "form-check-input"}),
+        widget=forms.CheckboxSelectMultiple(),  # No attrs - styled in template
         label="Eintragrabatte",
         help_text="Diese Rabatte gelten nur für dieses Kind.",
     )
@@ -710,8 +727,8 @@ class NewFamilyWizardView(AdminOnlyMixin, View):
                 sepa_marker=header_data.get("sepa_marker", ""),
                 is_monthly_contract=header_data.get("is_monthly_contract", False),
                 contract_type_raw="O/V" if header_data.get("is_monthly_contract") else "",
-                is_contract_terminated=header_data.get("is_contract_terminated", False),
-                contract_status_raw="KN" if header_data.get("is_contract_terminated") else "",
+                is_contract_terminated=False,  # New families are never terminated
+                contract_status_raw="",  # No KN for new families
                 
                 # Child info
                 child_name=child_name,
@@ -756,9 +773,12 @@ class NewFamilyWizardView(AdminOnlyMixin, View):
             # Save record first (needed for RecordDiscount FK)
             record.save()
             
-            # Create RecordDiscounts
+            # Create RecordDiscounts (skip if same as family discount - defense in depth)
             record_discounts = child_data.get("record_discounts", [])
             for discount in record_discounts:
+                # Skip if this discount is already the family discount
+                if family_discount_obj and discount.pk == family_discount_obj.pk:
+                    continue
                 RecordDiscount.objects.create(
                     record=record,
                     discount=discount,

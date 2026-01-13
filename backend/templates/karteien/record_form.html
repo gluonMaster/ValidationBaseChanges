@@ -79,8 +79,45 @@ Includes autocomplete for parent/child names when creating new records.
     background-color: #fff3cd !important;
     border-color: #ffc107 !important;
   }
-</style>
 {% endif %}
+  
+  /* Month field preview styles */
+  .month-field-wrapper {
+    position: relative;
+  }
+  .month-field-wrapper input {
+    cursor: pointer;
+  }
+  .month-field-changed {
+    border-color: #198754 !important;
+    box-shadow: 0 0 0 0.2rem rgba(25, 135, 84, 0.25) !important;
+  }
+  .month-field-legacy {
+    border-color: #6c757d !important;
+    background-color: #f8f9fa !important;
+  }
+  .month-preview-badge {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    font-size: 0.65rem;
+    padding: 2px 5px;
+    border-radius: 10px;
+    z-index: 10;
+  }
+  .month-preview-badge.badge-changed {
+    background-color: #198754;
+    color: white;
+  }
+  .month-preview-badge.badge-legacy {
+    background-color: #6c757d;
+    color: white;
+  }
+  .month-clickable:hover {
+    cursor: pointer;
+    opacity: 0.8;
+  }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -728,6 +765,79 @@ Includes autocomplete for parent/child names when creating new records.
   </form>
 </div>
 
+<!-- Month Explanation Modal -->
+{% if not is_create %}
+<div class="modal fade" id="monthExplanationModal" tabindex="-1" aria-labelledby="monthExplanationModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="monthExplanationModalLabel">
+          <i class="bi bi-info-circle"></i> 
+          Monat <span id="monthExplanationMonth">-</span> - Erläuterung
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <div id="monthExplanationLoading" class="text-center py-4">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Lädt...</span>
+          </div>
+        </div>
+        <div id="monthExplanationContent" class="d-none">
+          <dl class="row mb-0">
+            <dt class="col-sm-4">Quelle</dt>
+            <dd class="col-sm-8"><span id="monthExplSource" class="badge"></span></dd>
+            
+            <dt class="col-sm-4">Wert</dt>
+            <dd class="col-sm-8"><strong id="monthExplValue">-</strong> €</dd>
+            
+            <dt class="col-sm-4">Erläuterung</dt>
+            <dd class="col-sm-8" id="monthExplReason">-</dd>
+          </dl>
+          
+          <hr>
+          
+          <div id="monthExplBreakdown" class="d-none">
+            <h6><i class="bi bi-calculator"></i> Detailberechnung</h6>
+            <dl class="row mb-0 small">
+              <dt class="col-sm-5">Berechnungsart</dt>
+              <dd class="col-sm-7" id="monthExplBillingKind">-</dd>
+              
+              <dt class="col-sm-5">Basis</dt>
+              <dd class="col-sm-7" id="monthExplBase">-</dd>
+              
+              <dt class="col-sm-5" id="monthExplHoursLabel" class="d-none">Stunden</dt>
+              <dd class="col-sm-7" id="monthExplHours" class="d-none">-</dd>
+              
+              <dt class="col-sm-5" id="monthExplPercentLabel">Prozent-Rabatte</dt>
+              <dd class="col-sm-7" id="monthExplPercent">-</dd>
+              
+              <dt class="col-sm-5" id="monthExplFixedLabel">Feste Rabatte</dt>
+              <dd class="col-sm-7" id="monthExplFixed">-</dd>
+              
+              <dt class="col-sm-5">Endergebnis</dt>
+              <dd class="col-sm-7"><strong id="monthExplFinal">-</strong> €</dd>
+            </dl>
+          </div>
+          
+          <div id="monthExplLegacyNote" class="alert alert-secondary mt-3 d-none">
+            <i class="bi bi-clock-history"></i>
+            <strong>Legacy-Wert:</strong> Dieser Monat enthält einen manuell eingetragenen Wert aus dem Import und wurde nicht neu berechnet.
+          </div>
+        </div>
+        <div id="monthExplanationError" class="alert alert-danger d-none">
+          <i class="bi bi-exclamation-triangle"></i>
+          Fehler beim Laden der Erläuterung.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- JavaScript for dynamic teacher/price loading -->
 <script>
 (function() {
@@ -1047,11 +1157,31 @@ Includes autocomplete for parent/child names when creating new records.
   const initialPrice2 = price2Select ? price2Select.value : '';
   
   /**
+   * Reset teacher select when no subject is selected
+   */
+  function resetTeacherSelect(teacherSelect) {
+    teacherSelect.innerHTML = '<option value="">-- Bitte zuerst Fach wählen --</option>';
+    teacherSelect.value = '';
+  }
+  
+  /**
+   * Reset price select when no subject is selected
+   */
+  function resetPriceSelect(priceSelect, priceComment) {
+    priceSelect.innerHTML = '<option value="">-- Bitte zuerst Fach wählen --</option>';
+    priceSelect.value = '';
+    if (priceComment) {
+      priceComment.textContent = '';
+    }
+  }
+  
+  /**
    * Fetch teachers for a given subject and update select options
    */
   async function loadTeachers(subjectId, teacherSelect, initialValue) {
     if (!subjectId) {
-      // Keep all options but clear selection
+      // Reset select with hint when no subject selected
+      resetTeacherSelect(teacherSelect);
       return;
     }
     
@@ -1084,7 +1214,8 @@ Includes autocomplete for parent/child names when creating new records.
    */
   async function loadPrices(subjectId, priceSelect, priceComment, initialValue) {
     if (!subjectId) {
-      // Keep all options but clear selection
+      // Reset select with hint when no subject selected
+      resetPriceSelect(priceSelect, priceComment);
       return;
     }
     
@@ -1138,10 +1269,14 @@ Includes autocomplete for parent/child names when creating new records.
       loadPrices(subjectId, price1Select, price1Comment, initialPrice1);
     });
     
-    // Initial load if subject is selected
+    // Initial load: filter by subject if selected, otherwise reset with hint
     if (subject1Select.value) {
       loadTeachers(subject1Select.value, teacher1Select, initialTeacher1);
       loadPrices(subject1Select.value, price1Select, price1Comment, initialPrice1);
+    } else {
+      // No subject selected - reset teacher/price with hint
+      if (teacher1Select) resetTeacherSelect(teacher1Select);
+      if (price1Select) resetPriceSelect(price1Select, price1Comment);
     }
   }
   
@@ -1161,10 +1296,14 @@ Includes autocomplete for parent/child names when creating new records.
       loadPrices(subjectId, price2Select, price2Comment, initialPrice2);
     });
     
-    // Initial load if subject is selected
+    // Initial load: filter by subject if selected, otherwise reset with hint
     if (subject2Select.value) {
       loadTeachers(subject2Select.value, teacher2Select, initialTeacher2);
       loadPrices(subject2Select.value, price2Select, price2Comment, initialPrice2);
+    } else {
+      // No subject selected - reset teacher/price with hint
+      if (teacher2Select) resetTeacherSelect(teacher2Select);
+      if (price2Select) resetPriceSelect(price2Select, price2Comment);
     }
   }
   
@@ -1175,6 +1314,309 @@ Includes autocomplete for parent/child names when creating new records.
     // Show initial comment
     updatePriceComment(price2Select, price2Comment);
   }
+  
+  {% if not is_create %}
+  // ==========================================================================
+  // Billing Preview (live preview in edit mode)
+  // ==========================================================================
+  
+  const PREVIEW_DEBOUNCE_DELAY = 500; // ms
+  const billingPreviewUrl = '{% url "karteien:billing_preview_api" record.pk %}';
+  const monthBreakdownUrl = '{% url "karteien:month_breakdown_api" record.pk %}';
+  
+  // Store last preview result for click explanations
+  let lastPreviewResult = null;
+  
+  // Month field elements
+  const monthFields = {};
+  for (let m = 1; m <= 12; m++) {
+    monthFields[m] = {
+      input: document.getElementById(`id_month_${m}`),
+      hoursInput: document.getElementById(`id_hours_month_${m}`),
+    };
+  }
+  
+  // Preview-triggering elements
+  const previewTriggers = [
+    subject1Select, price1Select,
+    document.getElementById('id_start_month_1'),
+    document.getElementById('id_apply_from_month_1'),
+    subject2Select, price2Select,
+    document.getElementById('id_start_month_2'),
+    document.getElementById('id_apply_from_month_2'),
+  ];
+  
+  // Add hours fields as triggers
+  for (let m = 1; m <= 12; m++) {
+    if (monthFields[m].hoursInput) {
+      previewTriggers.push(monthFields[m].hoursInput);
+    }
+  }
+  
+  // Debounce helper
+  function debouncePreview(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
+  
+  // Collect form data for preview
+  function collectPreviewData() {
+    const data = {
+      subject1_ref: subject1Select ? subject1Select.value : '',
+      price1_ref: price1Select ? price1Select.value : '',
+      start_month_1: document.getElementById('id_start_month_1')?.value || '1',
+      apply_from_month_1: document.getElementById('id_apply_from_month_1')?.value || '',
+      subject2_ref: subject2Select ? subject2Select.value : '',
+      price2_ref: price2Select ? price2Select.value : '',
+      start_month_2: document.getElementById('id_start_month_2')?.value || '7',
+      apply_from_month_2: document.getElementById('id_apply_from_month_2')?.value || '',
+    };
+    
+    // Add hours
+    for (let m = 1; m <= 12; m++) {
+      const hoursInput = monthFields[m].hoursInput;
+      if (hoursInput) {
+        data[`hours_month_${m}`] = hoursInput.value || '';
+      }
+    }
+    
+    return data;
+  }
+  
+  // Update month field display based on preview
+  function updateMonthDisplay(month, data) {
+    const field = monthFields[month];
+    if (!field || !field.input) return;
+    
+    const input = field.input;
+    const wrapper = input.closest('.col-md-2, .col-sm-4, .col-6');
+    
+    // Remove existing badges
+    const existingBadge = wrapper?.querySelector('.month-preview-badge');
+    if (existingBadge) existingBadge.remove();
+    
+    // Remove existing classes
+    input.classList.remove('month-field-changed', 'month-field-legacy');
+    
+    if (data.source === 'calculated') {
+      // Update value in input (for disabled AUTO fields)
+      if (input.disabled || input.readOnly) {
+        input.value = data.value;
+      }
+      
+      // Add changed styling if in changed_months
+      if (lastPreviewResult && lastPreviewResult.changed_months.includes(month)) {
+        input.classList.add('month-field-changed');
+        
+        // Add badge
+        if (wrapper) {
+          const badge = document.createElement('span');
+          badge.className = 'month-preview-badge badge-changed';
+          badge.textContent = 'NEU';
+          badge.title = 'Wert wurde neu berechnet';
+          wrapper.style.position = 'relative';
+          wrapper.appendChild(badge);
+        }
+      }
+    } else if (data.source === 'legacy') {
+      input.classList.add('month-field-legacy');
+      
+      // Add legacy badge
+      if (wrapper) {
+        const badge = document.createElement('span');
+        badge.className = 'month-preview-badge badge-legacy';
+        badge.textContent = 'LEGACY';
+        badge.title = 'Legacy-Wert, nicht neu berechnet';
+        wrapper.style.position = 'relative';
+        wrapper.appendChild(badge);
+      }
+    }
+    
+    // Make clickable for explanation
+    input.classList.add('month-clickable');
+  }
+  
+  // Fetch billing preview
+  async function fetchBillingPreview() {
+    const data = collectPreviewData();
+    
+    try {
+      const response = await fetch(billingPreviewUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrfToken,
+        },
+        body: JSON.stringify(data),
+      });
+      
+      if (!response.ok) {
+        console.error('Preview fetch failed:', response.status);
+        return;
+      }
+      
+      const result = await response.json();
+      lastPreviewResult = result;
+      
+      // Update all month displays
+      for (let m = 1; m <= 12; m++) {
+        const monthData = result.months[String(m)];
+        if (monthData) {
+          updateMonthDisplay(m, monthData);
+        }
+      }
+      
+      // Show warnings if any
+      if (result.warnings && result.warnings.length > 0) {
+        console.info('Billing preview warnings:', result.warnings);
+      }
+      
+    } catch (error) {
+      console.error('Billing preview error:', error);
+    }
+  }
+  
+  // Debounced preview fetch
+  const debouncedPreview = debouncePreview(fetchBillingPreview, PREVIEW_DEBOUNCE_DELAY);
+  
+  // Attach event listeners to preview triggers
+  previewTriggers.forEach(el => {
+    if (el) {
+      el.addEventListener('change', debouncedPreview);
+      el.addEventListener('input', debouncedPreview);
+    }
+  });
+  
+  // Month click handler for explanation modal
+  function showMonthExplanation(month) {
+    const modal = new bootstrap.Modal(document.getElementById('monthExplanationModal'));
+    const monthSpan = document.getElementById('monthExplanationMonth');
+    const loadingEl = document.getElementById('monthExplanationLoading');
+    const contentEl = document.getElementById('monthExplanationContent');
+    const errorEl = document.getElementById('monthExplanationError');
+    
+    monthSpan.textContent = month;
+    loadingEl.classList.remove('d-none');
+    contentEl.classList.add('d-none');
+    errorEl.classList.add('d-none');
+    
+    modal.show();
+    
+    // Check if we have preview data
+    if (lastPreviewResult && lastPreviewResult.months[String(month)]) {
+      const previewData = lastPreviewResult.months[String(month)];
+      
+      // Display preview data
+      loadingEl.classList.add('d-none');
+      contentEl.classList.remove('d-none');
+      
+      // Source badge
+      const sourceEl = document.getElementById('monthExplSource');
+      if (previewData.source === 'legacy') {
+        sourceEl.className = 'badge bg-secondary';
+        sourceEl.textContent = 'Legacy';
+        document.getElementById('monthExplLegacyNote').classList.remove('d-none');
+      } else {
+        sourceEl.className = 'badge bg-success';
+        sourceEl.textContent = 'Berechnet';
+        document.getElementById('monthExplLegacyNote').classList.add('d-none');
+      }
+      
+      document.getElementById('monthExplValue').textContent = previewData.value;
+      document.getElementById('monthExplReason').textContent = previewData.reason || '-';
+      
+      // Hide detailed breakdown for preview (use month_breakdown_api for full details)
+      document.getElementById('monthExplBreakdown').classList.add('d-none');
+      
+    } else {
+      // Fetch from month_breakdown_api for full details
+      fetch(`${monthBreakdownUrl}?month=${month}`)
+        .then(response => response.json())
+        .then(data => {
+          loadingEl.classList.add('d-none');
+          contentEl.classList.remove('d-none');
+          
+          // Source badge
+          const sourceEl = document.getElementById('monthExplSource');
+          if (data.source_mode === 'LEGACY') {
+            sourceEl.className = 'badge bg-secondary';
+            sourceEl.textContent = 'Legacy';
+            document.getElementById('monthExplLegacyNote').classList.remove('d-none');
+          } else if (data.source_mode === 'OVERRIDE') {
+            sourceEl.className = 'badge bg-danger';
+            sourceEl.textContent = 'Override';
+            document.getElementById('monthExplLegacyNote').classList.add('d-none');
+          } else {
+            sourceEl.className = 'badge bg-success';
+            sourceEl.textContent = 'AUTO';
+            document.getElementById('monthExplLegacyNote').classList.add('d-none');
+          }
+          
+          document.getElementById('monthExplValue').textContent = data.final || '0.00';
+          
+          if (data.available) {
+            document.getElementById('monthExplBreakdown').classList.remove('d-none');
+            document.getElementById('monthExplBillingKind').textContent = 
+              data.billing_kind === 'HOURLY' ? 'Stundenfach' : 'Monatsfach';
+            document.getElementById('monthExplBase').textContent = data.base + ' €';
+            
+            if (data.billing_kind === 'HOURLY') {
+              document.getElementById('monthExplHoursLabel').classList.remove('d-none');
+              document.getElementById('monthExplHours').classList.remove('d-none');
+              document.getElementById('monthExplHours').textContent = data.hours + ' Std';
+            } else {
+              document.getElementById('monthExplHoursLabel').classList.add('d-none');
+              document.getElementById('monthExplHours').classList.add('d-none');
+            }
+            
+            document.getElementById('monthExplPercent').textContent = 
+              (parseFloat(data.percent_sum) * 100).toFixed(0) + ' %';
+            document.getElementById('monthExplFixed').textContent = data.fixed_sum + ' €';
+            document.getElementById('monthExplFinal').textContent = data.final;
+            
+            // Build reason from discounts
+            let reason = data.subject_name || '-';
+            if (data.discounts_skipped_reason) {
+              reason += ` (Rabatte deaktiviert: ${data.discounts_skipped_reason})`;
+            }
+            document.getElementById('monthExplReason').textContent = reason;
+          } else {
+            document.getElementById('monthExplBreakdown').classList.add('d-none');
+            document.getElementById('monthExplReason').textContent = 
+              data.reason === 'LEGACY_NO_DATA' ? 'Legacy-Wert ohne Berechnungsdaten' :
+              data.reason === 'OVERRIDE_MODE' ? 'Manuell überschrieben (Override)' : '-';
+          }
+        })
+        .catch(error => {
+          console.error('Month breakdown fetch error:', error);
+          loadingEl.classList.add('d-none');
+          errorEl.classList.remove('d-none');
+        });
+    }
+  }
+  
+  // Attach click handlers to month fields
+  for (let m = 1; m <= 12; m++) {
+    const input = monthFields[m].input;
+    if (input) {
+      input.addEventListener('click', function(e) {
+        e.preventDefault();
+        showMonthExplanation(m);
+      });
+    }
+  }
+  
+  // Initial preview load
+  fetchBillingPreview();
+  
+  {% endif %}
 })();
 </script>
 {% endblock %}

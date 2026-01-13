@@ -236,7 +236,7 @@ Extends blocks:
                 data-bs-toggle="dropdown"
                 aria-expanded="false"
               >
-                <i class="bi bi-person-circle"></i> {{ user.username }}
+                <i class="bi bi-person-circle"></i> {{ user.username }} <span class="badge bg-light text-dark">{{ user.role }}</span>
               </a>
               <ul
                 class="dropdown-menu dropdown-menu-end"
@@ -356,21 +356,31 @@ Extends blocks:
                 ? "Neue Pending"
                 : "Abgelehnt";
 
-            const recordInfo =
-              notification.record_info || notification.payload || {};
+            // Merge payload and record_info for display fields; pending_id is always in payload
+            const payload = notification.payload || {};
+            const recordInfo = {...payload, ...(notification.record_info || {})};
             const familyId = recordInfo.family_id || "";
             const parentName = recordInfo.parent_name || "";
             const childName = recordInfo.child_name || "";
+            const pendingId = payload.pending_id || null;
 
             const createdAt = new Date(notification.created_at).toLocaleString(
               "de-DE"
             );
 
+            // Build click handler for PENDING_CREATED notifications
+            let clickHandler = "";
+            let cursorStyle = "";
+            if (notification.type === "PENDING_CREATED" && pendingId) {
+              clickHandler = `onclick="NotificationSystem.openPending(${notification.id}, ${pendingId})"`;
+              cursorStyle = "cursor: pointer;";
+            }
+
             html += `
-                        <div class="notification-item ${
-                          isUnread ? "unread" : ""
-                        }" 
-                             data-notification-id="${notification.id}">
+                        <div class="notification-item ${isUnread ? "unread" : ""}" 
+                             data-notification-id="${notification.id}"
+                             style="${cursorStyle}"
+                             ${clickHandler}>
                             <div class="d-flex justify-content-between align-items-start">
                                 <span class="notification-type ${typeClass}">${typeLabel}</span>
                                 <span class="notification-time">${createdAt}</span>
@@ -379,16 +389,17 @@ Extends blocks:
                                 <strong>${familyId}</strong> - ${parentName}
                                 ${childName ? "/ " + childName : ""}
                             </div>
-                            ${
-                              isUnread
-                                ? `
+                            ${pendingId && notification.type === "PENDING_CREATED" ? `
+                                <small class="text-muted">
+                                    <i class="bi bi-arrow-right-circle"></i> Klicken zum Prüfen
+                                </small>
+                            ` : ""}
+                            ${isUnread && !(notification.type === "PENDING_CREATED" && pendingId) ? `
                                 <button class="btn btn-sm btn-link p-0 mt-1" 
-                                        onclick="NotificationSystem.markAsRead(${notification.id})">
+                                        onclick="event.stopPropagation(); NotificationSystem.markAsRead(${notification.id})">
                                     Als gelesen markieren
                                 </button>
-                            `
-                                : ""
-                            }
+                            ` : ""}
                         </div>
                     `;
           });
@@ -454,6 +465,23 @@ Extends blocks:
             .split("; ")
             .find((row) => row.startsWith("csrftoken="));
           return cookie ? cookie.split("=")[1] : "";
+        },
+
+        async openPending(notificationId, pendingId) {
+          // Mark notification as read, then navigate to War/Ist page
+          try {
+            await fetch(`/api/notifications/${notificationId}/read/`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": this.getCsrfToken(),
+              },
+            });
+          } catch (error) {
+            console.error("Failed to mark notification as read:", error);
+          }
+          // Navigate to pending detail (War/Ist) page
+          window.location.href = `/approvals/superadmin/pending/${pendingId}/`;
         },
       };
 

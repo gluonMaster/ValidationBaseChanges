@@ -465,6 +465,10 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
         
         SAFE path (direct update) is only allowed for records with status NORMAL.
         For any other status, changes must go through the approvals workflow.
+        
+        LEGACY mode handling:
+        - If no meaningful changes, months_mode stays LEGACY, no recalculation
+        - If meaningful changes detected, convert to AUTO and recalculate touched months
         """
         record = form.save(commit=False)
         original = KarteiRecord.objects.get(pk=self.object.pk)
@@ -486,12 +490,43 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
                 )
             return redirect("karteien:record_detail", pk=original.pk)
         
-        # Handle AUTO mode billing calculations
-        if record.months_mode == MonthsMode.AUTO:
-            billing_data = form.get_billing_data()
-            record.hours_amounts = billing_data['hours_amounts']
+        # Get billing data from form
+        billing_data = form.get_billing_data()
+        record.hours_amounts = billing_data['hours_amounts']
+        
+        # Handle billing calculations based on mode
+        if original.months_mode == MonthsMode.LEGACY:
+            # LEGACY mode: check for meaningful changes
+            should_convert = billing_data.get('should_convert_to_auto', False)
+            touched_months = billing_data.get('touched_months', set())
             
-            # Recalculate with partial updates if price changed
+            if should_convert and touched_months:
+                # Convert LEGACY → AUTO with partial update
+                from .billing import recalculate_legacy_to_auto
+                
+                flags = recalculate_legacy_to_auto(
+                    record,
+                    touched_months=touched_months,
+                    hours_amounts=billing_data['hours_amounts'],
+                )
+                
+                # Show warning if percent discount was clamped
+                if flags.percent_discount_exceeded:
+                    messages.warning(
+                        self.request,
+                        f"Warnung: Die Summe der Prozentrabatte ({flags.original_percent_sum * 100:.0f}%) "
+                        f"wurde auf 99% begrenzt."
+                    )
+                
+                messages.info(
+                    self.request,
+                    f"Datensatz wurde von LEGACY auf AUTO umgestellt. "
+                    f"Aktualisierte Monate: {', '.join(str(m) for m in sorted(touched_months))}."
+                )
+            # else: no meaningful changes, keep LEGACY mode and original month values
+            
+        elif record.months_mode == MonthsMode.AUTO:
+            # AUTO mode: full recalculation
             flags = recalculate_record_months(
                 record,
                 apply_from_month_1=billing_data['apply_from_month_1'],

@@ -78,6 +78,21 @@ Shows all fields of a single KarteiRecord.
     <i class="bi bi-hourglass-split"></i>
     <strong>Wartend auf Genehmigung:</strong>
     Änderungen an diesem Datensatz warten auf Superadmin-Prüfung.
+    {% if user.is_superadmin %}
+    <div class="mt-2">
+      {% if record.pending_change %}
+      <a href="{% url 'approvals:superadmin_war_ist' record.pending_change.pk %}" class="btn btn-primary btn-sm">
+        <i class="bi bi-search"></i>
+        Änderung prüfen (War/Ist)
+      </a>
+      {% else %}
+      <a href="{% url 'approvals:superadmin_pending_overview' %}?year={{ record.year }}" class="btn btn-outline-primary btn-sm">
+        <i class="bi bi-list-check"></i>
+        Alle ausstehenden Änderungen anzeigen
+      </a>
+      {% endif %}
+    </div>
+    {% endif %}
   </div>
   {% endif %} {% if record.status == "DECLINED" %}
   <div class="alert alert-danger" role="alert">

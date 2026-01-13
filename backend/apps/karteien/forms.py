@@ -36,6 +36,8 @@ from .billing import (
     get_subject_name_for_semester,
     build_base_amounts,
     calculate_month_values,
+    detect_meaningful_changes,
+    recalculate_legacy_to_auto,
     ZERO,
 )
 from .models import KarteiRecord, MONTH_FIELD_NAMES, RecordStatus, MonthsMode
@@ -290,7 +292,7 @@ class KarteiRecordForm(forms.ModelForm):
             "extra1": forms.TextInput(attrs={"class": "form-control"}),
             "extra2": forms.TextInput(attrs={"class": "form-control"}),
             "extra3": forms.TextInput(attrs={"class": "form-control"}),
-            "sepa_marker": forms.TextInput(attrs={"class": "form-control"}),
+            "sepa_marker": forms.Select(attrs={"class": "form-select"}),
             "discounts_disabled": forms.CheckboxInput(attrs={"class": "form-check-input"}),
         }
         # Month widgets
@@ -425,6 +427,9 @@ class KarteiRecordForm(forms.ModelForm):
         # Configure catalog reference fields
         self._configure_catalog_fields()
         
+        # Configure SEPA marker as choice field
+        self._configure_sepa_marker_field()
+        
         # Prefill refs from legacy fields if possible
         self._prefill_refs_from_legacy()
         
@@ -488,20 +493,37 @@ class KarteiRecordForm(forms.ModelForm):
         - Month fields are disabled (read-only)
         - Hours fields are enabled only for Individual/Nachhilfe months
         - Price change fields are shown for edit mode
+        
+        In LEGACY mode:
+        - Month fields remain enabled (they are inherited from legacy import)
+        - No automatic calculation happens unless a "meaningful" change is made
+        - Upon meaningful change, record converts to AUTO mode (see _process_auto_mode)
         """
         is_auto_mode = False
+        is_legacy_mode = False
+        
         if self.instance and self.instance.pk:
             is_auto_mode = self.instance.months_mode == MonthsMode.AUTO
+            is_legacy_mode = self.instance.months_mode == MonthsMode.LEGACY
         else:
             # New records will be AUTO by default
             is_auto_mode = True
         
+        # Store mode flags for later use
+        self._is_auto_mode = is_auto_mode
+        self._is_legacy_mode = is_legacy_mode
+        
         if is_auto_mode:
-            # Disable month fields for AUTO mode
+            # Disable month fields for AUTO mode (values are calculated)
             for field_name in MONTH_FIELD_NAMES:
                 self.fields[field_name].disabled = True
                 self.fields[field_name].widget.attrs['readonly'] = True
                 self.fields[field_name].widget.attrs['class'] = 'form-control bg-light'
+        elif is_legacy_mode:
+            # LEGACY mode: month fields stay enabled but show informative styling
+            # No disabling - legacy values are preserved until meaningful change
+            for field_name in MONTH_FIELD_NAMES:
+                self.fields[field_name].widget.attrs['class'] = 'form-control'
         
         # Determine which months need hours input
         self._hours_required_months = self._get_hourly_months()
@@ -601,49 +623,124 @@ class KarteiRecordForm(forms.ModelForm):
         self.fields["start_month_1"].choices = START_MONTH_1_CHOICES
         self.fields["start_month_2"].choices = START_MONTH_2_CHOICES
     
+    def _configure_sepa_marker_field(self) -> None:
+        """
+        Configure SEPA-Marker field as a choice field.
+        
+        Builds choices from:
+        - Empty option first: ("", "— nicht gesetzt —")
+        - "SEPA" is always included
+        - All distinct non-empty sepa_marker values from database
+        - Current instance value (if non-standard)
+        """
+        # Get distinct non-empty SEPA marker values from database
+        sepa_values = (
+            KarteiRecord.objects
+            .exclude(sepa_marker__isnull=True)
+            .exclude(sepa_marker="")
+            .values_list("sepa_marker", flat=True)
+            .distinct()
+        )
+        sepa_set = set(sepa_values)
+        
+        # Always ensure "SEPA" is available as an option
+        sepa_set.add("SEPA")
+        
+        # If editing, ensure current value is in choices
+        if self.instance and self.instance.pk and self.instance.sepa_marker:
+            sepa_set.add(self.instance.sepa_marker)
+        
+        # Build choices: empty option first, then sorted values
+        sepa_choices = [("", "— nicht gesetzt —")]
+        sepa_choices += [(v, v) for v in sorted(sepa_set)]
+        
+        # Override the field as a ChoiceField
+        self.fields["sepa_marker"] = forms.ChoiceField(
+            required=False,
+            choices=sepa_choices,
+            widget=forms.Select(attrs={"class": "form-select"}),
+            label="SEPA-Marker",
+        )
+        
+        # Set initial value from instance
+        if self.instance and self.instance.pk:
+            self.initial["sepa_marker"] = self.instance.sepa_marker or ""
+    
     def _prefill_refs_from_legacy(self) -> None:
         """
         Try to prefill *_ref fields from legacy subject1/subject2 values.
         
         Only applies to existing records where ref is NULL but legacy field has value.
+        Uses normalized string matching for subjects (case-insensitive, whitespace-normalized).
+        Uses filter() for prices to handle 0 or >1 matches gracefully.
         """
         from apps.catalog.models import Subject, PriceOption
         
         if not self.instance or not self.instance.pk:
             return
         
+        def normalize_name(name: str) -> str:
+            """Normalize subject name for matching: strip, collapse whitespace, casefold."""
+            if not name:
+                return ""
+            # Strip leading/trailing whitespace
+            name = name.strip()
+            # Collapse multiple whitespace to single space
+            name = re.sub(r"\s+", " ", name)
+            # Case-insensitive comparison via casefold
+            return name.casefold()
+        
+        def find_subject_by_legacy_name(legacy_name: str) -> int | None:
+            """
+            Find subject by legacy name using normalized matching.
+            Returns subject id if exactly one match found, None otherwise.
+            """
+            if not legacy_name:
+                return None
+            
+            normalized_legacy = normalize_name(legacy_name)
+            if not normalized_legacy:
+                return None
+            
+            # Build map of active subjects by normalized name
+            active_subjects = Subject.objects.filter(is_active=True)
+            matches = []
+            for subj in active_subjects:
+                if normalize_name(subj.name) == normalized_legacy:
+                    matches.append(subj)
+            
+            # Only return if exactly one match (unambiguous)
+            if len(matches) == 1:
+                return matches[0].id
+            return None
+        
         # Subject 1
         if not self.instance.subject1_ref_id and self.instance.subject1:
-            try:
-                subject = Subject.objects.get(name=self.instance.subject1, is_active=True)
-                self.initial["subject1_ref"] = subject.id
-            except Subject.DoesNotExist:
-                pass
+            subject_id = find_subject_by_legacy_name(self.instance.subject1)
+            if subject_id:
+                self.initial["subject1_ref"] = subject_id
         
         # Subject 2
         if not self.instance.subject2_ref_id and self.instance.subject2:
-            try:
-                subject = Subject.objects.get(name=self.instance.subject2, is_active=True)
-                self.initial["subject2_ref"] = subject.id
-            except Subject.DoesNotExist:
-                pass
+            subject_id = find_subject_by_legacy_name(self.instance.subject2)
+            if subject_id:
+                self.initial["subject2_ref"] = subject_id
         
-        # Price 1 - try to match by amount and subject
+        # Price 1 - try to match by amount and subject using filter()
         if not self.instance.price1_ref_id and self.instance.price1 is not None:
             subject_ref = self.initial.get("subject1_ref") or (
                 self.instance.subject1_ref_id
             )
             if subject_ref:
-                try:
-                    price = PriceOption.objects.get(
-                        year=self.instance.year,
-                        subject_id=subject_ref,
-                        amount=self.instance.price1,
-                        is_active=True,
-                    )
-                    self.initial["price1_ref"] = price.id
-                except PriceOption.DoesNotExist:
-                    pass
+                prices = PriceOption.objects.filter(
+                    year=self.instance.year,
+                    subject_id=subject_ref,
+                    amount=self.instance.price1,
+                    is_active=True,
+                )
+                # Only set if exactly one match found
+                if prices.count() == 1:
+                    self.initial["price1_ref"] = prices.first().id
         
         # Price 2
         if not self.instance.price2_ref_id and self.instance.price2 is not None:
@@ -651,16 +748,15 @@ class KarteiRecordForm(forms.ModelForm):
                 self.instance.subject2_ref_id
             )
             if subject_ref:
-                try:
-                    price = PriceOption.objects.get(
-                        year=self.instance.year,
-                        subject_id=subject_ref,
-                        amount=self.instance.price2,
-                        is_active=True,
-                    )
-                    self.initial["price2_ref"] = price.id
-                except PriceOption.DoesNotExist:
-                    pass
+                prices = PriceOption.objects.filter(
+                    year=self.instance.year,
+                    subject_id=subject_ref,
+                    amount=self.instance.price2,
+                    is_active=True,
+                )
+                # Only set if exactly one match found
+                if prices.count() == 1:
+                    self.initial["price2_ref"] = prices.first().id
     
     def _apply_operator_restrictions(self) -> None:
         """
@@ -785,18 +881,19 @@ class KarteiRecordForm(forms.ModelForm):
         2. Check for price changes and require apply_from_month
         3. Calculate base_amounts and month values with discounts
         4. Validate discount clamping confirmation
+        
+        For LEGACY mode records:
+        1. Detect if there are "meaningful" changes that affect billing
+        2. If yes, mark record for LEGACY->AUTO conversion with touched_months
+        3. If no, leave record as LEGACY without changing months
         """
-        is_auto_mode = False
+        is_auto_mode = getattr(self, '_is_auto_mode', False)
+        is_legacy_mode = getattr(self, '_is_legacy_mode', False)
         is_edit = self.instance and self.instance.pk
         
-        if is_edit:
-            is_auto_mode = self.instance.months_mode == MonthsMode.AUTO
-        else:
+        if not is_edit:
             # New records default to AUTO
             is_auto_mode = True
-        
-        if not is_auto_mode:
-            return
         
         # Build hours_amounts from form
         hours_amounts = {}
@@ -806,8 +903,36 @@ class KarteiRecordForm(forms.ModelForm):
             hours_amounts[f"month_{i}"] = str(normalize_hours(hours_value))
         
         # Store hours on instance
-        if not hasattr(self, '_billing_hours_amounts'):
-            self._billing_hours_amounts = hours_amounts
+        self._billing_hours_amounts = hours_amounts
+        
+        # Initialize flags
+        self._has_meaningful_changes = False
+        self._touched_months = set()
+        self._should_convert_to_auto = False
+        
+        if is_legacy_mode and is_edit:
+            # LEGACY mode: detect meaningful changes
+            original = KarteiRecord.objects.get(pk=self.instance.pk)
+            has_changes, touched_months = detect_meaningful_changes(
+                original, cleaned_data, hours_amounts
+            )
+            
+            self._has_meaningful_changes = has_changes
+            self._touched_months = touched_months
+            self._should_convert_to_auto = has_changes
+            
+            if not has_changes:
+                # No meaningful changes - don't process billing, keep LEGACY
+                self._apply_from_month_1 = None
+                self._apply_from_month_2 = None
+                return
+            
+            # Meaningful changes detected - will convert to AUTO
+            # Fall through to AUTO mode processing for calculation validation
+            is_auto_mode = True
+        
+        if not is_auto_mode:
+            return
         
         # Check for price changes (edit mode only)
         apply_from_1 = None
@@ -853,7 +978,6 @@ class KarteiRecordForm(forms.ModelForm):
         # Store apply_from values for view to use
         self._apply_from_month_1 = apply_from_1
         self._apply_from_month_2 = apply_from_2
-        self._billing_hours_amounts = hours_amounts
         
         # Calculate preliminary values to check for clamping
         # Actual calculation will be done in the view with the saved instance
@@ -1046,6 +1170,8 @@ class KarteiRecordForm(forms.ModelForm):
         - calculated_month_values: dict of final month values (edit mode)
         - calculated_base_amounts: dict of base amounts (edit mode)
         - flags: CalculationFlags (edit mode)
+        - should_convert_to_auto: True if LEGACY record should become AUTO
+        - touched_months: set of months affected by meaningful changes
         """
         return {
             'hours_amounts': getattr(self, '_billing_hours_amounts', {}),
@@ -1054,6 +1180,8 @@ class KarteiRecordForm(forms.ModelForm):
             'calculated_month_values': getattr(self, '_calculated_month_values', None),
             'calculated_base_amounts': getattr(self, '_calculated_base_amounts', None),
             'flags': getattr(self, '_calculation_flags', None),
+            'should_convert_to_auto': getattr(self, '_should_convert_to_auto', False),
+            'touched_months': getattr(self, '_touched_months', set()),
         }
     
     def save(self, commit: bool = True) -> KarteiRecord:

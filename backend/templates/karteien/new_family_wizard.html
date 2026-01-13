@@ -39,14 +39,45 @@ Admin-only page for creating a new family with multiple children in one pass.
         margin-bottom: 0.5rem;
     }
     .discount-checkboxes {
-        max-height: 150px;
+        min-height: 8rem;
+        max-height: 14rem;
         overflow-y: auto;
         border: 1px solid #dee2e6;
         border-radius: 0.25rem;
         padding: 0.5rem;
     }
-    .discount-checkboxes .form-check {
+    /* Fix checkbox list layout - override Bootstrap issues */
+    .discount-checkboxes > div,
+    .discount-checkboxes > ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    .discount-checkboxes > div > div,
+    .discount-checkboxes > ul > li,
+    .discount-checkboxes li {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+        width: 100%;
         margin-bottom: 0.25rem;
+        padding: 0.125rem 0;
+    }
+    .discount-checkboxes input[type="checkbox"] {
+        flex-shrink: 0;
+        margin-top: 0.2rem;
+        width: 1rem;
+        height: 1rem;
+    }
+    .discount-checkboxes label {
+        flex: 1;
+        word-break: break-word;
+        line-height: 1.3;
+        cursor: pointer;
+    }
+    /* Hidden/disabled state for family discount overlap */
+    .discount-checkboxes .discount-hidden-family {
+        display: none !important;
     }
 </style>
 {% endblock %}
@@ -161,17 +192,6 @@ Admin-only page for creating a new family with multiple children in one pass.
                             </label>
                             {% if header_form.is_monthly_contract.help_text %}
                             <div class="form-text">{{ header_form.is_monthly_contract.help_text }}</div>
-                            {% endif %}
-                        </div>
-
-                        <!-- Contract Status -->
-                        <div class="mb-3 form-check">
-                            {{ header_form.is_contract_terminated }}
-                            <label class="form-check-label" for="id_is_contract_terminated">
-                                {{ header_form.is_contract_terminated.label }}
-                            </label>
-                            {% if header_form.is_contract_terminated.help_text %}
-                            <div class="form-text">{{ header_form.is_contract_terminated.help_text }}</div>
                             {% endif %}
                         </div>
                         
@@ -670,8 +690,187 @@ Admin-only page for creating a new family with multiple children in one pass.
         yearSelect.addEventListener('change', function() {
             // Optionally reload to get fresh FamilyID
             // For now, FamilyID is regenerated on submit anyway
+            // Also reset all teacher/price dropdowns when year changes
+            resetAllDependentDropdowns();
         });
     }
+    
+    // =========================================================================
+    // Family Discount exclusion: hide/disable matching Eintragrabatte
+    // =========================================================================
+    
+    const familyDiscountSelect = document.getElementById('id_family_discount');
+    
+    /**
+     * Hide or show discount checkboxes based on family discount selection.
+     * When a discount is selected as Familienrabatt, it should not be selectable
+     * as Eintragrabatt for any child.
+     */
+    function syncFamilyDiscountExclusion() {
+        const selectedFamilyDiscountId = familyDiscountSelect ? familyDiscountSelect.value : '';
+        
+        // For each child form, find all discount checkboxes and toggle visibility
+        container.querySelectorAll('.child-form').forEach(form => {
+            const discountCheckboxes = form.querySelectorAll('.discount-checkboxes input[type="checkbox"]');
+            discountCheckboxes.forEach(checkbox => {
+                const checkboxValue = checkbox.value;
+                const wrapperEl = checkbox.closest('div') || checkbox.closest('li') || checkbox.parentElement;
+                
+                if (selectedFamilyDiscountId && checkboxValue === selectedFamilyDiscountId) {
+                    // Hide this option and uncheck it
+                    if (wrapperEl) wrapperEl.classList.add('discount-hidden-family');
+                    checkbox.checked = false;
+                    checkbox.disabled = true;
+                } else {
+                    // Show this option
+                    if (wrapperEl) wrapperEl.classList.remove('discount-hidden-family');
+                    checkbox.disabled = false;
+                }
+            });
+        });
+    }
+    
+    // Attach handler to family discount select
+    if (familyDiscountSelect) {
+        familyDiscountSelect.addEventListener('change', syncFamilyDiscountExclusion);
+        // Initial sync on page load
+        syncFamilyDiscountExclusion();
+    }
+    
+    // =========================================================================
+    // Dynamic filtering: filter teachers/prices by selected subject
+    // =========================================================================
+    
+    const SUBJECT_DEPENDENTS_URL = '{% url "karteien:subject_dependents" %}';
+    
+    /**
+     * Update teacher and price dropdowns based on selected subject.
+     * @param {HTMLSelectElement} subjectSelect - The subject dropdown
+     * @param {number} semester - 1 or 2
+     */
+    async function updateDependentDropdowns(subjectSelect, semester) {
+        const form = subjectSelect.closest('.child-form');
+        if (!form) return;
+        
+        const teacherSelect = form.querySelector(`[name$="-teacher${semester}_ref"]`);
+        const priceSelect = form.querySelector(`[name$="-price${semester}_ref"]`);
+        
+        if (!teacherSelect || !priceSelect) return;
+        
+        const subjectId = subjectSelect.value;
+        const year = yearSelect ? yearSelect.value : '';
+        
+        // If no subject selected, reset to empty
+        if (!subjectId || !year) {
+            resetDropdown(teacherSelect);
+            resetDropdown(priceSelect);
+            return;
+        }
+        
+        try {
+            const response = await fetch(
+                `${SUBJECT_DEPENDENTS_URL}?year=${encodeURIComponent(year)}&subject_id=${encodeURIComponent(subjectId)}`
+            );
+            
+            if (!response.ok) {
+                console.error('Failed to fetch subject dependents:', response.status);
+                return;
+            }
+            
+            const data = await response.json();
+            
+            // Populate teacher dropdown
+            populateDropdown(teacherSelect, data.teachers);
+            
+            // Populate price dropdown
+            populateDropdown(priceSelect, data.prices);
+            
+        } catch (error) {
+            console.error('Error fetching subject dependents:', error);
+        }
+    }
+    
+    /**
+     * Reset a dropdown to just the empty option.
+     * @param {HTMLSelectElement} select
+     */
+    function resetDropdown(select) {
+        select.innerHTML = '<option value="">---------</option>';
+    }
+    
+    /**
+     * Populate a dropdown with options.
+     * @param {HTMLSelectElement} select
+     * @param {Array<{id: number, label: string}>} items
+     */
+    function populateDropdown(select, items) {
+        // Keep current value if still valid
+        const currentValue = select.value;
+        
+        select.innerHTML = '<option value="">---------</option>';
+        
+        for (const item of items) {
+            const option = document.createElement('option');
+            option.value = item.id;
+            option.textContent = item.label;
+            select.appendChild(option);
+        }
+        
+        // Try to restore previous value if it's still in the list
+        if (currentValue) {
+            const optionExists = Array.from(select.options).some(opt => opt.value === currentValue);
+            if (optionExists) {
+                select.value = currentValue;
+            }
+        }
+    }
+    
+    /**
+     * Reset all teacher/price dropdowns (e.g., when year changes).
+     */
+    function resetAllDependentDropdowns() {
+        container.querySelectorAll('.child-form').forEach(form => {
+            ['1', '2'].forEach(semester => {
+                const teacherSelect = form.querySelector(`[name$="-teacher${semester}_ref"]`);
+                const priceSelect = form.querySelector(`[name$="-price${semester}_ref"]`);
+                if (teacherSelect) resetDropdown(teacherSelect);
+                if (priceSelect) resetDropdown(priceSelect);
+            });
+        });
+    }
+    
+    /**
+     * Attach subject change handlers to a form.
+     * @param {HTMLElement} form
+     */
+    function attachSubjectChangeHandlers(form) {
+        ['1', '2'].forEach(semester => {
+            const subjectSelect = form.querySelector(`[name$="-subject${semester}_ref"]`);
+            if (subjectSelect) {
+                subjectSelect.addEventListener('change', function() {
+                    updateDependentDropdowns(this, semester);
+                });
+            }
+        });
+    }
+    
+    // Attach handlers to existing forms
+    container.querySelectorAll('.child-form').forEach(attachSubjectChangeHandlers);
+    
+    // Override addBtn click to also attach subject handlers to new forms
+    const originalAddHandler = addBtn.onclick;
+    addBtn.addEventListener('click', function() {
+        // Wait for DOM update, then attach handlers to the new form
+        setTimeout(() => {
+            const forms = container.querySelectorAll('.child-form');
+            const newForm = forms[forms.length - 1];
+            if (newForm) {
+                attachSubjectChangeHandlers(newForm);
+            }
+            // Also sync family discount exclusion for the new form
+            syncFamilyDiscountExclusion();
+        }, 0);
+    });
 })();
 </script>
 {% endblock %}
