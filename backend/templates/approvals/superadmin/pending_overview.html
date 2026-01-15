@@ -150,6 +150,7 @@ Shows all unprocessed pending changes with filters and links to War/Ist view.
                             <th>Eltern</th>
                             <th>Kind</th>
                             <th>Jahr</th>
+                            <th>Kommentar</th>
                             <th>Erstellt</th>
                             <th>Aktualisiert</th>
                             <th class="text-center">Aktionen</th>
@@ -165,6 +166,16 @@ Shows all unprocessed pending changes with filters and links to War/Ist view.
                             <td>{{ pc.record.parent_name|default:"-" }}</td>
                             <td>{{ pc.record.child_name|default:"-" }}</td>
                             <td>{{ pc.record.year }}</td>
+                            <td>
+                                {% if pc.admin_comment %}
+                                <span title="{{ pc.admin_comment }}" class="text-info">
+                                    <i class="bi bi-chat-quote"></i>
+                                    {{ pc.admin_comment|truncatechars:30 }}
+                                </span>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
                             <td>{{ pc.created_at|date:"d.m.Y H:i" }}</td>
                             <td>{{ pc.updated_at|date:"d.m.Y H:i" }}</td>
                             <td class="text-center">

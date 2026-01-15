@@ -139,6 +139,35 @@ class TeacherCreateView(CatalogAdminMixin, CreateView):
     form_class = TeacherForm
     template_name = "catalog/teacher_form.html"
     success_url = reverse_lazy("catalog:teacher_list")
+
+    def get_initial(self) -> dict[str, Any]:
+        """Prefill form fields from query parameters.
+        
+        Parses 'full_name' query param as 'Nachname Vorname':
+        - If >= 2 words: first_name = last token, last_name = rest
+        - If 1 word: last_name = full_name, first_name = empty
+        """
+        initial = super().get_initial()
+        full_name = self.request.GET.get("full_name", "")
+        # Normalize whitespace: trim and collapse multiple spaces
+        full_name = " ".join(full_name.split())
+        if full_name:
+            parts = full_name.split()
+            if len(parts) >= 2:
+                # Last token is first_name, rest is last_name
+                initial["first_name"] = parts[-1]
+                initial["last_name"] = " ".join(parts[:-1])
+            else:
+                # Single word: treat as last_name
+                initial["last_name"] = full_name
+        return initial
+
+    def get_success_url(self) -> str:
+        """Redirect to 'next' if provided, otherwise to teacher list."""
+        next_url = self.request.POST.get("next") or self.request.GET.get("next", "")
+        if next_url:
+            return next_url
+        return super().get_success_url()
     
     def form_valid(self, form):
         messages.success(self.request, "Lehrer wurde erfolgreich erstellt.")
@@ -148,6 +177,7 @@ class TeacherCreateView(CatalogAdminMixin, CreateView):
         context = super().get_context_data(**kwargs)
         context["is_create"] = True
         context["page_title"] = "Neuer Lehrer"
+        context["next"] = self.request.GET.get("next", "")
         return context
 
 
@@ -211,6 +241,21 @@ class SubjectCreateView(CatalogAdminMixin, CreateView):
     form_class = SubjectForm
     template_name = "catalog/subject_form.html"
     success_url = reverse_lazy("catalog:subject_list")
+
+    def get_initial(self) -> dict[str, Any]:
+        """Prefill form fields from query parameters."""
+        initial = super().get_initial()
+        name = self.request.GET.get("name", "").strip()
+        if name:
+            initial["name"] = name
+        return initial
+
+    def get_success_url(self) -> str:
+        """Redirect to 'next' if provided, otherwise to subject list."""
+        next_url = self.request.POST.get("next") or self.request.GET.get("next", "")
+        if next_url:
+            return next_url
+        return super().get_success_url()
     
     def form_valid(self, form):
         messages.success(self.request, "Fach wurde erfolgreich erstellt.")
@@ -220,6 +265,7 @@ class SubjectCreateView(CatalogAdminMixin, CreateView):
         context = super().get_context_data(**kwargs)
         context["is_create"] = True
         context["page_title"] = "Neues Fach"
+        context["next"] = self.request.GET.get("next", "")
         return context
 
 
@@ -332,20 +378,43 @@ class AssignmentCreateView(CatalogAdminMixin, CreateView):
                 "Diese Zuweisung existiert bereits (gleicher Lehrer, Fach und Jahr)."
             )
             return self.form_invalid(form)
+
+    def get_success_url(self) -> str:
+        """Redirect to 'next' if provided, otherwise to assignment list."""
+        next_url = self.request.POST.get("next") or self.request.GET.get("next", "")
+        if next_url:
+            return next_url
+        return super().get_success_url()
     
     def get_context_data(self, **kwargs) -> dict[str, Any]:
         context = super().get_context_data(**kwargs)
         context["is_create"] = True
         context["page_title"] = "Neue Zuweisung"
+        context["next"] = self.request.GET.get("next", "")
         return context
     
     def get_initial(self):
+        """Prefill form fields from query parameters."""
         initial = super().get_initial()
         # Pre-fill year from query parameter
         year = self.request.GET.get("year")
         if year:
             try:
                 initial["year"] = int(year)
+            except ValueError:
+                pass
+        # Pre-fill subject from query parameter
+        subject_id = self.request.GET.get("subject")
+        if subject_id:
+            try:
+                initial["subject"] = int(subject_id)
+            except ValueError:
+                pass
+        # Pre-fill teacher from query parameter
+        teacher_id = self.request.GET.get("teacher")
+        if teacher_id:
+            try:
+                initial["teacher"] = int(teacher_id)
             except ValueError:
                 pass
         return initial
@@ -553,14 +622,58 @@ class PriceCreateView(CatalogAdminMixin, CreateView):
                 "Dieser Preis existiert bereits (gleicher Betrag, Fach und Jahr)."
             )
             return self.form_invalid(form)
+
+    def get_form_kwargs(self) -> dict[str, Any]:
+        """Pass require_comment flag to form."""
+        kwargs = super().get_form_kwargs()
+        # Check if require_comment=1 in query params
+        if self.request.GET.get("require_comment") == "1":
+            kwargs["require_comment"] = True
+        return kwargs
+
+    def get_success_url(self) -> str:
+        """Redirect to 'next' if provided, otherwise to price list."""
+        next_url = self.request.POST.get("next") or self.request.GET.get("next", "")
+        if next_url:
+            return next_url
+        return super().get_success_url()
     
     def get_context_data(self, **kwargs) -> dict[str, Any]:
+        from decimal import Decimal, InvalidOperation
         context = super().get_context_data(**kwargs)
         context["is_create"] = True
         context["page_title"] = "Neuer Preis"
+        context["next"] = self.request.GET.get("next", "")
+        context["require_comment"] = self.request.GET.get("require_comment") == "1"
+        
+        # Find duplicate prices with same year+subject+amount for hint
+        year = self.request.GET.get("year")
+        subject_id = self.request.GET.get("subject")
+        amount_str = self.request.GET.get("amount")
+        
+        existing_prices = []
+        if year and subject_id and amount_str:
+            try:
+                year_int = int(year)
+                subject_int = int(subject_id)
+                amount_dec = Decimal(amount_str)
+                existing_prices = list(
+                    PriceOption.objects.filter(
+                        year=year_int,
+                        subject_id=subject_int,
+                        amount=amount_dec,
+                        is_active=True,
+                    ).select_related("subject")
+                )
+            except (ValueError, InvalidOperation):
+                pass
+        context["existing_prices"] = existing_prices
+        
         return context
     
     def get_initial(self):
+        """Prefill form fields from query parameters."""
+        from decimal import Decimal, InvalidOperation
         initial = super().get_initial()
         # Pre-fill year from query parameter
         year = self.request.GET.get("year")
@@ -575,6 +688,13 @@ class PriceCreateView(CatalogAdminMixin, CreateView):
             try:
                 initial["subject"] = int(subject)
             except ValueError:
+                pass
+        # Pre-fill amount from query parameter
+        amount = self.request.GET.get("amount")
+        if amount:
+            try:
+                initial["amount"] = Decimal(amount)
+            except InvalidOperation:
                 pass
         return initial
 
@@ -996,6 +1116,8 @@ class RecordDiscountListView(CatalogAdminMixin, ListView):
         context["year"] = self.request.GET.get("year", "")
         context["family_id"] = self.request.GET.get("family_id", "")
         context["current_year"] = date.today().year
+        # Pass next parameter for return navigation
+        context["next"] = self.request.GET.get("next", "")
         return context
 
 
@@ -1027,6 +1149,10 @@ class RecordDiscountCreateView(CatalogAdminMixin, CreateView):
         return super().form_valid(form)
     
     def get_success_url(self):
+        # Check for next parameter first
+        next_url = self.request.GET.get("next") or self.request.POST.get("next", "")
+        if next_url:
+            return next_url
         record_pk = self.object.record.pkid
         return f"{reverse_lazy('catalog:record_discount_list')}?record_pk={record_pk}"
     
@@ -1043,6 +1169,9 @@ class RecordDiscountCreateView(CatalogAdminMixin, CreateView):
                 context["target_record"] = KarteiRecord.objects.get(pkid=int(record_pk))
             except (ValueError, KarteiRecord.DoesNotExist):
                 pass
+        
+        # Pass next parameter for form and back navigation
+        context["next"] = self.request.GET.get("next", "")
         
         return context
 
@@ -1063,6 +1192,10 @@ class RecordDiscountUpdateView(CatalogAdminMixin, UpdateView):
         return super().form_valid(form)
     
     def get_success_url(self):
+        # Check for next parameter first
+        next_url = self.request.GET.get("next") or self.request.POST.get("next", "")
+        if next_url:
+            return next_url
         record_pk = self.object.record.pkid
         return f"{reverse_lazy('catalog:record_discount_list')}?record_pk={record_pk}"
     
@@ -1071,6 +1204,8 @@ class RecordDiscountUpdateView(CatalogAdminMixin, UpdateView):
         context["is_create"] = False
         context["page_title"] = f"Eintrag-Rabatt bearbeiten: #{self.object.record.pkid}"
         context["target_record"] = self.object.record
+        # Pass next parameter for form and back navigation
+        context["next"] = self.request.GET.get("next", "")
         return context
 
 
@@ -1081,8 +1216,18 @@ class RecordDiscountDeleteView(CatalogAdminMixin, DeleteView):
     template_name = "catalog/record_discount_confirm_delete.html"
     success_url = reverse_lazy("catalog:record_discount_list")
     
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        # Pass next parameter for back navigation
+        context["next"] = self.request.GET.get("next", "")
+        return context
+    
     def form_valid(self, form):
         record_pk = self.object.record.pkid
+        # Check for next parameter first
+        next_url = self.request.GET.get("next") or self.request.POST.get("next", "")
         messages.success(self.request, "Eintrag-Rabatt wurde erfolgreich gelöscht.")
         response = super().form_valid(form)
+        if next_url:
+            return redirect(next_url)
         return redirect(f"{self.success_url}?record_pk={record_pk}")

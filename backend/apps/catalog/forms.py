@@ -174,7 +174,13 @@ class PriceOptionForm(forms.ModelForm):
             }),
         }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, require_comment: bool = False, **kwargs):
+        """Initialize form with optional require_comment flag.
+        
+        Args:
+            require_comment: If True, comment field becomes required.
+                             Used in quick-add workflow from legacy records.
+        """
         super().__init__(*args, **kwargs)
         # Filter only active subjects by default
         self.fields["subject"].queryset = Subject.objects.filter(is_active=True)
@@ -182,6 +188,13 @@ class PriceOptionForm(forms.ModelForm):
         # Set default year to current year
         if not self.instance.pk:
             self.fields["year"].initial = date.today().year
+        
+        # Make comment required in quick-add mode
+        if require_comment:
+            self.fields["comment"].required = True
+            self.fields["comment"].widget.attrs["placeholder"] = (
+                "Bitte Begründung angeben (Pflichtfeld im Schnell-Workflow)"
+            )
 
 
 class CopyPricesYearForm(forms.Form):

@@ -9,8 +9,8 @@ Includes autocomplete for parent/child names when creating new records.
 {% endblock %}
 
 {% block extra_css %}
-{% if is_create %}
 <style>
+{% if is_create %}
   /* Autocomplete dropdown styles */
   .autocomplete-wrapper {
     position: relative;
@@ -162,10 +162,10 @@ Includes autocomplete for parent/child names when creating new records.
       {% if not is_create and user.is_admin_role %}
       <div class="mt-3">
         <span class="text-muted me-2"><i class="bi bi-percent"></i> Eintragsrabatte:</span>
-        <a href="{% url 'catalog:record_discount_create' %}?record_pk={{ record.pkid }}" class="btn btn-sm btn-outline-success me-1">
+        <a href="{% url 'catalog:record_discount_create' %}?record_pk={{ record.pkid }}&next={% url 'karteien:record_update' record.pk %}%3Frefresh_billing%3D1" class="btn btn-sm btn-outline-success me-1">
           <i class="bi bi-plus-circle"></i> Eintragsrabatt hinzufügen
         </a>
-        <a href="{% url 'catalog:record_discount_list' %}?record_pk={{ record.pkid }}" class="btn btn-sm btn-outline-info">
+        <a href="{% url 'catalog:record_discount_list' %}?record_pk={{ record.pkid }}&next={% url 'karteien:record_update' record.pk %}%3Frefresh_billing%3D1" class="btn btn-sm btn-outline-info">
           <i class="bi bi-list-ul"></i> Eintragsrabatte anzeigen
         </a>
       </div>
@@ -325,6 +325,19 @@ Includes autocomplete for parent/child names when creating new records.
                 {% if form.subject1_ref.errors %}
                 <div class="invalid-feedback d-block">{{ form.subject1_ref.errors.0 }}</div>
                 {% endif %}
+                {# Legacy badge for subject1 #}
+                {% if not is_create and record.subject1 and not form.subject1_ref.value %}
+                <div class="alert alert-warning py-1 px-2 mt-1 mb-0 small">
+                  <span class="badge bg-secondary me-1">LEGACY</span>
+                  <strong>{{ record.subject1 }}</strong> — Fach fehlt im Katalog.
+                  {% if user.is_admin_role %}
+                  <a href="{% url 'catalog:subject_create' %}?name={{ record.subject1|urlencode }}&next={{ edit_next_url|urlencode }}" 
+                     class="btn btn-sm btn-outline-primary ms-2">
+                    <i class="bi bi-plus-circle"></i> Fach anlegen
+                  </a>
+                  {% endif %}
+                </div>
+                {% endif %}
               </div>
               <div class="col-md-6 mb-3">
                 <label for="{{ form.teacher1_ref.id_for_label }}" class="form-label">
@@ -333,6 +346,27 @@ Includes autocomplete for parent/child names when creating new records.
                 {{ form.teacher1_ref }}
                 {% if form.teacher1_ref.errors %}
                 <div class="invalid-feedback d-block">{{ form.teacher1_ref.errors.0 }}</div>
+                {% endif %}
+                {# Legacy badge for teacher1 #}
+                {% if not is_create and record.teacher1_legacy_name and not form.teacher1_ref.value %}
+                <div class="alert alert-warning py-1 px-2 mt-1 mb-0 small">
+                  <span class="badge bg-secondary me-1">LEGACY</span>
+                  <strong>{{ record.teacher1_legacy_name }}</strong> — Lehrer fehlt im Katalog oder nicht zugeordnet.
+                  {% if user.is_admin_role %}
+                  <div class="mt-1">
+                    <a href="{% url 'catalog:teacher_create' %}?full_name={{ record.teacher1_legacy_name|urlencode }}&next={{ edit_next_url|urlencode }}" 
+                       class="btn btn-sm btn-outline-primary">
+                      <i class="bi bi-plus-circle"></i> Lehrer anlegen
+                    </a>
+                    {% if teacher1_candidate_id and form.subject1_ref.value %}
+                    <a href="{% url 'catalog:assignment_create' %}?year={{ record.year }}&subject={{ form.subject1_ref.value }}&teacher={{ teacher1_candidate_id }}&next={{ edit_next_url|urlencode }}" 
+                       class="btn btn-sm btn-outline-success ms-1">
+                      <i class="bi bi-link-45deg"></i> Zuweisung erstellen
+                    </a>
+                    {% endif %}
+                  </div>
+                  {% endif %}
+                </div>
                 {% endif %}
               </div>
             </div>
@@ -347,6 +381,23 @@ Includes autocomplete for parent/child names when creating new records.
                 <div class="invalid-feedback d-block">{{ form.price1_ref.errors.0 }}</div>
                 {% endif %}
                 <small class="text-muted price-comment" id="price1_comment"></small>
+                {# Legacy badge for price1 #}
+                {% if not is_create and record.price1 != None and not form.price1_ref.value %}
+                <div class="alert alert-warning py-1 px-2 mt-1 mb-0 small">
+                  <span class="badge bg-secondary me-1">LEGACY</span>
+                  <strong>{{ record.price1 }} €</strong> — Preis fehlt im Preiskatalog.
+                  {% if user.is_admin_role %}
+                    {% if form.subject1_ref.value %}
+                    <a href="{% url 'catalog:price_create' %}?year={{ record.year }}&subject={{ form.subject1_ref.value }}&amount={{ record.price1 }}&require_comment=1&next={{ edit_next_url|urlencode }}" 
+                       class="btn btn-sm btn-outline-primary ms-2">
+                      <i class="bi bi-plus-circle"></i> Preis anlegen
+                    </a>
+                    {% else %}
+                    <span class="text-muted ms-2">Bitte zuerst Fach auswählen/anlegen.</span>
+                    {% endif %}
+                  {% endif %}
+                </div>
+                {% endif %}
               </div>
               <div class="col-md-6 mb-3">
                 <label for="{{ form.start_month_1.id_for_label }}" class="form-label">
@@ -373,6 +424,19 @@ Includes autocomplete for parent/child names when creating new records.
                 {% if form.subject2_ref.errors %}
                 <div class="invalid-feedback d-block">{{ form.subject2_ref.errors.0 }}</div>
                 {% endif %}
+                {# Legacy badge for subject2 #}
+                {% if not is_create and record.subject2 and not form.subject2_ref.value %}
+                <div class="alert alert-warning py-1 px-2 mt-1 mb-0 small">
+                  <span class="badge bg-secondary me-1">LEGACY</span>
+                  <strong>{{ record.subject2 }}</strong> — Fach fehlt im Katalog.
+                  {% if user.is_admin_role %}
+                  <a href="{% url 'catalog:subject_create' %}?name={{ record.subject2|urlencode }}&next={{ edit_next_url|urlencode }}" 
+                     class="btn btn-sm btn-outline-primary ms-2">
+                    <i class="bi bi-plus-circle"></i> Fach anlegen
+                  </a>
+                  {% endif %}
+                </div>
+                {% endif %}
               </div>
               <div class="col-md-6 mb-3">
                 <label for="{{ form.teacher2_ref.id_for_label }}" class="form-label">
@@ -381,6 +445,27 @@ Includes autocomplete for parent/child names when creating new records.
                 {{ form.teacher2_ref }}
                 {% if form.teacher2_ref.errors %}
                 <div class="invalid-feedback d-block">{{ form.teacher2_ref.errors.0 }}</div>
+                {% endif %}
+                {# Legacy badge for teacher2 #}
+                {% if not is_create and record.teacher2_legacy_name and not form.teacher2_ref.value %}
+                <div class="alert alert-warning py-1 px-2 mt-1 mb-0 small">
+                  <span class="badge bg-secondary me-1">LEGACY</span>
+                  <strong>{{ record.teacher2_legacy_name }}</strong> — Lehrer fehlt im Katalog oder nicht zugeordnet.
+                  {% if user.is_admin_role %}
+                  <div class="mt-1">
+                    <a href="{% url 'catalog:teacher_create' %}?full_name={{ record.teacher2_legacy_name|urlencode }}&next={{ edit_next_url|urlencode }}" 
+                       class="btn btn-sm btn-outline-primary">
+                      <i class="bi bi-plus-circle"></i> Lehrer anlegen
+                    </a>
+                    {% if teacher2_candidate_id and form.subject2_ref.value %}
+                    <a href="{% url 'catalog:assignment_create' %}?year={{ record.year }}&subject={{ form.subject2_ref.value }}&teacher={{ teacher2_candidate_id }}&next={{ edit_next_url|urlencode }}" 
+                       class="btn btn-sm btn-outline-success ms-1">
+                      <i class="bi bi-link-45deg"></i> Zuweisung erstellen
+                    </a>
+                    {% endif %}
+                  </div>
+                  {% endif %}
+                </div>
                 {% endif %}
               </div>
             </div>
@@ -395,6 +480,23 @@ Includes autocomplete for parent/child names when creating new records.
                 <div class="invalid-feedback d-block">{{ form.price2_ref.errors.0 }}</div>
                 {% endif %}
                 <small class="text-muted price-comment" id="price2_comment"></small>
+                {# Legacy badge for price2 #}
+                {% if not is_create and record.price2 != None and not form.price2_ref.value %}
+                <div class="alert alert-warning py-1 px-2 mt-1 mb-0 small">
+                  <span class="badge bg-secondary me-1">LEGACY</span>
+                  <strong>{{ record.price2 }} €</strong> — Preis fehlt im Preiskatalog.
+                  {% if user.is_admin_role %}
+                    {% if form.subject2_ref.value %}
+                    <a href="{% url 'catalog:price_create' %}?year={{ record.year }}&subject={{ form.subject2_ref.value }}&amount={{ record.price2 }}&require_comment=1&next={{ edit_next_url|urlencode }}" 
+                       class="btn btn-sm btn-outline-primary ms-2">
+                      <i class="bi bi-plus-circle"></i> Preis anlegen
+                    </a>
+                    {% else %}
+                    <span class="text-muted ms-2">Bitte zuerst Fach auswählen/anlegen.</span>
+                    {% endif %}
+                  {% endif %}
+                </div>
+                {% endif %}
               </div>
               <div class="col-md-6 mb-3">
                 <label for="{{ form.start_month_2.id_for_label }}" class="form-label">
@@ -466,6 +568,42 @@ Includes autocomplete for parent/child names when creating new records.
               </small>
             </div>
             
+            {# Discounts disabled months fields - shown only when checkbox is checked #}
+            <div id="discounts-disabled-months-container" class="mb-3 ps-4" style="display: none;">
+              <div class="card bg-light border-secondary">
+                <div class="card-body py-2">
+                  <p class="mb-2 small text-muted">
+                    <i class="bi bi-info-circle"></i>
+                    Optional: Geben Sie an, für welche Monate die Rabatte deaktiviert werden sollen. 
+                    Leer = alle Monate.
+                  </p>
+                  
+                  <div class="row g-2 mb-2">
+                    <div class="col-md-4">
+                      <label for="{{ form.discounts_disabled_von.id_for_label }}" class="form-label small">
+                        Von Monat
+                      </label>
+                      {{ form.discounts_disabled_von }}
+                    </div>
+                    <div class="col-md-4">
+                      <label for="{{ form.discounts_disabled_bis.id_for_label }}" class="form-label small">
+                        Bis Monat
+                      </label>
+                      {{ form.discounts_disabled_bis }}
+                    </div>
+                  </div>
+                  
+                  <div class="mb-1">
+                    <label for="{{ form.discounts_disabled_csv.id_for_label }}" class="form-label small">
+                      Oder Monate (CSV)
+                    </label>
+                    {{ form.discounts_disabled_csv }}
+                    <small class="text-muted">z.B. "1,3,7,12" - wird mit Bereich kombiniert</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
             {# Contract type/status fields (Admin only) #}
             {% if user.is_admin_role %}
             <hr />
@@ -505,6 +643,52 @@ Includes autocomplete for parent/child names when creating new records.
                 {% endif %}
               </div>
             </div>
+            
+            {# Effective month selectors (shown only in edit mode) #}
+            {% if not is_create %}
+            <div class="row" id="contract-effective-months-row">
+              <div class="col-md-6 mb-3" id="contract-type-effective-month-wrapper" style="display: none;">
+                <label for="{{ form.contract_type_effective_month.id_for_label }}" class="form-label">
+                  <i class="bi bi-calendar-event"></i> Vertragstyp ab Monat
+                </label>
+                {{ form.contract_type_effective_month }}
+                {% if form.contract_type_effective_month.errors %}
+                <div class="invalid-feedback d-block">{{ form.contract_type_effective_month.errors.0 }}</div>
+                {% endif %}
+                <small class="text-muted">{{ form.contract_type_effective_month.help_text }}</small>
+              </div>
+              <div class="col-md-6 mb-3" id="contract-status-effective-month-wrapper" style="display: none;">
+                <label for="{{ form.contract_status_effective_month.id_for_label }}" class="form-label">
+                  <i class="bi bi-calendar-event"></i> Vertragsstatus ab Monat
+                </label>
+                {{ form.contract_status_effective_month }}
+                {% if form.contract_status_effective_month.errors %}
+                <div class="invalid-feedback d-block">{{ form.contract_status_effective_month.errors.0 }}</div>
+                {% endif %}
+                <small class="text-muted">{{ form.contract_status_effective_month.help_text }}</small>
+                <div id="termination-warning" class="alert alert-warning mt-2 py-1 small" style="display: none;">
+                  <i class="bi bi-exclamation-triangle"></i>
+                  Bei Kündigung werden alle Monate ab dem gewählten Monat auf 0 € gesetzt.
+                </div>
+              </div>
+            </div>
+            
+            {# Confirmation for contract type change without price adjustment #}
+            <div class="mb-3" id="confirm-contract-change-wrapper" style="display: none;">
+              <label for="{{ form.confirm_contract_change.id_for_label }}" class="form-label">
+                <i class="bi bi-shield-exclamation"></i> Bestätigung erforderlich
+              </label>
+              {{ form.confirm_contract_change }}
+              {% if form.confirm_contract_change.errors %}
+              <div class="invalid-feedback d-block">{{ form.confirm_contract_change.errors.0 }}</div>
+              {% endif %}
+              <small class="text-muted">{{ form.confirm_contract_change.help_text }}</small>
+              <div class="alert alert-info mt-2 py-1 small">
+                <i class="bi bi-info-circle"></i>
+                Sie ändern den Vertragstyp ohne den Preis anzupassen. Bitte geben Sie "Ja" ein, um fortzufahren.
+              </div>
+            </div>
+            {% endif %}
             {% endif %}
           </div>
         </div>
@@ -725,16 +909,25 @@ Includes autocomplete for parent/child names when creating new records.
     </div>
     {% endif %}
 
-    <!-- Comment for risky changes -->
+    <!-- Comment for changes (required for Admin when making changes) -->
     {% if not is_create %}
     <div class="card mb-4">
       <div class="card-header">
         <i class="bi bi-chat-text"></i>
         Kommentar (Notitzen)
+        {% if user.is_admin_role %}
+        <span class="text-danger">*</span>
+        <small class="text-muted ms-2">(Pflichtfeld bei Änderungen)</small>
+        {% endif %}
       </div>
       <div class="card-body">
         {{ form.comment }}
-        <small class="text-muted"> {{ form.comment.help_text }} </small>
+        {% if form.comment.errors %}
+        <div class="invalid-feedback d-block">
+          {% for error in form.comment.errors %}{{ error }}{% endfor %}
+        </div>
+        {% endif %}
+        <small class="text-muted">{{ form.comment.help_text }}</small>
       </div>
     </div>
     {% endif %}
@@ -1320,6 +1513,9 @@ Includes autocomplete for parent/child names when creating new records.
   // Billing Preview (live preview in edit mode)
   // ==========================================================================
   
+  // CSRF token for fetch requests (needed for billing preview API)
+  const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+  
   const PREVIEW_DEBOUNCE_DELAY = 500; // ms
   const billingPreviewUrl = '{% url "karteien:billing_preview_api" record.pk %}';
   const monthBreakdownUrl = '{% url "karteien:month_breakdown_api" record.pk %}';
@@ -1344,6 +1540,14 @@ Includes autocomplete for parent/child names when creating new records.
     subject2Select, price2Select,
     document.getElementById('id_start_month_2'),
     document.getElementById('id_apply_from_month_2'),
+    // Discounts disabled fields
+    document.getElementById('id_discounts_disabled'),
+    document.getElementById('id_discounts_disabled_von'),
+    document.getElementById('id_discounts_disabled_bis'),
+    document.getElementById('id_discounts_disabled_csv'),
+    // Contract status fields (Admin only)
+    document.getElementById('id_contract_status'),
+    document.getElementById('id_contract_status_effective_month'),
   ];
   
   // Add hours fields as triggers
@@ -1352,6 +1556,104 @@ Includes autocomplete for parent/child names when creating new records.
       previewTriggers.push(monthFields[m].hoursInput);
     }
   }
+  
+  // ==========================================================================
+  // Discounts Disabled Months Toggle
+  // ==========================================================================
+  
+  const discountsDisabledCheckbox = document.getElementById('id_discounts_disabled');
+  const discountsDisabledMonthsContainer = document.getElementById('discounts-disabled-months-container');
+  
+  function updateDiscountsDisabledMonthsVisibility() {
+    if (discountsDisabledCheckbox && discountsDisabledMonthsContainer) {
+      if (discountsDisabledCheckbox.checked) {
+        discountsDisabledMonthsContainer.style.display = 'block';
+      } else {
+        discountsDisabledMonthsContainer.style.display = 'none';
+      }
+    }
+  }
+  
+  // Initialize visibility on load
+  updateDiscountsDisabledMonthsVisibility();
+  
+  // Toggle on checkbox change
+  if (discountsDisabledCheckbox) {
+    discountsDisabledCheckbox.addEventListener('change', updateDiscountsDisabledMonthsVisibility);
+  }
+  
+  // ==========================================================================
+  // Contract Effective Month Selectors Toggle (Edit mode only, Admin only)
+  // ==========================================================================
+  
+  {% if not is_create and user.is_admin_role %}
+  const contractTypeSelect = document.getElementById('id_contract_type');
+  const contractStatusSelect = document.getElementById('id_contract_status');
+  const contractTypeEffectiveMonthWrapper = document.getElementById('contract-type-effective-month-wrapper');
+  const contractStatusEffectiveMonthWrapper = document.getElementById('contract-status-effective-month-wrapper');
+  const confirmContractChangeWrapper = document.getElementById('confirm-contract-change-wrapper');
+  const terminationWarning = document.getElementById('termination-warning');
+  
+  // Original values for comparison
+  const originalContractType = '{{ record.is_monthly_contract|yesno:"monthly,yearly" }}';
+  const originalContractStatus = '{{ record.is_contract_terminated|yesno:"terminated,active" }}';
+  
+  function updateContractEffectiveMonthsVisibility() {
+    // Contract type effective month - show if contract type changed
+    if (contractTypeSelect && contractTypeEffectiveMonthWrapper) {
+      const currentType = contractTypeSelect.value;
+      if (currentType !== originalContractType) {
+        contractTypeEffectiveMonthWrapper.style.display = 'block';
+      } else {
+        contractTypeEffectiveMonthWrapper.style.display = 'none';
+      }
+    }
+    
+    // Contract status effective month - show if contract status changed
+    if (contractStatusSelect && contractStatusEffectiveMonthWrapper) {
+      const currentStatus = contractStatusSelect.value;
+      if (currentStatus !== originalContractStatus) {
+        contractStatusEffectiveMonthWrapper.style.display = 'block';
+        
+        // Show termination warning if becoming terminated
+        if (terminationWarning) {
+          if (currentStatus === 'terminated') {
+            terminationWarning.style.display = 'block';
+          } else {
+            terminationWarning.style.display = 'none';
+          }
+        }
+      } else {
+        contractStatusEffectiveMonthWrapper.style.display = 'none';
+        if (terminationWarning) {
+          terminationWarning.style.display = 'none';
+        }
+      }
+    }
+    
+    // Confirm contract change - show if type changed (will be validated on server)
+    // We show it always when type changes; server will decide if confirmation is actually needed
+    if (contractTypeSelect && confirmContractChangeWrapper) {
+      const currentType = contractTypeSelect.value;
+      if (currentType !== originalContractType) {
+        confirmContractChangeWrapper.style.display = 'block';
+      } else {
+        confirmContractChangeWrapper.style.display = 'none';
+      }
+    }
+  }
+  
+  // Initialize visibility on load
+  updateContractEffectiveMonthsVisibility();
+  
+  // Toggle on select change
+  if (contractTypeSelect) {
+    contractTypeSelect.addEventListener('change', updateContractEffectiveMonthsVisibility);
+  }
+  if (contractStatusSelect) {
+    contractStatusSelect.addEventListener('change', updateContractEffectiveMonthsVisibility);
+  }
+  {% endif %}
   
   // Debounce helper
   function debouncePreview(func, wait) {
@@ -1377,6 +1679,14 @@ Includes autocomplete for parent/child names when creating new records.
       price2_ref: price2Select ? price2Select.value : '',
       start_month_2: document.getElementById('id_start_month_2')?.value || '7',
       apply_from_month_2: document.getElementById('id_apply_from_month_2')?.value || '',
+      // Discounts disabled fields
+      discounts_disabled: document.getElementById('id_discounts_disabled')?.checked ? 'true' : 'false',
+      discounts_disabled_von: document.getElementById('id_discounts_disabled_von')?.value || '',
+      discounts_disabled_bis: document.getElementById('id_discounts_disabled_bis')?.value || '',
+      discounts_disabled_csv: document.getElementById('id_discounts_disabled_csv')?.value || '',
+      // Contract status fields (for termination preview)
+      contract_status: document.getElementById('id_contract_status')?.value || '',
+      contract_status_effective_month: document.getElementById('id_contract_status_effective_month')?.value || '',
     };
     
     // Add hours
@@ -1406,10 +1716,9 @@ Includes autocomplete for parent/child names when creating new records.
     input.classList.remove('month-field-changed', 'month-field-legacy');
     
     if (data.source === 'calculated') {
-      // Update value in input (for disabled AUTO fields)
-      if (input.disabled || input.readOnly) {
-        input.value = data.value;
-      }
+      // Update value in input - always show preview value for calculated months
+      // This works for both AUTO mode (disabled) and LEGACY mode (enabled)
+      input.value = data.value;
       
       // Add changed styling if in changed_months
       if (lastPreviewResult && lastPreviewResult.changed_months.includes(month)) {
@@ -1615,6 +1924,17 @@ Includes autocomplete for parent/child names when creating new records.
   
   // Initial preview load
   fetchBillingPreview();
+  
+  // Check for refresh_billing parameter (returned from catalog after adding/editing discount)
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('refresh_billing') === '1') {
+    // Remove the parameter from URL to avoid re-triggering on refresh
+    const cleanUrl = window.location.pathname;
+    window.history.replaceState({}, document.title, cleanUrl);
+    
+    // Trigger immediate preview refresh (already done above, but ensure it runs)
+    console.info('Billing preview refreshed after discount change');
+  }
   
   {% endif %}
 })();

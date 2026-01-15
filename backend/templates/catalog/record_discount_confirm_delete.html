@@ -66,11 +66,22 @@ Record discount delete confirmation.
                     
                     <form method="post">
                         {% csrf_token %}
+                        {# Pass next parameter for redirect after delete #}
+                        {% if next %}
+                        <input type="hidden" name="next" value="{{ next }}">
+                        {% endif %}
                         <div class="d-flex justify-content-between">
+                            {% if next %}
+                            <a href="{{ next }}" class="btn btn-outline-primary">
+                                <i class="bi bi-arrow-left"></i>
+                                Zurück zum Datensatz
+                            </a>
+                            {% else %}
                             <a href="{% url 'catalog:record_discount_list' %}?record_pk={{ object.record.pkid }}" class="btn btn-outline-secondary">
                                 <i class="bi bi-arrow-left"></i>
                                 Abbrechen
                             </a>
+                            {% endif %}
                             <button type="submit" class="btn btn-danger">
                                 <i class="bi bi-trash"></i>
                                 Endgültig löschen

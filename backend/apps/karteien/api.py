@@ -591,7 +591,7 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
     
     Calculates what the month values would be based on form inputs,
     without saving anything. Returns preview data with source information
-    for each month (legacy vs calculated).
+    for each month (legacy vs calculated). Applies all discounts (family + record).
     
     Access: Admin only (users who can edit kartei).
     
@@ -619,11 +619,17 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
     from decimal import Decimal
     import json
     
-    from apps.catalog.models import FamilyDiscount, RecordDiscount
+    from apps.catalog.models import FamilyDiscount, RecordDiscount, DiscountKind
     
     from .billing import (
         is_per_hour_subject,
-        ZERO, round_money_up
+        is_nachhilfe_subject,
+        build_base_amounts,
+        calculate_month_values,
+        collect_discounts_for_month,
+        get_semester_for_month,
+        get_subject_name_for_semester,
+        ZERO, round_money_up, MAX_PERCENT_DISCOUNT
     )
     
     user = request.user
@@ -685,72 +691,68 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         if val is not None and val != '':
             hours_amounts[f'month_{m}'] = val
     
-    # Build a "virtual" record state for calculation
-    # We'll temporarily modify record attributes for preview (not saved)
-    original_values = {}
+    # Extract discounts_disabled fields
+    discounts_disabled_str = data.get('discounts_disabled', '')
+    discounts_disabled = discounts_disabled_str in ('true', 'True', '1', True)
+    
+    # Parse discounts_disabled_months from von/bis/csv
+    discounts_disabled_months: list[int] = []
+    
+    von_str = data.get('discounts_disabled_von', '')
+    bis_str = data.get('discounts_disabled_bis', '')
+    csv_str = data.get('discounts_disabled_csv', '')
+    
+    von_month = parse_int_or_none(von_str)
+    bis_month = parse_int_or_none(bis_str)
+    
+    months_set: set[int] = set()
+    
+    # Add range months
+    if von_month is not None and bis_month is not None:
+        if 1 <= von_month <= 12 and 1 <= bis_month <= 12:
+            start = min(von_month, bis_month)
+            end = max(von_month, bis_month)
+            for m in range(start, end + 1):
+                months_set.add(m)
+    elif von_month is not None and 1 <= von_month <= 12:
+        months_set.add(von_month)
+    elif bis_month is not None and 1 <= bis_month <= 12:
+        months_set.add(bis_month)
+    
+    # Parse CSV
+    if csv_str:
+        for part in csv_str.split(','):
+            part = part.strip()
+            if part:
+                try:
+                    month = int(part)
+                    if 1 <= month <= 12:
+                        months_set.add(month)
+                except (ValueError, TypeError):
+                    pass
+    
+    discounts_disabled_months = sorted(months_set)
+    
+    # Extract contract status fields for termination preview
+    contract_status_str = data.get('contract_status', '')
+    contract_status_effective_month_str = data.get('contract_status_effective_month', '')
+    
+    # Parse contract_status_effective_month
+    preview_is_terminated = contract_status_str == 'terminated'
+    preview_terminated_from_month = parse_int_or_none(contract_status_effective_month_str)
+    if preview_terminated_from_month is not None:
+        if not (1 <= preview_terminated_from_month <= 12):
+            preview_terminated_from_month = None
     
     # Store original month values for comparison
+    original_values = {}
     for m in range(1, 13):
         original_values[f'month_{m}'] = getattr(record, f'month_{m}', None)
-    
-    # Get subject names for preview
-    subject1_name = None
-    subject2_name = None
-    price1_amount = None
-    price2_amount = None
-    price1_is_legacy = False
-    price2_is_legacy = False
-    
-    if subject1_ref_id:
-        try:
-            subject1 = Subject.objects.get(pk=subject1_ref_id)
-            subject1_name = subject1.name
-        except Subject.DoesNotExist:
-            pass
-    else:
-        subject1_name = record.subject1
-    
-    if subject2_ref_id:
-        try:
-            subject2 = Subject.objects.get(pk=subject2_ref_id)
-            subject2_name = subject2.name
-        except Subject.DoesNotExist:
-            pass
-    else:
-        subject2_name = record.subject2
-    
-    if price1_ref_id:
-        try:
-            price1_option = PriceOption.objects.get(pk=price1_ref_id)
-            price1_amount = price1_option.amount
-        except PriceOption.DoesNotExist:
-            pass
-    else:
-        price1_amount = record.price1
-        price1_is_legacy = True
-    
-    if price2_ref_id:
-        try:
-            price2_option = PriceOption.objects.get(pk=price2_ref_id)
-            price2_amount = price2_option.amount
-        except PriceOption.DoesNotExist:
-            pass
-    else:
-        price2_amount = record.price2
-        price2_is_legacy = True
-    
-    # Build result structure
-    months_result = {}
-    changed_months = []
-    warnings = []
     
     # Check if record is LEGACY mode
     is_legacy_mode = record.months_mode == MonthsMode.LEGACY
     
-    # Determine which months would be affected by changes
-    # For LEGACY mode, we need to track which months are being recalculated
-    
-    # Fetch discounts
+    # Fetch discounts for the record
     family_discounts = list(
         FamilyDiscount.objects.filter(
             year=record.year,
@@ -762,58 +764,143 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         record.record_discounts.select_related('discount')
     ) if record.pk else []
     
-    # For each month, determine source and calculate value
+    # Determine which months would be affected by apply_from parameters
+    # For LEGACY mode, months before apply_from are NOT recalculated
+    affected_months = set()
     for month_num in range(1, 13):
-        field_key = f'month_{month_num}'
-        
-        # Determine semester
         semester = 1 if month_num <= 6 else 2
-        
-        # Get subject/price for this semester
-        if semester == 1:
-            subj_name = subject1_name
-            price = price1_amount
-            start_m = start_month_1
-            apply_from = apply_from_month_1
-            is_price_legacy = price1_is_legacy
-        else:
-            subj_name = subject2_name
-            price = price2_amount
-            start_m = start_month_2
-            apply_from = apply_from_month_2
-            is_price_legacy = price2_is_legacy
-        
-        # Get hours for this month
-        hours_val = hours_amounts.get(field_key)
-        if hours_val is None:
-            # Try to get from record's hours_amounts
-            record_hours = getattr(record, 'hours_amounts', None) or {}
-            hours_val = record_hours.get(field_key)
-        
-        # Determine if this month should be recalculated or kept as legacy
-        current_value = original_values[field_key]
-        
-        # Month is "affected" if:
-        # 1. apply_from is set and month >= apply_from
-        # 2. Or if this is a new calculation (AUTO mode)
-        is_affected = False
-        reason_parts = []
+        apply_from = apply_from_month_1 if semester == 1 else apply_from_month_2
         
         if is_legacy_mode:
-            # For LEGACY records, only recalculate if:
-            # - apply_from is set and month >= apply_from
-            # - OR hours were provided for hourly subjects
+            # Only affected if apply_from is set and month >= apply_from
             if apply_from is not None and month_num >= apply_from:
-                is_affected = True
-                reason_parts.append(f"Neuberechnung ab Monat {apply_from}")
-            elif is_per_hour_subject(subj_name) and hours_val:
-                is_affected = True
-                reason_parts.append("Stunden eingegeben")
+                affected_months.add(month_num)
+            # Also affected if hours were provided for hourly subjects
+            elif hours_amounts.get(f'month_{month_num}'):
+                affected_months.add(month_num)
         else:
             # AUTO mode - all months are calculated
-            is_affected = True
+            affected_months.add(month_num)
+    
+    # Temporarily modify record attributes for preview (not saved)
+    # Store originals to restore later (though not strictly necessary since we don't save)
+    orig_subject1_ref_id = record.subject1_ref_id
+    orig_subject2_ref_id = record.subject2_ref_id
+    orig_price1_ref_id = record.price1_ref_id
+    orig_price2_ref_id = record.price2_ref_id
+    orig_start_month_1 = record.start_month_1
+    orig_start_month_2 = record.start_month_2
+    orig_hours_amounts = record.hours_amounts
+    orig_base_amounts = record.base_amounts
+    orig_discounts_disabled = record.discounts_disabled
+    orig_discounts_disabled_months = record.discounts_disabled_months
+    orig_is_contract_terminated = record.is_contract_terminated
+    orig_contract_terminated_from_month = record.contract_terminated_from_month
+    
+    # Apply preview parameters to record (in-memory only)
+    if subject1_ref_id is not None:
+        record.subject1_ref_id = subject1_ref_id
+    if subject2_ref_id is not None:
+        record.subject2_ref_id = subject2_ref_id
+    if price1_ref_id is not None:
+        record.price1_ref_id = price1_ref_id
+    if price2_ref_id is not None:
+        record.price2_ref_id = price2_ref_id
+    record.start_month_1 = start_month_1
+    record.start_month_2 = start_month_2
+    
+    # Apply discounts_disabled fields
+    record.discounts_disabled = discounts_disabled
+    record.discounts_disabled_months = discounts_disabled_months
+    
+    # Apply contract termination preview
+    # Only override if contract_status was provided in the request
+    if contract_status_str:
+        record.is_contract_terminated = preview_is_terminated
+        record.contract_terminated_from_month = preview_terminated_from_month if preview_is_terminated else None
+    
+    # Merge hours_amounts with record's existing hours
+    merged_hours = dict(orig_hours_amounts or {})
+    merged_hours.update(hours_amounts)
+    record.hours_amounts = merged_hours
+    
+    # Build base amounts using the billing module
+    base_amounts = build_base_amounts(
+        record,
+        apply_from_month_1=apply_from_month_1,
+        apply_from_month_2=apply_from_month_2,
+        hours_amounts=merged_hours,
+    )
+    
+    # Temporarily set base_amounts on record for calculate_month_values
+    record.base_amounts = base_amounts
+    
+    # Calculate final values with discounts applied
+    final_values, calc_flags = calculate_month_values(
+        record,
+        family_discounts=family_discounts,
+        record_discounts=record_discounts,
+        base_amounts=base_amounts,
+    )
+    
+    # Restore original record state
+    record.subject1_ref_id = orig_subject1_ref_id
+    record.subject2_ref_id = orig_subject2_ref_id
+    record.price1_ref_id = orig_price1_ref_id
+    record.price2_ref_id = orig_price2_ref_id
+    record.start_month_1 = orig_start_month_1
+    record.start_month_2 = orig_start_month_2
+    record.hours_amounts = orig_hours_amounts
+    record.base_amounts = orig_base_amounts
+    record.discounts_disabled = orig_discounts_disabled
+    record.discounts_disabled_months = orig_discounts_disabled_months
+    record.is_contract_terminated = orig_is_contract_terminated
+    record.contract_terminated_from_month = orig_contract_terminated_from_month
+    
+    # Get price info for reason building
+    price1_is_legacy = price1_ref_id is None and record.price1 is not None
+    price2_is_legacy = price2_ref_id is None and record.price2 is not None
+    
+    # Get subject names for preview (using the values from form or record)
+    def get_subject_name(semester: int) -> str | None:
+        """Get subject name for a semester based on form inputs or record."""
+        if semester == 1:
+            if subject1_ref_id:
+                try:
+                    return Subject.objects.get(pk=subject1_ref_id).name
+                except Subject.DoesNotExist:
+                    pass
+            if record.subject1_ref_id:
+                try:
+                    return Subject.objects.get(pk=record.subject1_ref_id).name
+                except Subject.DoesNotExist:
+                    pass
+            return record.subject1
+        else:
+            if subject2_ref_id:
+                try:
+                    return Subject.objects.get(pk=subject2_ref_id).name
+                except Subject.DoesNotExist:
+                    pass
+            if record.subject2_ref_id:
+                try:
+                    return Subject.objects.get(pk=record.subject2_ref_id).name
+                except Subject.DoesNotExist:
+                    pass
+            return record.subject2
+    
+    # Build result structure
+    months_result = {}
+    changed_months = []
+    warnings = []
+    
+    # For each month, build response with reason
+    for month_num in range(1, 13):
+        field_key = f'month_{month_num}'
+        current_value = original_values[field_key]
         
-        if not is_affected:
+        # Check if this month is affected (recalculated)
+        if month_num not in affected_months:
             # Keep legacy value
             months_result[str(month_num)] = {
                 'value': str(current_value) if current_value else '0.00',
@@ -822,64 +909,121 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
             }
             continue
         
-        # Calculate new value for this month
-        if month_num < start_m:
-            # Before start month
-            new_value = ZERO
-            reason = f"Vor Startmonat ({start_m})"
-        elif not subj_name or price is None:
-            # No subject or price
-            new_value = ZERO
-            reason = "Kein Fach oder Preis ausgewählt"
-        else:
-            # Calculate base amount
-            if is_per_hour_subject(subj_name):
-                # Hourly subject
-                hours_decimal = parse_decimal_or_none(hours_val) or ZERO
-                if hours_decimal == ZERO:
-                    new_value = ZERO
-                    reason = f"Stundenfach ({subj_name}), keine Stunden eingegeben"
-                else:
-                    base = hours_decimal * Decimal(str(price))
-                    new_value = round_money_up(base)
-                    reason_parts.append(f"Stundenfach: {hours_decimal} Std × {price} €")
-            else:
-                # Monthly subject
-                base = Decimal(str(price))
-                new_value = round_money_up(base)
-                reason_parts.append(f"Monatspreis: {price} €")
-            
-            # Add price source info
-            if is_price_legacy:
-                reason_parts.append("(Basis aus Legacy-Preis, nicht Katalog)")
-            
-            # Apply discounts (simplified - for full breakdown use month_breakdown_api)
-            # We'll note if discounts apply but not recalculate in detail here
-            if new_value > ZERO and (family_discounts or record_discounts):
-                reason_parts.append("Rabatte werden angewendet")
-            
-            reason = "; ".join(reason_parts) if reason_parts else "Berechnet"
+        # Month is being calculated
+        semester = 1 if month_num <= 6 else 2
+        subj_name = get_subject_name(semester)
+        is_price_legacy = price1_is_legacy if semester == 1 else price2_is_legacy
+        start_m = start_month_1 if semester == 1 else start_month_2
         
-        # Check if value changed
+        base = base_amounts.get(field_key, ZERO)
+        final = final_values.get(field_key, ZERO)
+        
+        # Build reason string
+        reason_parts = []
+        
+        # Check if month is zeroed due to contract termination
+        if month_num in calc_flags.terminated_months:
+            termination_month = calc_flags.termination_from_month
+            reason = f"Vertrag gekündigt ab Monat {termination_month}"
+        elif month_num < start_m:
+            reason = f"Vor Startmonat ({start_m})"
+        elif not subj_name:
+            reason = "Kein Fach ausgewählt"
+        elif base == ZERO:
+            if is_per_hour_subject(subj_name):
+                reason = f"Stundenfach ({subj_name}), keine Stunden eingegeben"
+            else:
+                reason = "Kein Preis ausgewählt"
+        else:
+            # Build base description
+            if is_per_hour_subject(subj_name):
+                hours_val = merged_hours.get(field_key)
+                hours_decimal = parse_decimal_or_none(hours_val) or ZERO
+                price_val = None
+                if hours_decimal > 0:
+                    price_val = base / hours_decimal
+                    reason_parts.append(f"Basis: {hours_decimal} Std × {price_val:.2f} € = {base:.2f} €")
+                else:
+                    reason_parts.append(f"Basis: {base:.2f} €")
+            else:
+                reason_parts.append(f"Basis: {base:.2f} €")
+            
+            # Add legacy price note
+            if is_price_legacy:
+                reason_parts.append("(Legacy-Preis)")
+            
+            # Check discount application
+            # Use the preview values for discounts_disabled
+            is_nachhilfe = is_nachhilfe_subject(subj_name)
+            
+            # Check if discounts are disabled for this specific month
+            discounts_skipped_for_month = False
+            if discounts_disabled:
+                if not discounts_disabled_months:
+                    # Empty list = all months disabled
+                    discounts_skipped_for_month = True
+                    reason_parts.append("Rabatte deaktiviert (alle Monate)")
+                elif month_num in discounts_disabled_months:
+                    # This month is in the disabled list
+                    discounts_skipped_for_month = True
+                    reason_parts.append(f"Rabatte deaktiviert für Monat {month_num}")
+            
+            if not discounts_skipped_for_month and is_nachhilfe:
+                discounts_skipped_for_month = True
+                reason_parts.append("Nachhilfe: keine Rabatte")
+            
+            if not discounts_skipped_for_month and base > ZERO:
+                # Get discount breakdown for this month
+                percent_sum, fixed_sum = collect_discounts_for_month(
+                    month_num, family_discounts, record_discounts
+                )
+                
+                if percent_sum > ZERO or fixed_sum > ZERO:
+                    discount_parts = []
+                    if percent_sum > ZERO:
+                        # Clamp percent as in calculate_month_values
+                        clamped_percent = min(percent_sum, MAX_PERCENT_DISCOUNT)
+                        percent_display = clamped_percent * 100
+                        discount_parts.append(f"{percent_display:.0f}% Rabatt")
+                    if fixed_sum > ZERO:
+                        discount_parts.append(f"{fixed_sum:.2f} € Festrabatt")
+                    
+                    reason_parts.append(f"Rabatte: {', '.join(discount_parts)}")
+                    reason_parts.append(f"Ergebnis: {final:.2f} €")
+                else:
+                    reason_parts.append("Keine Rabatte anwendbar")
+            
+            reason = "; ".join(reason_parts)
+        
+        # Check if value changed from original
         if current_value is not None:
             try:
                 current_dec = Decimal(str(current_value))
-                if current_dec != new_value:
+                if current_dec != final:
                     changed_months.append(month_num)
             except:
                 changed_months.append(month_num)
         else:
-            changed_months.append(month_num)
+            if final != ZERO:
+                changed_months.append(month_num)
         
         months_result[str(month_num)] = {
-            'value': str(new_value),
+            'value': str(final),
             'source': 'calculated',
             'reason': reason,
         }
     
     # Add warnings
-    if is_legacy_mode and not any(parse_int_or_none(data.get(f'apply_from_month_{s}')) for s in [1, 2]):
+    if is_legacy_mode and not affected_months:
         warnings.append("Legacy-Modus: Wählen Sie 'Preis anwenden ab Monat', um Monate neu zu berechnen.")
+    
+    # Add clamp warnings from calculation flags
+    if calc_flags.clamped_to_zero_months:
+        months_str = ", ".join(str(m) for m in sorted(calc_flags.clamped_to_zero_months))
+        warnings.append(f"Monate {months_str}: Rabatt übersteigt Basis, auf 0 € gesetzt.")
+    
+    if calc_flags.percent_discount_exceeded:
+        warnings.append(f"Prozentrabatt auf 99% begrenzt (Original: {calc_flags.original_percent_sum * 100:.0f}%).")
     
     return JsonResponse({
         'months': months_result,

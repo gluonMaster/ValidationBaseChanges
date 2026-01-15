@@ -269,7 +269,10 @@ def build_snapshot(record: KarteiRecord) -> dict[str, Any]:
 # Pending/Declined Change Management
 # =============================================================================
 
-def create_or_update_pending_change(record: KarteiRecord) -> PendingChange:
+def create_or_update_pending_change(
+    record: KarteiRecord,
+    admin_comment: str | None = None,
+) -> PendingChange:
     """
     Create or update a pending change for a KarteiRecord.
 
@@ -283,6 +286,8 @@ def create_or_update_pending_change(record: KarteiRecord) -> PendingChange:
 
     Args:
         record: The KarteiRecord with proposed changes.
+        admin_comment: Optional comment provided by Admin explaining the change.
+                       Will be stored in PendingChange.admin_comment.
 
     Returns:
         The created or updated PendingChange instance.
@@ -292,7 +297,10 @@ def create_or_update_pending_change(record: KarteiRecord) -> PendingChange:
 
     Example:
         >>> if is_risky_change(modified, original):
-        ...     pending = create_or_update_pending_change(modified)
+        ...     pending = create_or_update_pending_change(
+        ...         modified,
+        ...         admin_comment="Preis korrigiert lt. Vertrag",
+        ...     )
         ...     # Record status will be set to PENDING
     """
     if record.pk is None:
@@ -300,12 +308,18 @@ def create_or_update_pending_change(record: KarteiRecord) -> PendingChange:
 
     snapshot = build_snapshot(record)
 
+    defaults: dict[str, Any] = {
+        "snapshot": snapshot,
+        "is_processed": False,
+    }
+    
+    # Include admin_comment if provided
+    if admin_comment is not None:
+        defaults["admin_comment"] = admin_comment
+
     pending, created = PendingChange.objects.update_or_create(
         record=record,
-        defaults={
-            "snapshot": snapshot,
-            "is_processed": False,
-        },
+        defaults=defaults,
     )
 
     # Create notifications for Superadmins
@@ -322,6 +336,7 @@ def create_or_update_pending_change(record: KarteiRecord) -> PendingChange:
 def create_or_update_pending_change_from_snapshot(
     record: KarteiRecord,
     snapshot: dict[str, Any],
+    admin_comment: str | None = None,
 ) -> PendingChange:
     """
     Create or update a pending change with an explicit snapshot.
@@ -334,6 +349,8 @@ def create_or_update_pending_change_from_snapshot(
     Args:
         record: The KarteiRecord to create pending change for.
         snapshot: The snapshot dict with proposed field values.
+        admin_comment: Optional comment provided by Admin explaining the change.
+                       Will be stored in PendingChange.admin_comment.
 
     Returns:
         The created or updated PendingChange instance.
@@ -346,17 +363,24 @@ def create_or_update_pending_change_from_snapshot(
         >>> pending = create_or_update_pending_change_from_snapshot(
         ...     record=declined.record,
         ...     snapshot=declined.snapshot,  # edited snapshot
+        ...     admin_comment="Korrektur nach Rücksprache",
         ... )
     """
     if record.pk is None:
         raise ValueError("Cannot create pending change for unsaved record")
 
+    defaults: dict[str, Any] = {
+        "snapshot": snapshot,
+        "is_processed": False,
+    }
+    
+    # Include admin_comment if provided
+    if admin_comment is not None:
+        defaults["admin_comment"] = admin_comment
+
     pending, created = PendingChange.objects.update_or_create(
         record=record,
-        defaults={
-            "snapshot": snapshot,
-            "is_processed": False,
-        },
+        defaults=defaults,
     )
 
     # Create notifications for Superadmins
@@ -536,6 +560,21 @@ def apply_decision(
 
     record = pending.record
 
+    # Build combined comment: Admin comment + Superadmin comment
+    admin_comment = getattr(pending, "admin_comment", "") or ""
+    admin_comment = admin_comment.strip()
+    superadmin_comment = (comment or "").strip()
+
+    # Combine comments for history entry
+    if admin_comment and superadmin_comment:
+        combined_comment = f"Admin: {admin_comment}; Superadmin: {superadmin_comment}"
+    elif admin_comment:
+        combined_comment = f"Admin: {admin_comment}"
+    elif superadmin_comment:
+        combined_comment = superadmin_comment
+    else:
+        combined_comment = None
+
     with transaction.atomic():
         if decision == "APPROVED":
             # Apply changes from snapshot to record
@@ -550,7 +589,7 @@ def apply_decision(
             pending.save(update_fields=["is_processed", "updated_at"])
 
             # Write APR entry to history (append to history_raw)
-            _write_history_entry(record, "APR", user, comment)
+            _write_history_entry(record, "APR", user, combined_comment)
 
             # Create notifications for Admin
             try:
@@ -561,6 +600,14 @@ def apply_decision(
         elif decision == "DECLINED":
             if not comment:
                 comment = "Keine Begründung angegeben"
+            
+            # Recalculate combined_comment for decline (use actual decline reason)
+            if admin_comment and comment:
+                combined_comment = f"Admin: {admin_comment}; Superadmin: {comment}"
+            elif admin_comment:
+                combined_comment = f"Admin: {admin_comment}; Superadmin: {comment}"
+            else:
+                combined_comment = comment
 
             # Create DeclinedChange with snapshot
             declined = DeclinedChange.objects.create(
@@ -579,7 +626,7 @@ def apply_decision(
             pending.save(update_fields=["is_processed", "updated_at"])
 
             # Write DCL entry to history
-            _write_history_entry(record, "DCL", user, comment)
+            _write_history_entry(record, "DCL", user, combined_comment)
 
             # Create notifications for Admin
             try:
@@ -642,14 +689,16 @@ def _write_history_entry(
     Entry types:
     - APR: Approved by Superadmin
     - DCL: Declined by Superadmin
+    - ADM: Admin comment on SAFE change
 
     Format matches VBA Export_HistoryBuilder:
     - APR: APR/@<comment>@/<date>||
     - DCL: DCL(<N>-><comment>)/@<date>@/||
+    - ADM: ADM:<user>/@<comment>@/<date>||
 
     Args:
         record: The record to update history for.
-        entry_type: "APR" or "DCL".
+        entry_type: "APR", "DCL", or "ADM".
         user: The user who made the decision.
         comment: Optional comment.
     """
@@ -669,6 +718,13 @@ def _write_history_entry(
         # Count existing declines for numbering
         dcl_count = record.declined_changes.count()
         entry = f"DCL({dcl_count}->{comment or 'Abgelehnt'})/@{user_name}@/{date_str}||"
+    elif entry_type == "ADM":
+        # Admin comment on SAFE change (direct save without approval)
+        if comment:
+            entry = f"ADM:{user_name}/@{comment}@/{date_str}||"
+        else:
+            # No comment, no entry needed
+            return
     else:
         return
 
@@ -679,6 +735,34 @@ def _write_history_entry(
         record.history_raw = entry
 
     record.save(update_fields=["history_raw"])
+
+
+def write_history_entry(
+    record: KarteiRecord,
+    entry_type: str,
+    user: User | None,
+    comment: str | None,
+) -> None:
+    """
+    Public wrapper to append an entry to the record's history_raw field.
+
+    Entry types:
+    - APR: Approved by Superadmin
+    - DCL: Declined by Superadmin
+    - ADM: Admin comment on SAFE change
+
+    Format uses /@...@/ markers for new-format recognition:
+    - APR: APR:<user>/@<comment>@/<date>||
+    - DCL: DCL(<N>-><comment>)/@<user>@/<date>||
+    - ADM: ADM:<user>/@<comment>@/<date>||
+
+    Args:
+        record: The record to update history for.
+        entry_type: "APR", "DCL", or "ADM".
+        user: The user who made the decision.
+        comment: Optional comment (for ADM, entry is skipped if empty).
+    """
+    _write_history_entry(record, entry_type, user, comment)
 
 
 # =============================================================================

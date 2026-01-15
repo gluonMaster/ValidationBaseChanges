@@ -255,13 +255,25 @@ Includes autocomplete for finding Kartei records by parent/child name.
                             Wenn "Einzelne Monate" ausgefüllt ist (z.B. "1, 3, 5"), wird der Bereich "Von-Bis" ignoriert.
                         </div>
                         
+                        {# Pass next parameter for redirect after save #}
+                        {% if next %}
+                        <input type="hidden" name="next" value="{{ next }}">
+                        {% endif %}
+                        
                         <hr>
                         
                         <div class="d-flex justify-content-between">
+                            {% if next %}
+                            <a href="{{ next }}" class="btn btn-outline-primary">
+                                <i class="bi bi-arrow-left"></i>
+                                Zurück zum Datensatz
+                            </a>
+                            {% else %}
                             <a href="{% url 'catalog:record_discount_list' %}{% if target_record %}?record_pk={{ target_record.pkid }}{% endif %}" class="btn btn-outline-secondary">
                                 <i class="bi bi-arrow-left"></i>
                                 Zurück
                             </a>
+                            {% endif %}
                             <button type="submit" class="btn btn-primary">
                                 <i class="bi bi-check-lg"></i>
                                 {% if is_create %}Erstellen{% else %}Speichern{% endif %}

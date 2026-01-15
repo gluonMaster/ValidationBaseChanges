@@ -45,6 +45,28 @@ Price option create/edit form.
                 <div class="card-body">
                     <form method="post" novalidate>
                         {% csrf_token %}
+                        {% if next %}
+                        <input type="hidden" name="next" value="{{ next }}">
+                        {% endif %}
+                        
+                        {% if existing_prices %}
+                        <div class="alert alert-warning" role="alert">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>Hinweis:</strong> Für dieses Fach/Jahr existieren bereits Preisoptionen mit demselben Betrag:
+                            <ul class="mb-2 mt-2">
+                                {% for price in existing_prices %}
+                                <li>
+                                    <strong>{{ price.amount }} €</strong>
+                                    {% if price.comment %} — {{ price.comment }}{% endif %}
+                                </li>
+                                {% endfor %}
+                            </ul>
+                            <p class="mb-0 small">
+                                Sie können {% if next %}<a href="{{ next }}">zurückkehren</a> und{% endif %} eine bestehende Option auswählen — 
+                                oder hier einen neuen Preis mit anderem Kommentar anlegen.
+                            </p>
+                        </div>
+                        {% endif %}
                         
                         <!-- Validation Errors -->
                         {% if form.non_field_errors %}
@@ -117,7 +139,7 @@ Price option create/edit form.
                         
                         <div class="mb-3">
                             <label for="{{ form.comment.id_for_label }}" class="form-label">
-                                Kommentar
+                                Kommentar{% if require_comment %} <span class="text-danger">*</span>{% endif %}
                             </label>
                             {{ form.comment }}
                             {% if form.comment.errors %}
@@ -126,7 +148,11 @@ Price option create/edit form.
                             </div>
                             {% endif %}
                             <small class="text-muted">
+                                {% if require_comment %}
+                                Pflichtfeld im Schnell-Workflow: Bitte begründen Sie diesen Preis.
+                                {% else %}
                                 Begründung für diesen Preis (z.B. "Standardpreis", "Ermäßigt", "Intensivkurs")
+                                {% endif %}
                             </small>
                         </div>
                         
@@ -157,10 +183,17 @@ Price option create/edit form.
                                 <i class="bi bi-check-lg"></i>
                                 Speichern
                             </button>
+                            {% if next %}
+                            <a href="{{ next }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left"></i>
+                                Zurück
+                            </a>
+                            {% else %}
                             <a href="{% url 'catalog:price_list' %}" class="btn btn-outline-secondary">
                                 <i class="bi bi-x-lg"></i>
                                 Abbrechen
                             </a>
+                            {% endif %}
                         </div>
                     </form>
                 </div>

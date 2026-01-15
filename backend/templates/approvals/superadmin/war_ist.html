@@ -96,6 +96,19 @@ Allows Superadmin to approve or decline the change.
                 </div>
             </div>
 
+            <!-- Admin Comment (if provided) -->
+            {% if pending_change.admin_comment %}
+            <div class="card mb-4 border-info">
+                <div class="card-header bg-info text-white">
+                    <i class="bi bi-chat-quote"></i>
+                    Kommentar (Admin)
+                </div>
+                <div class="card-body">
+                    <p class="mb-0" style="white-space: pre-wrap;">{{ pending_change.admin_comment }}</p>
+                </div>
+            </div>
+            {% endif %}
+
             <!-- War/Ist Comparison Table -->
             <div class="card">
                 <div class="card-header">

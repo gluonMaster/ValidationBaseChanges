@@ -28,7 +28,13 @@ Record discounts list view - Shows discounts assigned to individual records.
             <p class="text-muted">Rabatte für einzelne Karteieinträge</p>
         </div>
         <div class="col-auto">
-            <a href="{% url 'catalog:record_discount_create' %}{% if record_pk %}?record_pk={{ record_pk }}{% endif %}" class="btn btn-success">
+            {% if next %}
+            <a href="{{ next }}" class="btn btn-outline-primary me-2">
+                <i class="bi bi-arrow-left"></i>
+                Zurück zum Datensatz
+            </a>
+            {% endif %}
+            <a href="{% url 'catalog:record_discount_create' %}{% if record_pk %}?record_pk={{ record_pk }}{% endif %}{% if next %}&next={{ next|urlencode }}{% endif %}" class="btn btn-success">
                 <i class="bi bi-plus-lg"></i>
                 Neuer Eintragsrabatt
             </a>
@@ -121,11 +127,11 @@ Record discounts list view - Shows discounts assigned to individual records.
                                 <small class="text-muted">{{ rd.created_at|date:"d.m.Y H:i" }}</small>
                             </td>
                             <td>
-                                <a href="{% url 'catalog:record_discount_edit' rd.pk %}" 
+                                <a href="{% url 'catalog:record_discount_edit' rd.pk %}{% if next %}?next={{ next|urlencode }}{% endif %}" 
                                    class="btn btn-sm btn-outline-primary" title="Bearbeiten">
                                     <i class="bi bi-pencil"></i>
                                 </a>
-                                <a href="{% url 'catalog:record_discount_delete' rd.pk %}" 
+                                <a href="{% url 'catalog:record_discount_delete' rd.pk %}{% if next %}?next={{ next|urlencode }}{% endif %}" 
                                    class="btn btn-sm btn-outline-danger" title="Löschen">
                                     <i class="bi bi-trash"></i>
                                 </a>

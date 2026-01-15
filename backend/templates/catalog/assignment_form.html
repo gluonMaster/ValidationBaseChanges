@@ -39,6 +39,9 @@ Teaching assignment create form.
                 <div class="card-body">
                     <form method="post" novalidate>
                         {% csrf_token %}
+                        {% if next %}
+                        <input type="hidden" name="next" value="{{ next }}">
+                        {% endif %}
                         
                         <!-- Validation Errors -->
                         {% if form.non_field_errors %}
@@ -113,10 +116,17 @@ Teaching assignment create form.
                                 <i class="bi bi-check-lg"></i>
                                 Speichern
                             </button>
+                            {% if next %}
+                            <a href="{{ next }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left"></i>
+                                Zurück
+                            </a>
+                            {% else %}
                             <a href="{% url 'catalog:assignment_list' %}" class="btn btn-outline-secondary">
                                 <i class="bi bi-x-lg"></i>
                                 Abbrechen
                             </a>
+                            {% endif %}
                         </div>
                     </form>
                 </div>

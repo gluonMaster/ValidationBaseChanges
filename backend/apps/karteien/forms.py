@@ -73,6 +73,12 @@ CONTRACT_STATUS_CHOICES = [
     ("terminated", "Gekündigt (KN)"),
 ]
 
+# Discount disabled months range choices
+DISCOUNT_DISABLED_MONTH_CHOICES = [("", "---")] + [(i, f"Monat {i}") for i in range(1, 13)]
+
+# Effective month choices for contract type/status changes (1-12)
+EFFECTIVE_MONTH_CHOICES = [("", "---")] + [(i, f"Monat {i}") for i in range(1, 13)]
+
 
 # =============================================================================
 # Contract Raw Field Helpers
@@ -301,16 +307,16 @@ class KarteiRecordForm(forms.ModelForm):
                 attrs={"class": "form-control", "step": "0.01"}
             )
     
-    # Comment field for risky changes (Notitzen)
+    # Comment field for changes (Notitzen) - required when changes are made
     comment = forms.CharField(
         required=False,
         max_length=1000,
         widget=forms.Textarea(attrs={
             "class": "form-control",
             "rows": 3,
-            "placeholder": "Kommentar zur Änderung (optional)",
+            "placeholder": "Bitte geben Sie einen Kommentar zu Ihren Änderungen ein",
         }),
-        help_text="Kommentar wird bei riskanten Änderungen in der Historie gespeichert.",
+        help_text="Pflichtfeld bei Änderungen. Der Kommentar wird in der Historie gespeichert.",
     )
     
     # Contract type/status fields (form-only, Admin only)
@@ -330,6 +336,33 @@ class KarteiRecordForm(forms.ModelForm):
         initial="active",
         widget=forms.Select(attrs={"class": "form-select"}),
         help_text="Aktiv (Standard) oder Gekündigt (KN-Marker).",
+    )
+    
+    # Effective month for contract type change (form-only, Admin only)
+    contract_type_effective_month = forms.ChoiceField(
+        required=False,
+        choices=EFFECTIVE_MONTH_CHOICES,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        help_text="Ab welchem Monat gilt der neue Vertragstyp?",
+    )
+    
+    # Effective month for contract status change (form-only, Admin only)
+    contract_status_effective_month = forms.ChoiceField(
+        required=False,
+        choices=EFFECTIVE_MONTH_CHOICES,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        help_text="Ab welchem Monat gilt der neue Vertragsstatus?",
+    )
+    
+    # Confirmation for contract type change without price adjustment
+    confirm_contract_change = forms.CharField(
+        required=False,
+        max_length=10,
+        widget=forms.TextInput(attrs={
+            "class": "form-control",
+            "placeholder": "Ja",
+        }),
+        help_text="Geben Sie 'Ja' ein, um die Änderung ohne Preisanpassung zu bestätigen.",
     )
     
     # Hours fields for Individual/Nachhilfe subjects (non-model fields)
@@ -404,6 +437,34 @@ class KarteiRecordForm(forms.ModelForm):
         help_text="Ich bestätige, dass die auf 0 geklemmten Werte korrekt sind.",
     )
     
+    # Discount disabled months: range (Von/Bis) and CSV input
+    discounts_disabled_von = forms.ChoiceField(
+        required=False,
+        choices=DISCOUNT_DISABLED_MONTH_CHOICES,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        label="Von Monat",
+        help_text="Startmonat für Rabatt-Deaktivierung (optional).",
+    )
+    
+    discounts_disabled_bis = forms.ChoiceField(
+        required=False,
+        choices=DISCOUNT_DISABLED_MONTH_CHOICES,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        label="Bis Monat",
+        help_text="Endmonat für Rabatt-Deaktivierung (optional).",
+    )
+    
+    discounts_disabled_csv = forms.CharField(
+        required=False,
+        max_length=50,
+        widget=forms.TextInput(attrs={
+            "class": "form-control",
+            "placeholder": "z.B. 1,3,7,12",
+        }),
+        label="Monate (CSV)",
+        help_text="Komma-getrennte Liste von Monaten (1-12), z.B. '1,3,7,12'.",
+    )
+    
     def __init__(self, *args, **kwargs) -> None:
         """
         Initialize the form with user and year context.
@@ -411,9 +472,11 @@ class KarteiRecordForm(forms.ModelForm):
         Args:
             user: The user making the change (required).
             year: The year context for the record (required).
+            requires_comment: If True, comment is always required (e.g., after discount changes).
         """
         self.user: "User" = kwargs.pop("user", None)
         self.year: int = kwargs.pop("year", date.today().year)
+        self._requires_comment: bool = kwargs.pop("requires_comment", False)
         
         super().__init__(*args, **kwargs)
         
@@ -441,6 +504,9 @@ class KarteiRecordForm(forms.ModelForm):
         
         # Configure AUTO mode restrictions
         self._configure_auto_mode()
+        
+        # Configure discounts_disabled months fields
+        self._configure_discounts_disabled_months_fields()
         
         # Apply restrictions for Operator
         self._apply_operator_restrictions()
@@ -577,6 +643,45 @@ class KarteiRecordForm(forms.ModelForm):
         
         return hourly_months
     
+    def _configure_discounts_disabled_months_fields(self) -> None:
+        """
+        Configure discounts_disabled months fields from record data.
+        
+        Populates discounts_disabled_von, discounts_disabled_bis, and 
+        discounts_disabled_csv based on the stored discounts_disabled_months list.
+        
+        The logic:
+        - If months is a contiguous range, populate von/bis fields
+        - Otherwise, populate the CSV field with all months
+        """
+        if not self.instance or not self.instance.pk:
+            return
+        
+        months = self.instance.discounts_disabled_months or []
+        if not months:
+            return
+        
+        # Sort and deduplicate
+        months = sorted(set(m for m in months if 1 <= m <= 12))
+        if not months:
+            return
+        
+        # Check if it's a contiguous range
+        is_contiguous = True
+        if len(months) > 1:
+            for i in range(1, len(months)):
+                if months[i] != months[i - 1] + 1:
+                    is_contiguous = False
+                    break
+        
+        if is_contiguous:
+            # Populate von/bis
+            self.initial["discounts_disabled_von"] = str(months[0])
+            self.initial["discounts_disabled_bis"] = str(months[-1])
+        else:
+            # Populate CSV
+            self.initial["discounts_disabled_csv"] = ",".join(str(m) for m in months)
+    
     def _configure_catalog_fields(self) -> None:
         """
         Configure catalog reference fields with filtered querysets for the current year.
@@ -668,13 +773,14 @@ class KarteiRecordForm(forms.ModelForm):
     
     def _prefill_refs_from_legacy(self) -> None:
         """
-        Try to prefill *_ref fields from legacy subject1/subject2 values.
+        Try to prefill *_ref fields from legacy subject1/subject2/teacher1/teacher2 values.
         
         Only applies to existing records where ref is NULL but legacy field has value.
         Uses normalized string matching for subjects (case-insensitive, whitespace-normalized).
         Uses filter() for prices to handle 0 or >1 matches gracefully.
+        For teachers, requires matching TeachingAssignment for year+subject+teacher.
         """
-        from apps.catalog.models import Subject, PriceOption
+        from apps.catalog.models import Subject, PriceOption, Teacher, TeachingAssignment
         
         if not self.instance or not self.instance.pk:
             return
@@ -712,6 +818,73 @@ class KarteiRecordForm(forms.ModelForm):
             # Only return if exactly one match (unambiguous)
             if len(matches) == 1:
                 return matches[0].id
+            return None
+        
+        def parse_teacher_legacy_name(full_name: str) -> tuple[str, str] | None:
+            """
+            Parse legacy teacher full name as 'Nachname Vorname'.
+            
+            Returns (last_name, first_name) if parseable, None otherwise.
+            Format: "Nachname Vorname" -> first_name = last token, last_name = rest
+            """
+            if not full_name:
+                return None
+            # Normalize whitespace: trim and collapse multiple spaces
+            normalized = " ".join(full_name.split())
+            if not normalized:
+                return None
+            
+            parts = normalized.split()
+            if len(parts) >= 2:
+                # Last token is first_name, rest is last_name
+                first_name = parts[-1]
+                last_name = " ".join(parts[:-1])
+                return (last_name, first_name)
+            # Single word: treat as last_name only (cannot reliably match without first_name)
+            return None
+        
+        def find_teacher_with_assignment(
+            legacy_name: str, year: int, subject_id: int | None
+        ) -> int | None:
+            """
+            Find teacher by legacy name and verify TeachingAssignment exists.
+            
+            Returns teacher id only if:
+            1. Teacher found by (last_name, first_name) match
+            2. Active TeachingAssignment exists for year+subject+teacher
+            """
+            if not legacy_name or not subject_id:
+                return None
+            
+            parsed = parse_teacher_legacy_name(legacy_name)
+            if not parsed:
+                return None
+            
+            last_name, first_name = parsed
+            
+            # Find teacher by exact name match
+            try:
+                teacher = Teacher.objects.get(
+                    last_name=last_name,
+                    first_name=first_name,
+                    is_active=True,
+                )
+            except Teacher.DoesNotExist:
+                return None
+            except Teacher.MultipleObjectsReturned:
+                # Should not happen due to unique constraint, but handle gracefully
+                return None
+            
+            # Check if TeachingAssignment exists for this year+subject+teacher
+            assignment_exists = TeachingAssignment.objects.filter(
+                year=year,
+                subject_id=subject_id,
+                teacher_id=teacher.id,
+                is_active=True,
+            ).exists()
+            
+            if assignment_exists:
+                return teacher.id
             return None
         
         # Subject 1
@@ -757,6 +930,28 @@ class KarteiRecordForm(forms.ModelForm):
                 # Only set if exactly one match found
                 if prices.count() == 1:
                     self.initial["price2_ref"] = prices.first().id
+        
+        # Teacher 1 - try to match by name and verify TeachingAssignment exists
+        if not self.instance.teacher1_ref_id and self.instance.teacher1_legacy_name:
+            subject_ref = self.initial.get("subject1_ref") or self.instance.subject1_ref_id
+            teacher_id = find_teacher_with_assignment(
+                self.instance.teacher1_legacy_name,
+                self.instance.year,
+                subject_ref,
+            )
+            if teacher_id:
+                self.initial["teacher1_ref"] = teacher_id
+        
+        # Teacher 2 - try to match by name and verify TeachingAssignment exists
+        if not self.instance.teacher2_ref_id and self.instance.teacher2_legacy_name:
+            subject_ref = self.initial.get("subject2_ref") or self.instance.subject2_ref_id
+            teacher_id = find_teacher_with_assignment(
+                self.instance.teacher2_legacy_name,
+                self.instance.year,
+                subject_ref,
+            )
+            if teacher_id:
+                self.initial["teacher2_ref"] = teacher_id
     
     def _apply_operator_restrictions(self) -> None:
         """
@@ -814,6 +1009,12 @@ class KarteiRecordForm(forms.ModelForm):
         # Normalize money fields
         self._normalize_money_fields(cleaned_data)
         
+        # Process discounts_disabled_months from von/bis/csv fields
+        self._process_discounts_disabled_months(cleaned_data)
+        
+        # Validate and process contract type/status effective months (Admin only)
+        self._validate_contract_effective_months(cleaned_data)
+        
         # Process AUTO mode calculations
         self._process_auto_mode(cleaned_data)
         
@@ -847,6 +1048,9 @@ class KarteiRecordForm(forms.ModelForm):
         # Sync legacy fields from refs
         self._sync_legacy_from_refs(cleaned_data)
         
+        # Validate comment is required for any changes (edit mode only, Admin role)
+        self._validate_comment_required(cleaned_data)
+        
         return cleaned_data
     
     def _normalize_money_fields(self, cleaned_data: dict[str, Any]) -> None:
@@ -871,6 +1075,207 @@ class KarteiRecordForm(forms.ModelForm):
             hours_field = f"hours_month_{i}"
             value = cleaned_data.get(hours_field)
             cleaned_data[hours_field] = normalize_hours(value) if value is not None else ZERO
+    
+    def _process_discounts_disabled_months(self, cleaned_data: dict[str, Any]) -> None:
+        """
+        Process discounts_disabled months fields (von/bis/csv) into a normalized list.
+        
+        Combines range (von..bis) and CSV input into a single deduplicated, sorted list
+        of month integers (1-12). Stores the result in cleaned_data for later use.
+        
+        Semantics:
+        - discounts_disabled == False → discounts_disabled_months is ignored
+        - discounts_disabled == True + empty months list → discounts disabled for ALL months
+        - discounts_disabled == True + non-empty months list → discounts disabled only for listed months
+        """
+        discounts_disabled = cleaned_data.get("discounts_disabled", False)
+        
+        # Initialize result list
+        months_set: set[int] = set()
+        
+        # Parse von/bis range
+        von_str = cleaned_data.get("discounts_disabled_von", "")
+        bis_str = cleaned_data.get("discounts_disabled_bis", "")
+        
+        von_month = None
+        bis_month = None
+        
+        if von_str:
+            try:
+                von_month = int(von_str)
+                if not 1 <= von_month <= 12:
+                    von_month = None
+            except (ValueError, TypeError):
+                pass
+        
+        if bis_str:
+            try:
+                bis_month = int(bis_str)
+                if not 1 <= bis_month <= 12:
+                    bis_month = None
+            except (ValueError, TypeError):
+                pass
+        
+        # Add range months
+        if von_month is not None and bis_month is not None:
+            # Range: von -> bis (inclusive)
+            start = min(von_month, bis_month)
+            end = max(von_month, bis_month)
+            for m in range(start, end + 1):
+                months_set.add(m)
+        elif von_month is not None:
+            # Just von (single month)
+            months_set.add(von_month)
+        elif bis_month is not None:
+            # Just bis (single month)
+            months_set.add(bis_month)
+        
+        # Parse CSV
+        csv_str = cleaned_data.get("discounts_disabled_csv", "")
+        if csv_str:
+            # Split by comma, strip whitespace, parse each
+            for part in csv_str.split(","):
+                part = part.strip()
+                if part:
+                    try:
+                        month = int(part)
+                        if 1 <= month <= 12:
+                            months_set.add(month)
+                    except (ValueError, TypeError):
+                        # Skip invalid values
+                        pass
+        
+        # Store normalized result
+        self._discounts_disabled_months = sorted(months_set)
+        cleaned_data["_discounts_disabled_months"] = self._discounts_disabled_months
+    
+    def _validate_contract_effective_months(self, cleaned_data: dict[str, Any]) -> None:
+        """
+        Validate contract type/status effective month fields.
+        
+        Rules:
+        1. If contract_type changes (in edit mode), require contract_type_effective_month.
+        2. If contract_status changes (in edit mode), require contract_status_effective_month.
+        3. If contract_type changes but no price change or apply_from_month set,
+           require user to confirm by entering 'Ja' in confirm_contract_change.
+        4. If contract_status becomes 'terminated', store effective month for
+           zeroing logic in the view.
+        
+        Only applies to Admin users in edit mode.
+        """
+        # Only Admin can change contract fields
+        if not self.user or not self.user.is_admin_role:
+            return
+        
+        # Only applies to edit mode
+        is_edit = self.instance and self.instance.pk
+        if not is_edit:
+            return
+        
+        # Get original values
+        original_contract_type = "monthly" if self.instance.is_monthly_contract else "yearly"
+        original_contract_status = "terminated" if self.instance.is_contract_terminated else "active"
+        
+        # Get new values
+        new_contract_type = cleaned_data.get("contract_type", original_contract_type)
+        new_contract_status = cleaned_data.get("contract_status", original_contract_status)
+        
+        # Check if contract type changed
+        contract_type_changed = new_contract_type != original_contract_type
+        contract_status_changed = new_contract_status != original_contract_status
+        
+        # Store flags for later use
+        self._contract_type_changed = contract_type_changed
+        self._contract_status_changed = contract_status_changed
+        
+        # Validate contract type change
+        if contract_type_changed:
+            effective_month_str = cleaned_data.get("contract_type_effective_month", "")
+            if not effective_month_str:
+                raise ValidationError({
+                    "contract_type_effective_month": "Bitte wählen Sie, ab welchem Monat der neue Vertragstyp gelten soll."
+                })
+            
+            try:
+                effective_month = int(effective_month_str)
+                if not 1 <= effective_month <= 12:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                raise ValidationError({
+                    "contract_type_effective_month": "Ungültiger Monat (1-12)."
+                })
+            
+            self._contract_type_effective_month = effective_month
+            
+            # Check if price change was made - if not, require confirmation
+            # Price change means: price*_ref changed AND apply_from_month_* specified
+            price1_changed = False
+            price2_changed = False
+            apply_from_1_set = False
+            apply_from_2_set = False
+            
+            new_price1_ref = cleaned_data.get('price1_ref')
+            new_price1_ref_id = new_price1_ref.id if new_price1_ref else None
+            if new_price1_ref_id != self._original_price1_ref_id:
+                price1_changed = True
+                apply_from_1_set = bool(cleaned_data.get('apply_from_month_1'))
+            
+            new_price2_ref = cleaned_data.get('price2_ref')
+            new_price2_ref_id = new_price2_ref.id if new_price2_ref else None
+            if new_price2_ref_id != self._original_price2_ref_id:
+                price2_changed = True
+                apply_from_2_set = bool(cleaned_data.get('apply_from_month_2'))
+            
+            # Determine if confirmation is needed
+            # Confirmation required if contract type changes but no proper price adjustment
+            needs_confirmation = True
+            
+            # If both prices changed with apply_from set, no confirmation needed
+            if (price1_changed and apply_from_1_set) or (price2_changed and apply_from_2_set):
+                needs_confirmation = False
+            
+            if needs_confirmation:
+                confirm_value = cleaned_data.get("confirm_contract_change", "").strip().lower()
+                if confirm_value != "ja":
+                    raise ValidationError({
+                        "confirm_contract_change": (
+                            "Sie ändern den Vertragstyp, ohne den Preis anzupassen. "
+                            "Bitte geben Sie 'Ja' ein, um die Änderung zu bestätigen."
+                        )
+                    })
+        else:
+            self._contract_type_effective_month = None
+        
+        # Validate contract status change
+        if contract_status_changed:
+            effective_month_str = cleaned_data.get("contract_status_effective_month", "")
+            if not effective_month_str:
+                raise ValidationError({
+                    "contract_status_effective_month": "Bitte wählen Sie, ab welchem Monat der neue Vertragsstatus gelten soll."
+                })
+            
+            try:
+                effective_month = int(effective_month_str)
+                if not 1 <= effective_month <= 12:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                raise ValidationError({
+                    "contract_status_effective_month": "Ungültiger Monat (1-12)."
+                })
+            
+            self._contract_status_effective_month = effective_month
+            
+            # If becoming terminated, mark that we need to zero out months
+            if new_contract_status == "terminated":
+                self._needs_termination_zeroing = True
+                self._termination_effective_month = effective_month
+            else:
+                self._needs_termination_zeroing = False
+                self._termination_effective_month = None
+        else:
+            self._contract_status_effective_month = None
+            self._needs_termination_zeroing = False
+            self._termination_effective_month = None
     
     def _process_auto_mode(self, cleaned_data: dict[str, Any]) -> None:
         """
@@ -1000,6 +1405,9 @@ class KarteiRecordForm(forms.ModelForm):
                 setattr(temp_record, field, value)
             else:
                 setattr(temp_record, field, value)
+        
+        # Apply discounts_disabled_months
+        temp_record.discounts_disabled_months = getattr(self, '_discounts_disabled_months', [])
         
         # Build base amounts
         base_amounts = build_base_amounts(
@@ -1141,6 +1549,45 @@ class KarteiRecordForm(forms.ModelForm):
         if price2_ref:
             cleaned_data["price2"] = price2_ref.amount
     
+    def _validate_comment_required(self, cleaned_data: dict[str, Any]) -> None:
+        """
+        Validate that comment is provided when changes are made.
+        
+        Comment is required when:
+        1. The form has changes (self.has_changed())
+        2. Or requires_comment flag is True (e.g., discounts were changed externally)
+        
+        Only applies to edit mode (existing record) and Admin role.
+        """
+        # Only check in edit mode
+        if not self.instance or not self.instance.pk:
+            return
+        
+        # Only enforce for Admin role
+        if not self.user or not self.user.is_admin_role:
+            return
+        
+        # Check if comment is required
+        needs_comment = False
+        
+        # Case 1: External changes flag (e.g., from discount catalog)
+        if self._requires_comment:
+            needs_comment = True
+        
+        # Case 2: Form fields have changes
+        if self.has_changed():
+            # Exclude comment field itself from change detection
+            changed_fields = set(self.changed_data) - {"comment"}
+            if changed_fields:
+                needs_comment = True
+        
+        if needs_comment:
+            comment = cleaned_data.get("comment", "")
+            if not comment or not comment.strip():
+                raise ValidationError({
+                    "comment": "Bitte geben Sie einen Kommentar zu Ihren Änderungen ein."
+                })
+    
     def get_comment(self) -> str:
         """Get the comment for history/pending changes."""
         return self.cleaned_data.get("comment", "")
@@ -1172,6 +1619,10 @@ class KarteiRecordForm(forms.ModelForm):
         - flags: CalculationFlags (edit mode)
         - should_convert_to_auto: True if LEGACY record should become AUTO
         - touched_months: set of months affected by meaningful changes
+        - needs_termination_zeroing: True if contract status becomes terminated
+        - termination_effective_month: month from which to zero out (1-12)
+        - contract_type_effective_month: month from which contract type change applies
+        - contract_status_effective_month: month from which contract status change applies
         """
         return {
             'hours_amounts': getattr(self, '_billing_hours_amounts', {}),
@@ -1182,6 +1633,10 @@ class KarteiRecordForm(forms.ModelForm):
             'flags': getattr(self, '_calculation_flags', None),
             'should_convert_to_auto': getattr(self, '_should_convert_to_auto', False),
             'touched_months': getattr(self, '_touched_months', set()),
+            'needs_termination_zeroing': getattr(self, '_needs_termination_zeroing', False),
+            'termination_effective_month': getattr(self, '_termination_effective_month', None),
+            'contract_type_effective_month': getattr(self, '_contract_type_effective_month', None),
+            'contract_status_effective_month': getattr(self, '_contract_status_effective_month', None),
         }
     
     def save(self, commit: bool = True) -> KarteiRecord:
@@ -1192,6 +1647,9 @@ class KarteiRecordForm(forms.ModelForm):
         if the user is an Admin.
         """
         record = super().save(commit=False)
+        
+        # Apply discounts_disabled_months from form processing
+        record.discounts_disabled_months = getattr(self, '_discounts_disabled_months', [])
         
         # Process contract fields (Admin only)
         if self.user and self.user.is_admin_role:
@@ -1209,6 +1667,7 @@ class KarteiRecordForm(forms.ModelForm):
         Updates:
         - is_monthly_contract and contract_type_raw based on contract_type field
         - is_contract_terminated and contract_status_raw based on contract_status field
+        - contract_terminated_from_month based on termination effective month
         """
         contract_type = self.cleaned_data.get("contract_type", "yearly")
         contract_status = self.cleaned_data.get("contract_status", "active")
@@ -1225,9 +1684,17 @@ class KarteiRecordForm(forms.ModelForm):
         if contract_status == "terminated":
             record.is_contract_terminated = True
             record.contract_status_raw = add_kn_marker(record.contract_status_raw)
+            # Store termination effective month (from validation or keep existing)
+            termination_month = getattr(self, '_termination_effective_month', None)
+            if termination_month is not None:
+                record.contract_terminated_from_month = termination_month
+            # If not changing status but already terminated, keep existing month
+            # (termination_month will be None if status didn't change)
         else:  # active
             record.is_contract_terminated = False
             record.contract_status_raw = remove_kn_marker(record.contract_status_raw)
+            # Clear termination month when contract becomes active
+            record.contract_terminated_from_month = None
 
 
 # =============================================================================

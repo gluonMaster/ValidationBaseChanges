@@ -402,6 +402,17 @@ class KarteiRecord(models.Model):
         help_text="If True, no discounts are applied to this record.",
     )
     
+    discounts_disabled_months = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="Rabatte deaktiviert für Monate",
+        help_text=(
+            "List of months (1-12) for which discounts are disabled. "
+            "Empty list = discounts disabled for ALL months (when discounts_disabled=True). "
+            "Non-empty list = discounts disabled only for these months."
+        ),
+    )
+    
     # -------------------------------------------------------------------------
     # Monthly Fields (Section 1.4 in DOMAIN_MODEL.md)
     # Columns U-AF (indices 21-32), 12 months
@@ -565,6 +576,14 @@ class KarteiRecord(models.Model):
         default=False,
         verbose_name="Vertrag gekündigt (KN)",
         help_text="True if contract_status_raw contains 'KN' as separate token (word boundary).",
+    )
+    
+    contract_terminated_from_month = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Kündigung ab Monat",
+        help_text="Month (1-12) from which the contract is terminated. "
+                  "Months >= this value should be zeroed. Only set if is_contract_terminated=True.",
     )
     
     status = models.CharField(

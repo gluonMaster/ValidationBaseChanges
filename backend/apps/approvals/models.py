@@ -116,6 +116,17 @@ class PendingChange(models.Model):
         help_text="Timestamp of last update (e.g., Admin made further edits).",
     )
 
+    # -------------------------------------------------------------------------
+    # Admin Comment (for RISKY changes)
+    # -------------------------------------------------------------------------
+
+    admin_comment = models.TextField(
+        blank=True,
+        default="",
+        help_text="Comment provided by Admin when making a risky change. "
+                  "Required for RISKY changes. Shown to Superadmin in War/Ist view.",
+    )
+
     class Meta:
         db_table = "approvals_pending_change"
         ordering = ["-created_at"]

@@ -50,6 +50,26 @@ MAX_PERCENT_DISCOUNT = Decimal('0.99')
 
 
 # =============================================================================
+# Normalization Helpers
+# =============================================================================
+
+def _normalize_subject_name(name: str | None) -> str:
+    """
+    Normalize subject name for comparison: trim, collapse spaces, casefold.
+    
+    Args:
+        name: Subject name to normalize.
+        
+    Returns:
+        Normalized string, or empty string if input is None/empty.
+    """
+    if not name:
+        return ''
+    # Strip leading/trailing whitespace, collapse internal spaces, casefold
+    return ' '.join(name.split()).casefold()
+
+
+# =============================================================================
 # Semester Configuration
 # =============================================================================
 
@@ -254,6 +274,12 @@ class CalculationFlags:
     
     # Months where discounts_disabled flag applied
     discounts_disabled_months: list[int] = field(default_factory=list)
+    
+    # Months zeroed due to contract termination
+    terminated_months: list[int] = field(default_factory=list)
+    
+    # Termination effective month (if contract is terminated)
+    termination_from_month: int | None = None
     
     @property
     def has_warnings(self) -> bool:
@@ -524,6 +550,13 @@ def calculate_month_values(
     
     # Check if discounts are globally disabled for this record
     discounts_disabled = getattr(record, 'discounts_disabled', False)
+    discounts_disabled_months = getattr(record, 'discounts_disabled_months', None) or []
+    
+    # Check for contract termination
+    is_terminated = getattr(record, 'is_contract_terminated', False)
+    terminated_from_month = getattr(record, 'contract_terminated_from_month', None)
+    if is_terminated and terminated_from_month is not None:
+        flags.termination_from_month = terminated_from_month
     
     # Get semester ranges
     sem1_months, sem2_months = get_semester_month_ranges(record.year)
@@ -532,6 +565,13 @@ def calculate_month_values(
         field_key = f"month_{month_num}"
         base = base_amounts.get(field_key, ZERO)
         
+        # Check contract termination first - months >= terminated_from_month are zero
+        if is_terminated and terminated_from_month is not None:
+            if month_num >= terminated_from_month:
+                result[field_key] = ZERO
+                flags.terminated_months.append(month_num)
+                continue
+        
         # Determine subject for this month
         semester = get_semester_for_month(month_num, record.year)
         subject_name = get_subject_name_for_semester(record, semester)
@@ -539,10 +579,20 @@ def calculate_month_values(
         # Check discount exemptions
         apply_discounts = True
         
+        # Check discounts_disabled flag with month-specific logic
+        # - discounts_disabled=True + empty months list → disabled for ALL months
+        # - discounts_disabled=True + non-empty months list → disabled only for listed months
         if discounts_disabled:
-            apply_discounts = False
-            flags.discounts_disabled_months.append(month_num)
-        elif is_nachhilfe_subject(subject_name):
+            if not discounts_disabled_months:
+                # Empty list = all months disabled
+                apply_discounts = False
+                flags.discounts_disabled_months.append(month_num)
+            elif month_num in discounts_disabled_months:
+                # Month is in the disabled list
+                apply_discounts = False
+                flags.discounts_disabled_months.append(month_num)
+        
+        if apply_discounts and is_nachhilfe_subject(subject_name):
             apply_discounts = False
             flags.nachhilfe_exempt_months.append(month_num)
         
@@ -661,15 +711,28 @@ def get_month_breakdown(
     
     # Discount info
     discounts_disabled = getattr(record, 'discounts_disabled', False)
+    discounts_disabled_months = getattr(record, 'discounts_disabled_months', None) or []
     result['discounts_disabled'] = discounts_disabled
     
     # Check if Nachhilfe
     is_nh = is_nachhilfe_subject(subject_name)
     
-    if is_nh:
+    # Determine if discounts are skipped for this specific month
+    discounts_skipped_for_month = False
+    if discounts_disabled:
+        if not discounts_disabled_months:
+            # Empty list = all months disabled
+            discounts_skipped_for_month = True
+            result['discounts_skipped_reason'] = 'DISABLED'
+        elif month in discounts_disabled_months:
+            # This month is in the disabled list
+            discounts_skipped_for_month = True
+            result['discounts_skipped_reason'] = 'DISABLED_MONTH'
+        else:
+            result['discounts_skipped_reason'] = None
+    elif is_nh:
+        discounts_skipped_for_month = True
         result['discounts_skipped_reason'] = 'NACHHILFE'
-    elif discounts_disabled:
-        result['discounts_skipped_reason'] = 'DISABLED'
     else:
         result['discounts_skipped_reason'] = None
     
@@ -693,7 +756,7 @@ def get_month_breakdown(
     percent_sum = ZERO
     fixed_sum = ZERO
     
-    if not is_nh and not discounts_disabled and base > 0:
+    if not discounts_skipped_for_month and base > 0:
         all_discounts = list(family_discounts) + list(record_discounts)
         
         for discount_assignment in all_discounts:
@@ -733,8 +796,8 @@ def get_month_breakdown(
     if percent_clamped:
         result['original_percent_sum'] = str(original_percent_sum)
     
-    # Skip discounts for Nachhilfe or if disabled
-    if is_nh or discounts_disabled or base == ZERO:
+    # Skip discounts for Nachhilfe or if disabled for this month
+    if discounts_skipped_for_month or base == ZERO:
         result['after_percent'] = str(base)
         result['after_fixed'] = str(base)
         result['final'] = str(round_money_up(base))
@@ -823,6 +886,24 @@ def recalculate_record_months(
 # LEGACY to AUTO Conversion Helpers
 # =============================================================================
 
+def _parse_apply_from_month(value) -> int | None:
+    """
+    Safely parse apply_from_month value from form data.
+    
+    Args:
+        value: Can be string ("3", "7", ""), int, or None.
+        
+    Returns:
+        Parsed int or None if empty/invalid.
+    """
+    if value is None or value == '':
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
 def detect_meaningful_changes(
     original: "KarteiRecord",
     cleaned_data: dict,
@@ -837,6 +918,12 @@ def detect_meaningful_changes(
     - discounts_disabled changes
     - contract_type/status changes (is_monthly_contract, is_contract_terminated)
     - hours input for hourly subjects (touched months)
+    
+    When price*_ref changes, only months from apply_from_month_* are marked as touched,
+    preserving legacy values for earlier months.
+    
+    When start_month_* changes, only months that changed their billing status
+    (from 0.00 to charged or vice versa) are marked as touched.
     
     Args:
         original: The original KarteiRecord from database.
@@ -853,45 +940,105 @@ def detect_meaningful_changes(
     sem1_months = set(range(1, 7))
     sem2_months = set(range(7, 13))
     
-    # Check price1_ref change
+    # Parse apply_from_month values from form data
+    apply_from_1 = _parse_apply_from_month(cleaned_data.get('apply_from_month_1'))
+    apply_from_2 = _parse_apply_from_month(cleaned_data.get('apply_from_month_2'))
+    
+    # Get new start months for reference
+    new_start_1 = cleaned_data.get('start_month_1') or 1
+    new_start_2 = cleaned_data.get('start_month_2') or 7
+    old_start_1 = original.start_month_1 or 1
+    old_start_2 = original.start_month_2 or 7
+    
+    # Check price1_ref change - only touch months from apply_from_month_1
+    # Exception: linking ref to existing legacy value with same amount is NOT meaningful
     new_price1_ref = cleaned_data.get('price1_ref')
     new_price1_ref_id = new_price1_ref.id if new_price1_ref else None
     if new_price1_ref_id != original.price1_ref_id:
-        has_changes = True
-        touched_months.update(sem1_months)
+        # Check if this is just linking to matching legacy value
+        is_linking_to_same_price1 = (
+            original.price1_ref_id is None
+            and new_price1_ref is not None
+            and original.price1 is not None
+            and new_price1_ref.amount == original.price1
+        )
+        if not is_linking_to_same_price1:
+            has_changes = True
+            # Only touch months from apply_from_month_1 to 6
+            start_month = apply_from_1 if apply_from_1 else 1
+            touched_months.update(range(start_month, 7))
     
-    # Check price2_ref change
+    # Check price2_ref change - only touch months from apply_from_month_2
+    # Exception: linking ref to existing legacy value with same amount is NOT meaningful
     new_price2_ref = cleaned_data.get('price2_ref')
     new_price2_ref_id = new_price2_ref.id if new_price2_ref else None
     if new_price2_ref_id != original.price2_ref_id:
-        has_changes = True
-        touched_months.update(sem2_months)
+        # Check if this is just linking to matching legacy value
+        is_linking_to_same_price2 = (
+            original.price2_ref_id is None
+            and new_price2_ref is not None
+            and original.price2 is not None
+            and new_price2_ref.amount == original.price2
+        )
+        if not is_linking_to_same_price2:
+            has_changes = True
+            # Only touch months from apply_from_month_2 to 12
+            start_month = apply_from_2 if apply_from_2 else 7
+            touched_months.update(range(start_month, 13))
     
     # Check subject1_ref change (may change pricing type - hourly vs monthly)
+    # Touch months from current start_month onwards (subject change affects calculation type)
+    # Exception: linking ref to existing legacy value with same name is NOT meaningful
     new_subject1_ref = cleaned_data.get('subject1_ref')
     new_subject1_ref_id = new_subject1_ref.id if new_subject1_ref else None
     if new_subject1_ref_id != original.subject1_ref_id:
-        has_changes = True
-        touched_months.update(sem1_months)
+        # Check if this is just linking to matching legacy value
+        is_linking_to_same_subject1 = (
+            original.subject1_ref_id is None
+            and new_subject1_ref is not None
+            and original.subject1
+            and _normalize_subject_name(new_subject1_ref.name) == _normalize_subject_name(original.subject1)
+        )
+        if not is_linking_to_same_subject1:
+            has_changes = True
+            # Touch months from start_month_1 to 6
+            effective_start = min(old_start_1, new_start_1)
+            touched_months.update(range(effective_start, 7))
     
     # Check subject2_ref change
+    # Exception: linking ref to existing legacy value with same name is NOT meaningful
     new_subject2_ref = cleaned_data.get('subject2_ref')
     new_subject2_ref_id = new_subject2_ref.id if new_subject2_ref else None
     if new_subject2_ref_id != original.subject2_ref_id:
-        has_changes = True
-        touched_months.update(sem2_months)
+        # Check if this is just linking to matching legacy value
+        is_linking_to_same_subject2 = (
+            original.subject2_ref_id is None
+            and new_subject2_ref is not None
+            and original.subject2
+            and _normalize_subject_name(new_subject2_ref.name) == _normalize_subject_name(original.subject2)
+        )
+        if not is_linking_to_same_subject2:
+            has_changes = True
+            # Touch months from start_month_2 to 12
+            effective_start = min(old_start_2, new_start_2)
+            touched_months.update(range(effective_start, 13))
     
-    # Check start_month_1 change
-    new_start_1 = cleaned_data.get('start_month_1') or 1
-    if new_start_1 != original.start_month_1:
+    # Check start_month_1 change - only touch months that changed status
+    if new_start_1 != old_start_1:
         has_changes = True
-        touched_months.update(sem1_months)
+        # Only months between old and new start change their billing status
+        # e.g., start 1->3: months 1,2 go from charged to 0.00 (or vice versa)
+        min_start = min(old_start_1, new_start_1)
+        max_start = max(old_start_1, new_start_1)
+        # Touch months from min_start to (max_start - 1)
+        touched_months.update(range(min_start, max_start))
     
-    # Check start_month_2 change
-    new_start_2 = cleaned_data.get('start_month_2') or 7
-    if new_start_2 != original.start_month_2:
+    # Check start_month_2 change - only touch months that changed status
+    if new_start_2 != old_start_2:
         has_changes = True
-        touched_months.update(sem2_months)
+        min_start = min(old_start_2, new_start_2)
+        max_start = max(old_start_2, new_start_2)
+        touched_months.update(range(min_start, max_start))
     
     # Check discounts_disabled change
     new_discounts_disabled = cleaned_data.get('discounts_disabled', False)

@@ -37,6 +37,7 @@ from apps.approvals.services import (
     classify_change,
     create_or_update_pending_change,
     get_changed_tracked_fields,
+    write_history_entry,
 )
 
 from .billing import recalculate_record_months, build_base_amounts
@@ -417,10 +418,16 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
         return super().dispatch(request, *args, **kwargs)
     
     def get_form_kwargs(self) -> dict[str, Any]:
-        """Pass user and year to form."""
+        """Pass user, year, and requires_comment flag to form."""
         kwargs = super().get_form_kwargs()
         kwargs["user"] = self.request.user
         kwargs["year"] = self.object.year
+        
+        # If refresh_billing=1 is in URL, discounts were changed externally
+        # and we require a comment for saving
+        if self.request.GET.get("refresh_billing") == "1":
+            kwargs["requires_comment"] = True
+        
         return kwargs
     
     def get_context_data(self, **kwargs) -> dict[str, Any]:
@@ -458,7 +465,66 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
             context["allowed_months"] = allowed
             context["past_months_reason"] = reason
         
+        # Legacy badges context: next URL for catalog quick-links
+        context["edit_next_url"] = self.request.get_full_path()
+        
+        # Find teacher candidates by parsing legacy names
+        context.update(self._get_legacy_teacher_candidates())
+        
         return context
+    
+    def _get_legacy_teacher_candidates(self) -> dict[str, Any]:
+        """
+        Find teacher IDs from legacy teacher names for catalog quick-links.
+        
+        Parses legacy name as 'Nachname Vorname' and looks up Teacher model.
+        Returns dict with teacher*_candidate_id for use in assignment create links.
+        """
+        from apps.catalog.models import Teacher
+        
+        result = {
+            "teacher1_candidate_id": None,
+            "teacher2_candidate_id": None,
+        }
+        
+        def parse_and_find_teacher(legacy_name: str) -> int | None:
+            """Parse legacy name and find teacher ID."""
+            if not legacy_name:
+                return None
+            # Normalize whitespace
+            normalized = " ".join(legacy_name.split())
+            if not normalized:
+                return None
+            
+            parts = normalized.split()
+            if len(parts) < 2:
+                # Single word: cannot reliably find teacher
+                return None
+            
+            # Format: "Nachname Vorname" -> last_name = all but last, first_name = last
+            first_name = parts[-1]
+            last_name = " ".join(parts[:-1])
+            
+            try:
+                teacher = Teacher.objects.get(
+                    last_name=last_name,
+                    first_name=first_name,
+                    is_active=True,
+                )
+                return teacher.id
+            except Teacher.DoesNotExist:
+                return None
+            except Teacher.MultipleObjectsReturned:
+                return None
+        
+        record = self.object
+        if record.teacher1_legacy_name and not record.teacher1_ref_id:
+            result["teacher1_candidate_id"] = parse_and_find_teacher(record.teacher1_legacy_name)
+        
+        if record.teacher2_legacy_name and not record.teacher2_ref_id:
+            result["teacher2_candidate_id"] = parse_and_find_teacher(record.teacher2_legacy_name)
+        
+        return result
     
     def form_valid(self, form) -> HttpResponse:
         """Handle save with safe/risky classification and AUTO billing.
@@ -542,6 +608,24 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
                     f"wurde auf 99% begrenzt."
                 )
         
+        # Apply termination zeroing if contract status becomes terminated
+        if billing_data.get('needs_termination_zeroing'):
+            termination_month = billing_data.get('termination_effective_month')
+            if termination_month:
+                from decimal import Decimal
+                zeroed_months = []
+                for m in range(termination_month, 13):
+                    field_name = f"month_{m}"
+                    setattr(record, field_name, Decimal('0.00'))
+                    zeroed_months.append(m)
+                
+                if zeroed_months:
+                    messages.info(
+                        self.request,
+                        f"Vertrag gekündigt ab Monat {termination_month}: "
+                        f"Monate {', '.join(str(m) for m in zeroed_months)} wurden auf 0 € gesetzt."
+                    )
+        
         # Get proposed changes (comparing form data with original)
         proposed_data = form.cleaned_data
         
@@ -567,16 +651,23 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
             record.last_change_time = date.today().strftime("%H:%M")
             record.save()
             
+            # Write admin comment to history_raw if provided
+            admin_comment = form.get_comment().strip()
+            if admin_comment:
+                write_history_entry(record, "ADM", user, admin_comment)
+            
             messages.success(
                 self.request, 
                 f"Datensatz {record.id} wurde aktualisiert."
             )
             
-            # TODO: Update history_raw (requires history module)
-            
         else:
-            # Risky change: create pending
-            pending = create_or_update_pending_change(record)
+            # Risky change: create pending with admin comment
+            admin_comment = form.get_comment()
+            pending = create_or_update_pending_change(
+                record,
+                admin_comment=admin_comment,
+            )
             
             # Mark record as PENDING
             KarteiRecord.objects.filter(pk=record.pk).update(
