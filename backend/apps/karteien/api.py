@@ -677,11 +677,13 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
     price1_ref_id = parse_int_or_none(data.get('price1_ref'))
     start_month_1 = parse_int_or_none(data.get('start_month_1')) or 1
     apply_from_month_1 = parse_int_or_none(data.get('apply_from_month_1'))
+    apply_to_month_1 = parse_int_or_none(data.get('apply_to_month_1'))
     
     subject2_ref_id = parse_int_or_none(data.get('subject2_ref'))
     price2_ref_id = parse_int_or_none(data.get('price2_ref'))
     start_month_2 = parse_int_or_none(data.get('start_month_2')) or 7
     apply_from_month_2 = parse_int_or_none(data.get('apply_from_month_2'))
+    apply_to_month_2 = parse_int_or_none(data.get('apply_to_month_2'))
     
     # Extract hours
     hours_amounts = {}
@@ -764,23 +766,35 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         record.record_discounts.select_related('discount')
     ) if record.pk else []
     
-    # Determine which months would be affected by apply_from parameters
-    # For LEGACY mode, months before apply_from are NOT recalculated
+    # Determine which months would be affected by apply_from/apply_to parameters
+    # For LEGACY mode, months before apply_from or after apply_to are NOT recalculated
+    # For AUTO mode, ALL months are always calculated (apply_from/apply_to only affects base_amounts)
     affected_months = set()
-    for month_num in range(1, 13):
-        semester = 1 if month_num <= 6 else 2
-        apply_from = apply_from_month_1 if semester == 1 else apply_from_month_2
-        
-        if is_legacy_mode:
+    
+    if is_legacy_mode:
+        # LEGACY mode: only affected months are recalculated
+        for month_num in range(1, 13):
+            semester = 1 if month_num <= 6 else 2
+            apply_from = apply_from_month_1 if semester == 1 else apply_from_month_2
+            apply_to = apply_to_month_1 if semester == 1 else apply_to_month_2
+            
             # Only affected if apply_from is set and month >= apply_from
-            if apply_from is not None and month_num >= apply_from:
+            # and (apply_to is not set or month <= apply_to)
+            in_range = True
+            if apply_from is not None and month_num < apply_from:
+                in_range = False
+            if apply_to is not None and month_num > apply_to:
+                in_range = False
+            
+            if in_range and apply_from is not None:
                 affected_months.add(month_num)
             # Also affected if hours were provided for hourly subjects
             elif hours_amounts.get(f'month_{month_num}'):
                 affected_months.add(month_num)
-        else:
-            # AUTO mode - all months are calculated
-            affected_months.add(month_num)
+    else:
+        # AUTO mode: ALL months are always calculated
+        # apply_from/apply_to only affects base_amounts (price history), not which months are shown
+        affected_months = set(range(1, 13))
     
     # Temporarily modify record attributes for preview (not saved)
     # Store originals to restore later (though not strictly necessary since we don't save)
@@ -829,6 +843,8 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         record,
         apply_from_month_1=apply_from_month_1,
         apply_from_month_2=apply_from_month_2,
+        apply_to_month_1=apply_to_month_1,
+        apply_to_month_2=apply_to_month_2,
         hours_amounts=merged_hours,
     )
     

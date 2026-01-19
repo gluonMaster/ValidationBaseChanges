@@ -50,10 +50,23 @@ Public Sub RefreshNeuList()
     Dim wsNeu As Worksheet
     Set wsNeu = GetOrCreateNeuSheet()
     
-    ' Copy header from Kartei to Neu (row 2)
+    ' Copy header from Kartei26 (preferred) or legacy Kartei to Neu (row 2)
     Dim wsK As Worksheet
-    Set wsK = ThisWorkbook.Worksheets("Kartei")
-    wsK.Rows(2).Copy Destination:=wsNeu.Rows(2)
+    Set wsK = Nothing
+    
+    On Error Resume Next
+    Set wsK = ThisWorkbook.Worksheets(valid_YearConfig.GetKarteiSheetName(26))
+    On Error GoTo ErrorHandler
+    
+    If wsK Is Nothing Then
+        On Error Resume Next
+        Set wsK = ThisWorkbook.Worksheets("Kartei")
+        On Error GoTo ErrorHandler
+    End If
+    
+    If Not wsK Is Nothing Then
+        wsK.Rows(2).Copy Destination:=wsNeu.Rows(2)
+    End If
     
     ' Ensure AutoFilter is enabled on row 2
     If Not wsNeu.AutoFilterMode Then
@@ -245,8 +258,10 @@ End Sub
 '===========================================
 
 ' Get database path with validation (prompts user if file not found)
+' Note: Neu list only uses year 26 (current year) - no new records expected for past years
 Private Function GetDatabasePath() As String
-    GetDatabasePath = valid_DatabasePath.GetValidatedDatabasePath()
+    ' Neu list is only for current year (2026)
+    GetDatabasePath = valid_DatabasePath.GetValidatedDatabasePathForYear(26)
 End Function
 
 ' Get LastSeenID from NeuConfig sheet
@@ -308,11 +323,17 @@ Private Function GetOrCreateNeuSheet() As Worksheet
     On Error GoTo 0
     
     If ws Is Nothing Then
-        ' Try to create after Kartei sheet
+        ' Try to create after Kartei26 (preferred) or legacy Kartei sheet
         Dim wsKartei As Worksheet
         On Error Resume Next
-        Set wsKartei = ThisWorkbook.Worksheets("Kartei")
+        Set wsKartei = ThisWorkbook.Worksheets(valid_YearConfig.GetKarteiSheetName(26))
         On Error GoTo 0
+        
+        If wsKartei Is Nothing Then
+            On Error Resume Next
+            Set wsKartei = ThisWorkbook.Worksheets("Kartei")
+            On Error GoTo 0
+        End If
         
         If Not wsKartei Is Nothing Then
             Set ws = ThisWorkbook.Worksheets.Add(After:=wsKartei)

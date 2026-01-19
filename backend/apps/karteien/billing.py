@@ -367,6 +367,8 @@ def build_base_amounts(
     *,
     apply_from_month_1: int | None = None,
     apply_from_month_2: int | None = None,
+    apply_to_month_1: int | None = None,
+    apply_to_month_2: int | None = None,
     hours_amounts: dict[str, Decimal | str] | None = None,
 ) -> dict[str, Decimal]:
     """
@@ -385,6 +387,10 @@ def build_base_amounts(
             Months before this keep their current base_amounts.
         apply_from_month_2: If set, only update months >= this value in semester 2.
             Months before this keep their current base_amounts.
+        apply_to_month_1: If set, only update months <= this value in semester 1.
+            Months after this keep their current base_amounts.
+        apply_to_month_2: If set, only update months <= this value in semester 2.
+            Months after this keep their current base_amounts.
         hours_amounts: Optional hours data to use instead of record.hours_amounts.
             Format: {"month_1": "2.00", "month_2": "1.50", ...}
     
@@ -410,9 +416,20 @@ def build_base_amounts(
         # Determine semester
         semester = get_semester_for_month(month_num, record.year)
         
-        # Check if we should skip this month (partial update)
+        # Check if we should skip this month (partial update - before apply_from)
         apply_from = apply_from_month_1 if semester == 1 else apply_from_month_2
         if apply_from is not None and month_num < apply_from:
+            # Keep existing base
+            existing_value = existing_bases.get(field_key)
+            if existing_value is not None:
+                result[field_key] = Decimal(str(existing_value))
+            else:
+                result[field_key] = ZERO
+            continue
+        
+        # Check if we should skip this month (partial update - after apply_to)
+        apply_to = apply_to_month_1 if semester == 1 else apply_to_month_2
+        if apply_to is not None and month_num > apply_to:
             # Keep existing base
             existing_value = existing_bases.get(field_key)
             if existing_value is not None:
@@ -829,6 +846,8 @@ def recalculate_record_months(
     *,
     apply_from_month_1: int | None = None,
     apply_from_month_2: int | None = None,
+    apply_to_month_1: int | None = None,
+    apply_to_month_2: int | None = None,
     hours_amounts: dict[str, Decimal | str] | None = None,
     touched_months: set[int] | None = None,
 ) -> CalculationFlags:
@@ -844,6 +863,8 @@ def recalculate_record_months(
         record: The KarteiRecord instance to update.
         apply_from_month_1: If set, only update months >= this in semester 1.
         apply_from_month_2: If set, only update months >= this in semester 2.
+        apply_to_month_1: If set, only update months <= this in semester 1.
+        apply_to_month_2: If set, only update months <= this in semester 2.
         hours_amounts: Optional hours data to use.
         touched_months: If set, only update these specific months (for LEGACY->AUTO).
             Other months will keep their current values.
@@ -856,6 +877,8 @@ def recalculate_record_months(
         record,
         apply_from_month_1=apply_from_month_1,
         apply_from_month_2=apply_from_month_2,
+        apply_to_month_1=apply_to_month_1,
+        apply_to_month_2=apply_to_month_2,
         hours_amounts=hours_amounts,
     )
     
@@ -1117,3 +1140,91 @@ def recalculate_legacy_to_auto(
     record.months_mode = 'AUTO'
     
     return flags
+
+
+# =============================================================================
+# Month Mismatch Detection (for highlighting suspicious values)
+# =============================================================================
+
+def get_month_mismatches(record: "KarteiRecord") -> set[int]:
+    """
+    Detect months where the stored value doesn't match expected calculation.
+    
+    This is used to highlight "suspicious" month values with a red border in UI.
+    
+    Logic:
+    1. OVERRIDE mode: no mismatches (user intentionally set values manually).
+    2. For per-hour subjects (Ind., Nachhilfe, VSpE_): skip price comparison
+       since the price is per hour and Monatswert can be any valid amount.
+    3. For other months:
+       - AUTO mode: use stored base_amounts and recalculate with discounts
+       - LEGACY mode: rebuild base_amounts from current prices/hours and compare
+    4. Compare expected vs actual values (both normalized to 2 decimals).
+    
+    Args:
+        record: The KarteiRecord instance to check.
+        
+    Returns:
+        Set of month numbers (1-12) that have mismatched values.
+    """
+    # OVERRIDE mode: never highlight (intentional manual values)
+    if record.months_mode == 'OVERRIDE':
+        return set()
+    
+    mismatches: set[int] = set()
+    
+    # Determine expected values based on mode
+    if record.months_mode == 'AUTO':
+        # For AUTO: use stored base_amounts (preserves historical prices per month)
+        stored_bases = getattr(record, 'base_amounts', None) or {}
+        base_amounts = {}
+        for month_num in range(1, 13):
+            field_key = f"month_{month_num}"
+            raw_val = stored_bases.get(field_key, '0.00')
+            try:
+                base_amounts[field_key] = Decimal(str(raw_val or '0.00'))
+            except (ValueError, TypeError):
+                base_amounts[field_key] = ZERO
+    else:
+        # For LEGACY: rebuild base_amounts from current data as if it were AUTO
+        hours_amounts = getattr(record, 'hours_amounts', None) or {}
+        base_amounts = build_base_amounts(record, hours_amounts=hours_amounts)
+    
+    # Calculate expected month values
+    expected_values, _flags = calculate_month_values(record, base_amounts=base_amounts)
+    
+    # Compare expected vs actual for each month
+    for month_num in range(1, 13):
+        field_key = f"month_{month_num}"
+        
+        # Determine semester and subject for this month
+        semester = get_semester_for_month(month_num, record.year)
+        subject_name = get_subject_name_for_semester(record, semester)
+        
+        # Skip per-hour subjects (Ind., Nachhilfe, VSpE_)
+        # Their monthly value can be anything based on hours worked
+        if is_per_hour_subject(subject_name):
+            continue
+        
+        # Get expected value
+        expected = expected_values.get(field_key, ZERO)
+        if not isinstance(expected, Decimal):
+            expected = Decimal(str(expected or '0.00'))
+        expected = expected.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        
+        # Get actual stored value
+        actual = getattr(record, field_key, None)
+        if actual is None:
+            actual = ZERO
+        else:
+            try:
+                actual = Decimal(str(actual))
+            except (ValueError, TypeError):
+                actual = ZERO
+        actual = actual.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        
+        # Compare
+        if expected != actual:
+            mismatches.add(month_num)
+    
+    return mismatches

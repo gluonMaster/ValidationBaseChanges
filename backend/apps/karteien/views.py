@@ -40,7 +40,7 @@ from apps.approvals.services import (
     write_history_entry,
 )
 
-from .billing import recalculate_record_months, build_base_amounts
+from .billing import recalculate_record_months, build_base_amounts, get_month_mismatches
 from .forms import KarteiRecordForm, KarteiRecordFilterForm, MonthsOverrideForm
 from .models import KarteiRecord, RecordStatus, MonthsMode
 from .validators import validate_kartei_record, apply_operator_filters
@@ -254,6 +254,10 @@ class KarteiRecordDetailView(KarteiViewerMixin, DetailView):
         context["user_has_sepa_restrictions"] = self.request.user.has_sepa_restrictions
         context["user_has_past_months_restrictions"] = self.request.user.has_past_months_restrictions
         context["is_sepa_record"] = record.is_sepa
+        
+        # Month mismatch detection for highlighting suspicious values
+        context["mismatch_months"] = list(get_month_mismatches(record))
+        context["is_override_mode"] = record.months_mode == MonthsMode.OVERRIDE
         
         return context
 
@@ -471,6 +475,10 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
         # Find teacher candidates by parsing legacy names
         context.update(self._get_legacy_teacher_candidates())
         
+        # Month mismatch detection for highlighting suspicious values
+        context["mismatch_months"] = list(get_month_mismatches(self.object))
+        context["is_override_mode"] = self.object.months_mode == MonthsMode.OVERRIDE
+        
         return context
     
     def _get_legacy_teacher_candidates(self) -> dict[str, Any]:
@@ -597,6 +605,8 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
                 record,
                 apply_from_month_1=billing_data['apply_from_month_1'],
                 apply_from_month_2=billing_data['apply_from_month_2'],
+                apply_to_month_1=billing_data.get('apply_to_month_1'),
+                apply_to_month_2=billing_data.get('apply_to_month_2'),
                 hours_amounts=billing_data['hours_amounts'],
             )
             

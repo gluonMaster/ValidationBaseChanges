@@ -23,13 +23,6 @@ Sub ImportFromBase()
     
     Call ImportKarteiAndFormat_Optimized
     Call ConvertAndFormatCellsOptimized
-    
-    ' Enforce phone columns as TEXT after all processing
-    Call EnforcePhoneColumnsAsText(ws, 3)
-    
-    ' Sanity check: warn if scientific notation still present
-    Dim phoneIssueCount As Long
-    phoneIssueCount = CheckPhoneColumnsForScientific(ws, 3, True)
         
     Exit Sub
 
@@ -52,7 +45,7 @@ Sub ImportKarteiAndFormat_Optimized()
     ' 5) Rebuild Kartei_Original
 
     Dim dbPath As String
-    dbPath = ThisWorkbook.Worksheets("Kartei").Range("I1").value & "\Alarm\KindElternDaten_25_front.accdb"
+    dbPath = ThisWorkbook.Worksheets("Kartei").Range("I1").Value & "\Alarm\KindElternDaten_25_front.accdb"
     'C:\Users\Alla\OneDrive - Kinder- und Elternzentrum Kolibri e.V\Datenbank\2025
     'dbPath = "C:\Konst\2024\Kolibri\Valentina\Alla\Release\KindElternDaten_24_front.accdb"
 
@@ -145,12 +138,7 @@ Sub ImportKarteiAndFormat_Optimized()
             ' ...
             ' col=51 => idxValue=1+(51-1)*2 = 1+100=101 => interior=102
 
-            ' Phone columns (7=Tel., 8=Handy): normalize to prevent scientific notation
-            If col = 7 Or col = 8 Then
-                arrValues(rowDest, col) = phone_Normalize.NormalizePhoneText(arrRaw(idxValue, rec))
-            Else
-                arrValues(rowDest, col) = arrRaw(idxValue, rec)
-            End If
+            arrValues(rowDest, col) = arrRaw(idxValue, rec)
             arrInterior(rowDest, col) = arrRaw(idxValue + 1, rec)
         Next col
         arrValues(rowDest, 52) = arrRaw(105, rec)
@@ -160,13 +148,8 @@ Sub ImportKarteiAndFormat_Optimized()
     Next rec
 
     ' Now we write arrValues to the sheet in one operation
-    ' IMPORTANT: Pre-format phone columns (7=Tel., 8=Handy) as TEXT before bulk write
-    ' to prevent Excel from auto-converting numeric-looking strings to numbers
-    wsKartei.Range(wsKartei.Cells(3, 7), wsKartei.Cells(rowCount + 2, 7)).NumberFormat = "@"
-    wsKartei.Range(wsKartei.Cells(3, 8), wsKartei.Cells(rowCount + 2, 8)).NumberFormat = "@"
-    
     With wsKartei
-        .Range("A3").Resize(rowCount, 52).value = arrValues
+        .Range("A3").Resize(rowCount, 52).Value = arrValues
     End With
 
     ' Now apply formats
@@ -191,8 +174,7 @@ Sub ImportKarteiAndFormat_Optimized()
         Dim lastCol As Long
 
         lastRow = .Cells(.Rows.count, "B").End(xlUp).row
-        ' Include column BA (53) to keep status (PENDING/DECLINED) synchronized with row data
-        lastCol = 53
+        lastCol = 52
 
         .Range(.Cells(2, 1), .Cells(lastRow, lastCol)).Sort _
             Key1:=.Range("B2"), Order1:=xlAscending, Header:=xlYes
@@ -201,16 +183,6 @@ Sub ImportKarteiAndFormat_Optimized()
 
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    
-    ' Enforce phone columns as TEXT and normalize any remaining scientific notation
-    Call EnforcePhoneColumnsAsText(wsKartei, 3)
-    
-    ' Sanity check: warn if any scientific notation still present
-    Dim sciCount As Long
-    sciCount = CheckPhoneColumnsForScientific(wsKartei, 3, False)
-    If sciCount > 0 Then
-        Debug.Print "WARNING: " & sciCount & " phone cells still contain scientific notation after import"
-    End If
 
     ' Rebuild Kartei_Original
     'Call RebuildKarteiOriginalSheet(wsKartei)
@@ -285,10 +257,10 @@ Sub SelectFolder()
         .InitialFileName = Application.DefaultFilePath ' initial folder
         If .Show = -1 Then ' if user press OK
             folderPath = .SelectedItems(1) ' extract folder path
-            ThisWorkbook.Worksheets("Kartei").Range("I1").value = folderPath
+            ThisWorkbook.Worksheets("Kartei").Range("I1").Value = folderPath
         Else
             folderPath = "" ' if user press cansel path is empty
-            ThisWorkbook.Worksheets("Kartei").Range("I1").value = folderPath
+            ThisWorkbook.Worksheets("Kartei").Range("I1").Value = folderPath
         End If
     End With
     

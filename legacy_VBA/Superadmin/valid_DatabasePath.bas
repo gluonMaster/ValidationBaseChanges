@@ -2,159 +2,135 @@ Attribute VB_Name = "valid_DatabasePath"
 '==========================
 '   Module: valid_DatabasePath
 '   Purpose: Centralized database path management for Superadmin
-'   - Validates database file existence
-'   - Prompts user to select folder if not found
-'   - Stores path in Kartei!X1
+'
+'   MULTI-YEAR SUPPORT (2024, 2025, 2026):
+'   This module now delegates to valid_YearConfig for multi-year path resolution.
+'   The old single-year functions are preserved for backward compatibility
+'   but internally route through the new year-aware configuration.
+'
+'   For new code, prefer using valid_YearConfig directly:
+'     - valid_YearConfig.GetDbPathForYear(year2) - Get DB path for specific year
+'     - valid_YearConfig.EnsureAllDbPathsConfigured() - Validate all years
+'     - valid_YearConfig.SelectDbRootFolder - Configure cloud root
+'
+'   Legacy storage (Kartei!X1) is migrated to DBConfig sheet on first use.
 '==========================
 
 Option Explicit
 
-Private Const DB_FILENAME As String = "KindElternDaten_25_front.accdb"
-Private Const DB_SUBFOLDER As String = "Alarm"
+' Default year for backward compatibility (existing code expects year 25)
+Private Const DEFAULT_YEAR As Integer = 25
 
-' Get validated database path, prompting user if file not found
+' One-time legacy migration guard (must be declared before procedures)
+Private m_LegacyMigrated As Boolean
+
+' ============================================================
+' BACKWARD COMPATIBILITY API
+' ============================================================
+
+' Get validated database path (defaults to year 25 for backward compatibility)
+' New code should use valid_YearConfig.GetDbPathForYear(year2) instead.
 Public Function GetValidatedDatabasePath() As String
-    Dim dbPath As String
-    dbPath = BuildDatabasePath()
+    ' Ensure legacy config is migrated
+    MigrateLegacyConfigIfNeeded
     
-    ' Check if database file exists
-    If Not FileExists(dbPath) Then
-        ' Database not found - prompt user to select folder
-        Dim userSelectedPath As String
-        userSelectedPath = PromptForDatabaseFolder(dbPath)
-        
-        If userSelectedPath = "" Then
-            ' User cancelled - return empty string to signal abort
-            GetValidatedDatabasePath = ""
-            Exit Function
-        End If
-        
-        dbPath = userSelectedPath
-    End If
-    
-    GetValidatedDatabasePath = dbPath
+    ' Delegate to year config module
+    GetValidatedDatabasePath = valid_YearConfig.GetDbPathForYear(DEFAULT_YEAR)
 End Function
 
-' Build database path from Kartei!X1 or ThisWorkbook.Path
-Private Function BuildDatabasePath() As String
-    On Error Resume Next
+' Get validated database path for a specific year
+' This is the preferred function for new multi-year code.
+'
+' @param year2 - Two-digit year (24, 25, or 26)
+' @return String - Full path to the database file, or empty string on failure
+Public Function GetValidatedDatabasePathForYear(ByVal year2 As Integer) As String
+    ' Ensure legacy config is migrated
+    MigrateLegacyConfigIfNeeded
     
-    Dim basePath As String
-    basePath = ""
-    
-    ' Try to read from Kartei!X1
-    Dim wsKartei As Worksheet
-    Set wsKartei = ThisWorkbook.Worksheets("Kartei")
-    
-    If Not wsKartei Is Nothing Then
-        basePath = Trim(CStr(wsKartei.Range("X1").Value))
-    End If
-    
-    ' Fallback to workbook path if X1 is empty
-    If basePath = "" Then
-        basePath = ThisWorkbook.Path
-    End If
-    
-    BuildDatabasePath = basePath & "\" & DB_SUBFOLDER & "\" & DB_FILENAME
-    On Error GoTo 0
+    ' Delegate to year config module
+    GetValidatedDatabasePathForYear = valid_YearConfig.GetDbPathForYear(year2)
 End Function
 
-' Prompt user to select the folder containing the database
-Private Function PromptForDatabaseFolder(ByVal currentPath As String) As String
-    PromptForDatabaseFolder = ""
+' Public procedure to manually select database folder (legacy - year 25)
+' For multi-year setup, use SelectDbRootFolder or SelectDbFolderXX instead.
+Public Sub SelectDatabaseFolder()
+    ' Migrate legacy config if needed
+    MigrateLegacyConfigIfNeeded
     
-    ' Show message explaining the problem
-    Dim msgResult As VbMsgBoxResult
-    msgResult = MsgBox("Datenbankdatei nicht gefunden:" & vbCrLf & vbCrLf & _
-                       currentPath & vbCrLf & vbCrLf & _
-                       "Moechten Sie den Ordner mit der Datenbank auswaehlen?" & vbCrLf & _
-                       "(Der Ordner sollte '" & DB_SUBFOLDER & "\" & DB_FILENAME & "' enthalten)", _
-                       vbYesNo + vbQuestion, "Datenbank nicht gefunden")
-    
-    If msgResult = vbNo Then
-        Exit Function
-    End If
-    
-    ' Show folder picker dialog
-    Dim folderPath As String
-    folderPath = BrowseForFolder("Waehlen Sie den Ordner mit der Datenbank (uebergeordneter Ordner von " & DB_SUBFOLDER & ")")
-    
-    If folderPath = "" Then
-        MsgBox "Kein Ordner ausgewaehlt. Vorgang abgebrochen.", vbInformation, "Abgebrochen"
-        Exit Function
-    End If
-    
-    ' Build and validate the new path
-    Dim newDbPath As String
-    newDbPath = folderPath & "\" & DB_SUBFOLDER & "\" & DB_FILENAME
-    
-    If Not FileExists(newDbPath) Then
-        MsgBox "Datenbankdatei immer noch nicht gefunden unter:" & vbCrLf & vbCrLf & _
-               newDbPath & vbCrLf & vbCrLf & _
-               "Bitte stellen Sie sicher, dass der ausgewaehlte Ordner '" & DB_SUBFOLDER & "\" & DB_FILENAME & "' enthaelt.", _
-               vbExclamation, "Datenbank nicht gefunden"
-        Exit Function
-    End If
-    
-    ' Save the selected path to Kartei!X1
-    SaveDatabaseBasePath folderPath
-    
-    MsgBox "Datenbankpfad erfolgreich aktualisiert!" & vbCrLf & vbCrLf & _
-           "Neuer Pfad: " & newDbPath, vbInformation, "Pfad aktualisiert"
-    
-    PromptForDatabaseFolder = newDbPath
-End Function
-
-' Save base path to Kartei!X1
-Private Sub SaveDatabaseBasePath(ByVal basePath As String)
-    On Error Resume Next
-    
-    Dim wsKartei As Worksheet
-    Set wsKartei = ThisWorkbook.Worksheets("Kartei")
-    
-    If Not wsKartei Is Nothing Then
-        wsKartei.Range("X1").Value = basePath
-    End If
-    
-    On Error GoTo 0
+    ' Use year-specific selection for year 25
+    valid_YearConfig.SelectDbFolder25
 End Sub
 
-' Check if file exists
-Private Function FileExists(ByVal filePath As String) As Boolean
-    On Error Resume Next
-    FileExists = (Dir(filePath) <> "")
-    On Error GoTo 0
+' ============================================================
+' MULTI-YEAR API (Thin wrappers - delegate to valid_YearConfig)
+' ============================================================
+
+' Select the cloud root folder (contains 2024, 2025, 2026 subfolders)
+' This is the recommended way to configure all database paths at once.
+Public Sub SelectDbRootFolder()
+    valid_YearConfig.SelectDbRootFolder
+End Sub
+
+' Select database folder for year 24
+Public Sub SelectDbFolder24()
+    valid_YearConfig.SelectDbFolder24
+End Sub
+
+' Select database folder for year 25
+Public Sub SelectDbFolder25()
+    valid_YearConfig.SelectDbFolder25
+End Sub
+
+' Select database folder for year 26
+Public Sub SelectDbFolder26()
+    valid_YearConfig.SelectDbFolder26
+End Sub
+
+' Ensure all database paths are configured for all supported years
+' Returns True if all paths are valid, False otherwise
+Public Function EnsureAllDbPathsConfigured() As Boolean
+    MigrateLegacyConfigIfNeeded
+    EnsureAllDbPathsConfigured = valid_YearConfig.EnsureAllDbPathsConfigured()
 End Function
 
-' Browse for folder using FileDialog
-Private Function BrowseForFolder(ByVal dialogTitle As String) As String
-    BrowseForFolder = ""
-    
-    Dim fd As FileDialog
-    Set fd = Application.FileDialog(msoFileDialogFolderPicker)
-    
-    With fd
-        .Title = dialogTitle
-        .InitialFileName = ThisWorkbook.Path & "\"
-        .AllowMultiSelect = False
-        
-        If .Show = -1 Then
-            BrowseForFolder = .SelectedItems(1)
-        End If
-    End With
-    
-    Set fd = Nothing
+' Get array of supported years
+Public Function GetSupportedYears() As Variant
+    GetSupportedYears = valid_YearConfig.GetSupportedYears()
 End Function
 
-' Public procedure to manually select database folder
-Public Sub SelectDatabaseFolder()
-    Dim currentPath As String
-    currentPath = BuildDatabasePath()
+' ============================================================
+' LEGACY MIGRATION
+' ============================================================
+
+' Migrate from old Kartei!X1 storage to new DBConfig sheet (one-time)
+Private Sub MigrateLegacyConfigIfNeeded()
+    If m_LegacyMigrated Then Exit Sub
     
-    Dim newPath As String
-    newPath = PromptForDatabaseFolder(currentPath)
-    
-    If newPath <> "" Then
-        MsgBox "Datenbankpfad ist jetzt gesetzt auf:" & vbCrLf & vbCrLf & newPath, vbInformation, "Datenbankpfad"
+    ' Check if cloud root is already configured
+    If valid_YearConfig.GetCloudRoot() <> "" Then
+        m_LegacyMigrated = True
+        Exit Sub
     End If
+    
+    ' Try to migrate from Kartei!X1
+    On Error Resume Next
+    
+    Dim wsKartei As Worksheet
+    Set wsKartei = ThisWorkbook.Worksheets("Kartei")
+    
+    If wsKartei Is Nothing Then
+        m_LegacyMigrated = True
+        Exit Sub
+    End If
+    
+    Dim oldPath As String
+    oldPath = Trim(CStr(wsKartei.Range("X1").Value))
+    
+    If oldPath <> "" Then
+        ' Run the migration
+        valid_YearConfig.MigrateFromLegacyConfig
+    End If
+    
+    m_LegacyMigrated = True
+    On Error GoTo 0
 End Sub

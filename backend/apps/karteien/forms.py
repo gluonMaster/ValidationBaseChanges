@@ -430,11 +430,31 @@ class KarteiRecordForm(forms.ModelForm):
         help_text="Ab welchem Monat soll die neue Preis 2 gelten?",
     )
     
+    # Price change end month (optional - to apply changes only to a range)
+    apply_to_month_1 = forms.ChoiceField(
+        required=False,
+        choices=[('', '---')] + START_MONTH_1_CHOICES,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        help_text="Bis zu welchem Monat soll die neue Preis 1 gelten? (leer = bis Ende Semester)",
+    )
+    apply_to_month_2 = forms.ChoiceField(
+        required=False,
+        choices=[('', '---')] + START_MONTH_2_CHOICES,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        help_text="Bis zu welchem Monat soll die neue Preis 2 gelten? (leer = bis Ende Semester)",
+    )
+    
     # Confirmation checkbox for negative discount clamping
     confirm_zero_clamp = forms.BooleanField(
         required=False,
         widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
         help_text="Ich bestätige, dass die auf 0 geklemmten Werte korrekt sind.",
+    )
+    
+    # Force recalculate months (for LEGACY->AUTO conversion via button)
+    force_recalculate_months = forms.BooleanField(
+        required=False,
+        widget=forms.HiddenInput(),
     )
     
     # Discount disabled months: range (Von/Bis) and CSV input
@@ -586,9 +606,11 @@ class KarteiRecordForm(forms.ModelForm):
                 self.fields[field_name].widget.attrs['readonly'] = True
                 self.fields[field_name].widget.attrs['class'] = 'form-control bg-light'
         elif is_legacy_mode:
-            # LEGACY mode: month fields stay enabled but show informative styling
-            # No disabling - legacy values are preserved until meaningful change
+            # LEGACY mode: month fields are readonly (no direct editing)
+            # Users can only view values and click for breakdown modal
+            # Direct editing is only through months-override page
             for field_name in MONTH_FIELD_NAMES:
+                self.fields[field_name].widget.attrs['readonly'] = True
                 self.fields[field_name].widget.attrs['class'] = 'form-control'
         
         # Determine which months need hours input
@@ -1316,23 +1338,33 @@ class KarteiRecordForm(forms.ModelForm):
         self._should_convert_to_auto = False
         
         if is_legacy_mode and is_edit:
-            # LEGACY mode: detect meaningful changes
-            original = KarteiRecord.objects.get(pk=self.instance.pk)
-            has_changes, touched_months = detect_meaningful_changes(
-                original, cleaned_data, hours_amounts
-            )
+            # Check for forced recalculation ("Monate neu berechnen" button)
+            force_recalc = bool(cleaned_data.get("force_recalculate_months"))
             
-            self._has_meaningful_changes = has_changes
-            self._touched_months = touched_months
-            self._should_convert_to_auto = has_changes
+            if force_recalc:
+                # Forced recalculation: convert LEGACY->AUTO, touch all months
+                self._has_meaningful_changes = True
+                self._touched_months = set(range(1, 13))
+                self._should_convert_to_auto = True
+                # Skip detect_meaningful_changes, fall through to AUTO processing
+            else:
+                # LEGACY mode: detect meaningful changes
+                original = KarteiRecord.objects.get(pk=self.instance.pk)
+                has_changes, touched_months = detect_meaningful_changes(
+                    original, cleaned_data, hours_amounts
+                )
+                
+                self._has_meaningful_changes = has_changes
+                self._touched_months = touched_months
+                self._should_convert_to_auto = has_changes
+                
+                if not has_changes:
+                    # No meaningful changes - don't process billing, keep LEGACY
+                    self._apply_from_month_1 = None
+                    self._apply_from_month_2 = None
+                    return
             
-            if not has_changes:
-                # No meaningful changes - don't process billing, keep LEGACY
-                self._apply_from_month_1 = None
-                self._apply_from_month_2 = None
-                return
-            
-            # Meaningful changes detected - will convert to AUTO
+            # Meaningful changes detected or forced - will convert to AUTO
             # Fall through to AUTO mode processing for calculation validation
             is_auto_mode = True
         
@@ -1380,9 +1412,53 @@ class KarteiRecordForm(forms.ModelForm):
                         'apply_from_month_2': 'Ungültiger Monat.'
                     })
         
-        # Store apply_from values for view to use
+        # Parse and validate apply_to_month values (optional end months)
+        apply_to_1 = None
+        apply_to_2 = None
+        
+        apply_to_1_str = cleaned_data.get('apply_to_month_1')
+        if apply_to_1_str:
+            try:
+                apply_to_1 = int(apply_to_1_str)
+                # Validate range (1-6 for semester 1)
+                if apply_to_1 < 1 or apply_to_1 > 6:
+                    raise ValidationError({
+                        'apply_to_month_1': 'Endmonat muss zwischen 1 und 6 liegen.'
+                    })
+                # Validate that end >= start
+                if apply_from_1 is not None and apply_to_1 < apply_from_1:
+                    raise ValidationError({
+                        'apply_to_month_1': 'Endmonat darf nicht vor dem Startmonat liegen.'
+                    })
+            except (ValueError, TypeError):
+                raise ValidationError({
+                    'apply_to_month_1': 'Ungültiger Monat.'
+                })
+        
+        apply_to_2_str = cleaned_data.get('apply_to_month_2')
+        if apply_to_2_str:
+            try:
+                apply_to_2 = int(apply_to_2_str)
+                # Validate range (7-12 for semester 2)
+                if apply_to_2 < 7 or apply_to_2 > 12:
+                    raise ValidationError({
+                        'apply_to_month_2': 'Endmonat muss zwischen 7 und 12 liegen.'
+                    })
+                # Validate that end >= start
+                if apply_from_2 is not None and apply_to_2 < apply_from_2:
+                    raise ValidationError({
+                        'apply_to_month_2': 'Endmonat darf nicht vor dem Startmonat liegen.'
+                    })
+            except (ValueError, TypeError):
+                raise ValidationError({
+                    'apply_to_month_2': 'Ungültiger Monat.'
+                })
+        
+        # Store apply_from and apply_to values for view to use
         self._apply_from_month_1 = apply_from_1
         self._apply_from_month_2 = apply_from_2
+        self._apply_to_month_1 = apply_to_1
+        self._apply_to_month_2 = apply_to_2
         
         # Calculate preliminary values to check for clamping
         # Actual calculation will be done in the view with the saved instance
@@ -1414,6 +1490,8 @@ class KarteiRecordForm(forms.ModelForm):
             temp_record,
             apply_from_month_1=apply_from_1,
             apply_from_month_2=apply_from_2,
+            apply_to_month_1=apply_to_1,
+            apply_to_month_2=apply_to_2,
             hours_amounts=hours_amounts,
         )
         
@@ -1628,6 +1706,8 @@ class KarteiRecordForm(forms.ModelForm):
             'hours_amounts': getattr(self, '_billing_hours_amounts', {}),
             'apply_from_month_1': getattr(self, '_apply_from_month_1', None),
             'apply_from_month_2': getattr(self, '_apply_from_month_2', None),
+            'apply_to_month_1': getattr(self, '_apply_to_month_1', None),
+            'apply_to_month_2': getattr(self, '_apply_to_month_2', None),
             'calculated_month_values': getattr(self, '_calculated_month_values', None),
             'calculated_base_amounts': getattr(self, '_calculated_base_amounts', None),
             'flags': getattr(self, '_calculation_flags', None),

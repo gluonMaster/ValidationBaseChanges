@@ -8,6 +8,15 @@ Attribute VB_Name = "valid_GrossGeschichteDecision"
 '   - Aggregates comments from history within date range
 '   - Self-contained for Superadmin file - no dependencies on Admin modules
 '
+'   MULTI-YEAR SUPPORT (2024, 2025, 2026):
+'   Each year has its own decision sheet (grossGeschichte24, grossGeschichte25, grossGeschichte26)
+'   and connects to the corresponding year database.
+'
+'   Entry points:
+'     BuildPendingDecisionSheetForYear(year2) - Main parameterized entry point
+'     BuildPendingDecisionSheet24/25/26       - Wrapper macros for UX
+'     BuildPendingDecisionSheet               - Legacy (defaults to year 25)
+'
 '   GrossGeschichte Column Structure:
 '   A=FamilyID, B=Parent, C=Child, D=Birthdate, E=Address, F=Phone, G=Mobile, H=Email
 '   I=Subject1, J=Price1, K=Subject2, L=Price2, M-X=Months 1-12, Y-AA=Extra1-3
@@ -70,12 +79,150 @@ Private Const COLOR_CHANGED As Long = 16761024  ' RGB(255, 192, 203)
 Private Const COLOR_NEW_RECORD As Long = 10092441 ' RGB(153, 255, 153)
 
 ' ============================================================
-' PUBLIC ENTRY POINT
+' MULTI-YEAR API - Entry Points
 ' ============================================================
 
-' Main entry point: Builds the GrossGeschichte decision sheet
-' Reads pending records from Kartei, compares with tblKartei,
-' creates War/Ist pairs with highlighted differences
+' Build decision sheet for a specific year
+' @param year2 - Two-digit year (24, 25, or 26)
+Public Sub BuildPendingDecisionSheetForYear(ByVal year2 As Integer)
+    On Error GoTo ErrorHandler
+    
+    ' Validate year
+    If Not IsValidYear(year2) Then
+        MsgBox "Ungueltiges Jahr: " & year2 & ". Unterstuetzte Jahre: 24, 25, 26.", _
+               vbExclamation, "Jahresfehler"
+        Exit Sub
+    End If
+    
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    
+    ' Database connection - opened once, closed in Cleanup
+    Dim db As DAO.Database
+    Set db = Nothing
+    
+    ' Ensure year sheets exist
+    Call valid_YearConfig.EnsureYearSheetsExist(year2)
+    
+    ' Step 1: Get or create grossGeschichteYY sheet
+    Dim wsGross As Worksheet
+    Set wsGross = GetOrCreateGrossGeschichteSheetForYear(year2)
+    
+    ' Step 2: Read and validate date range from B1:C1
+    Dim startDate As Date
+    Dim endDate As Date
+    If Not ReadDateRange(wsGross, startDate, endDate) Then
+        GoTo Cleanup
+    End If
+    
+    ' Step 3: Get reference to KarteiYY sheet (contains pending data)
+    Dim wsKartei As Worksheet
+    Dim karteiName As String
+    karteiName = valid_YearConfig.GetKarteiSheetName(year2)
+    
+    On Error Resume Next
+    Set wsKartei = ThisWorkbook.Worksheets(karteiName)
+    On Error GoTo ErrorHandler
+    
+    If wsKartei Is Nothing Then
+        MsgBox karteiName & "-Blatt nicht gefunden. Bitte zuerst ausstehende Aenderungen laden.", _
+               vbExclamation, "Fehler"
+        GoTo Cleanup
+    End If
+    
+    ' Step 4: Get database path for War values lookup (year-specific)
+    Dim dbPath As String
+    dbPath = valid_GrossGeschichteData.GetDatabasePathForYear(year2)
+    
+    If dbPath = "" Then
+        MsgBox "Datenbankpfad fuer Jahr " & year2 & " nicht festgelegt. Vorgang abgebrochen.", vbExclamation, "Fehler"
+        GoTo Cleanup
+    End If
+    
+    ' Step 5: Open database connection ONCE for all record lookups
+    Dim engine As DAO.DBEngine
+    Set engine = New DAO.DBEngine
+    
+    On Error Resume Next
+    Set db = engine.Workspaces(0).OpenDatabase(dbPath)
+    On Error GoTo ErrorHandler
+    
+    If db Is Nothing Then
+        MsgBox "Datenbank konnte nicht geoeffnet werden: " & dbPath, vbCritical, "Fehler"
+        GoTo Cleanup
+    End If
+    
+    ' Step 6: Clear existing data and create headers
+    ClearAndPrepareSheet wsGross
+    
+    ' Step 7: Process all pending records using the single open database connection
+    Dim processedCount As Long
+    processedCount = ProcessAllPendingRecords(wsGross, wsKartei, db, startDate, endDate)
+    
+    ' Step 8: Apply final formatting
+    ApplyFinalFormatting wsGross
+    
+    ' Step 9: Show completion message
+    If processedCount > 0 Then
+        MsgBox "GrossGeschichte (Jahr " & year2 & ") erfolgreich erstellt." & vbCrLf & vbCrLf & _
+               "Verarbeitete Eintraege: " & processedCount & vbCrLf & _
+               "Zeitraum: " & Format(startDate, "dd.mm.yyyy") & " - " & Format(endDate, "dd.mm.yyyy") & vbCrLf & vbCrLf & _
+               "Bitte ueberpruefen Sie die Aenderungen und markieren Sie:" & vbCrLf & _
+               "  - 'Approved' in Spalte AC fuer Genehmigung" & vbCrLf & _
+               "  - 'Declined' in Spalte AC fuer Ablehnung", _
+               vbInformation, "GrossGeschichte erstellt - Jahr " & year2
+    Else
+        MsgBox "Keine ausstehenden Aenderungen zum Verarbeiten gefunden (Jahr " & year2 & ").", _
+               vbInformation, "GrossGeschichte"
+    End If
+    
+Cleanup:
+    On Error Resume Next
+    If Not db Is Nothing Then
+        db.Close
+        Set db = Nothing
+    End If
+    On Error GoTo 0
+    
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    Exit Sub
+    
+ErrorHandler:
+    On Error Resume Next
+    If Not db Is Nothing Then
+        db.Close
+        Set db = Nothing
+    End If
+    On Error GoTo 0
+    
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "Fehler beim Erstellen des GrossGeschichte-Blatts (Jahr " & year2 & "): " & Err.Description, _
+           vbCritical, "Fehler"
+End Sub
+
+' Wrapper macro: Build decision sheet for year 2024
+Public Sub BuildPendingDecisionSheet24()
+    BuildPendingDecisionSheetForYear 24
+End Sub
+
+' Wrapper macro: Build decision sheet for year 2025
+Public Sub BuildPendingDecisionSheet25()
+    BuildPendingDecisionSheetForYear 25
+End Sub
+
+' Wrapper macro: Build decision sheet for year 2026
+Public Sub BuildPendingDecisionSheet26()
+    BuildPendingDecisionSheetForYear 26
+End Sub
+
+' ============================================================
+' LEGACY API - Backward Compatibility (defaults to year 25)
+' ============================================================
+
+' Main entry point: Builds the GrossGeschichte decision sheet (legacy - year 25)
+' For new code, use BuildPendingDecisionSheetForYear(year2) instead.
 '
 ' Database optimization: Opens the Access database ONCE at the start
 ' and passes the connection to ProcessAllPendingRecords, which reuses it
@@ -91,6 +238,23 @@ Public Sub BuildPendingDecisionSheet()
     Dim db As DAO.Database
     Set db = Nothing
     
+    ' Check if legacy single-year sheet exists; if so, use it.
+    ' Otherwise, fall back to year 25 multi-year workflow.
+    Dim wsKartei As Worksheet
+    On Error Resume Next
+    Set wsKartei = ThisWorkbook.Worksheets("Kartei")
+    On Error GoTo ErrorHandler
+    
+    If wsKartei Is Nothing Then
+        ' No legacy Kartei sheet - use year 25 multi-year workflow
+        Application.Calculation = xlCalculationAutomatic
+        Application.ScreenUpdating = True
+        BuildPendingDecisionSheetForYear 25
+        Exit Sub
+    End If
+    
+    ' Legacy workflow: use "Kartei" and "grossGeschichte" sheets
+    
     ' Step 1: Get or create GrossGeschichte sheet
     Dim wsGross As Worksheet
     Set wsGross = GetOrCreateGrossGeschichteSheet()
@@ -102,19 +266,7 @@ Public Sub BuildPendingDecisionSheet()
         GoTo Cleanup
     End If
     
-    ' Step 3: Get reference to Kartei sheet (contains pending data)
-    Dim wsKartei As Worksheet
-    On Error Resume Next
-    Set wsKartei = ThisWorkbook.Worksheets("Kartei")
-    On Error GoTo ErrorHandler
-    
-    If wsKartei Is Nothing Then
-        MsgBox "Kartei-Blatt nicht gefunden. Bitte zuerst ausstehende Aenderungen laden.", _
-               vbExclamation, "Fehler"
-        GoTo Cleanup
-    End If
-    
-    ' Step 4: Get database path for War values lookup
+    ' Step 4: Get database path for War values lookup (legacy - year 25)
     Dim dbPath As String
     dbPath = valid_GrossGeschichteData.GetDatabasePath()
     
@@ -124,7 +276,6 @@ Public Sub BuildPendingDecisionSheet()
     End If
     
     ' Step 5: Open database connection ONCE for all record lookups
-    ' This is the key optimization - avoiding repeated open/close for each ID
     Dim engine As DAO.DBEngine
     Set engine = New DAO.DBEngine
     
@@ -162,7 +313,6 @@ Public Sub BuildPendingDecisionSheet()
     End If
     
 Cleanup:
-    ' Close database connection (opened once in Step 5)
     On Error Resume Next
     If Not db Is Nothing Then
         db.Close
@@ -175,7 +325,6 @@ Cleanup:
     Exit Sub
     
 ErrorHandler:
-    ' Ensure database is closed even on error
     On Error Resume Next
     If Not db Is Nothing Then
         db.Close
@@ -193,7 +342,49 @@ End Sub
 ' SHEET MANAGEMENT
 ' ============================================================
 
-' Gets or creates the GrossGeschichte worksheet with proper structure
+' Gets or creates the grossGeschichteYY worksheet for a specific year
+Private Function GetOrCreateGrossGeschichteSheetForYear(ByVal year2 As Integer) As Worksheet
+    Dim sheetName As String
+    sheetName = valid_YearConfig.GetGrossGeschichteSheetName(year2)
+    
+    Dim ws As Worksheet
+    
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(sheetName)
+    On Error GoTo 0
+    
+    If ws Is Nothing Then
+        ' Create new sheet
+        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        ws.Name = sheetName
+        
+        ' Set up date range inputs in row 1
+        ws.Range("A1").Value = "Start Date:"
+        ws.Range("A1").Font.Bold = True
+        ws.Range("B1:C1").NumberFormat = "dd.mm.yyyy"
+        ws.Range("B1").Value = Date - 30  ' Default: 30 days ago
+        ws.Range("C1").Value = Date       ' Default: today
+    Else
+        ' Ensure date format is preserved
+        ws.Range("B1:C1").NumberFormat = "dd.mm.yyyy"
+        
+        ' Set B1 to 30 days ago ONLY if empty or invalid date
+        ' (Do not overwrite Dashboard-provided dates - Prompt 14)
+        If IsEmpty(ws.Range("B1").Value) Or Not IsDate(ws.Range("B1").Value) Then
+            ws.Range("B1").Value = Date - 30
+        End If
+        
+        ' Set C1 to today ONLY if empty or invalid date
+        ' (Do not overwrite Dashboard-provided dates - Prompt 14)
+        If IsEmpty(ws.Range("C1").Value) Or Not IsDate(ws.Range("C1").Value) Then
+            ws.Range("C1").Value = Date
+        End If
+    End If
+    
+    Set GetOrCreateGrossGeschichteSheetForYear = ws
+End Function
+
+' Gets or creates the GrossGeschichte worksheet with proper structure (legacy - no year suffix)
 Private Function GetOrCreateGrossGeschichteSheet() As Worksheet
     Dim ws As Worksheet
     
@@ -216,13 +407,17 @@ Private Function GetOrCreateGrossGeschichteSheet() As Worksheet
         ' Ensure date format is preserved
         ws.Range("B1:C1").NumberFormat = "dd.mm.yyyy"
         
-        ' Set B1 to 30 days ago if empty or invalid
-        If Not IsDate(ws.Range("B1").Value) Or IsEmpty(ws.Range("B1").Value) Then
+        ' Set B1 to 30 days ago ONLY if empty or invalid date
+        ' (Do not overwrite Dashboard-provided dates - Prompt 14)
+        If IsEmpty(ws.Range("B1").Value) Or Not IsDate(ws.Range("B1").Value) Then
             ws.Range("B1").Value = Date - 30
         End If
         
-        ' Always update C1 to today
-        ws.Range("C1").Value = Date
+        ' Set C1 to today ONLY if empty or invalid date
+        ' (Do not overwrite Dashboard-provided dates - Prompt 14)
+        If IsEmpty(ws.Range("C1").Value) Or Not IsDate(ws.Range("C1").Value) Then
+            ws.Range("C1").Value = Date
+        End If
     End If
     
     Set GetOrCreateGrossGeschichteSheet = ws
@@ -835,4 +1030,13 @@ Private Function FormatAsText(ByVal Value As Variant) As String
     Else
         FormatAsText = CStr(Value)
     End If
+End Function
+
+' ============================================================
+' YEAR VALIDATION HELPER
+' ============================================================
+
+' Check if year is valid (24, 25, or 26)
+Private Function IsValidYear(ByVal year2 As Integer) As Boolean
+    IsValidYear = (year2 = 24 Or year2 = 25 Or year2 = 26)
 End Function

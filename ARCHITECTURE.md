@@ -128,9 +128,13 @@
   - Обязательное поле `year` для разделения 2024/2025/… (вместо отдельных файлов).
   - Основные поля: `family_id`, `parent_name`, `child_name`, `birthdate`, `address`, `phone`, `mobile`, `email`.
   - Предметы и цены: `subject1`, `price1`, `subject2`, `price2`, `extra1..3`.
-  - Месячные поля: `month_1` … `month_12` (DecimalField для платежей).
+  - Ref‑поля справочников: `subject*_ref`, `teacher*_ref`, `price*_ref` + стартовые месяцы `start_month_1/2`.
+  - Режим начислений: `months_mode` = `LEGACY`/`AUTO`/`OVERRIDE`.
+  - Данные расчёта: `base_amounts` (суммы до скидок), `hours_amounts` (UE по месяцам для Stundenfächer).
+  - Отключение скидок по месяцам: `discounts_disabled` + `discounts_disabled_months` (список месяцев 1-12).
+  - Месячные поля: `month_1` … `month_12` (DecimalField для начислений/платежей).
   - Служебные: `sepa_marker`, `status`, `last_change_role/date/time`, `history_raw`.
-  - Контракт (legacy): `teacher1_legacy_name`, `teacher2_legacy_name`, `contract_type_raw`/`is_monthly_contract`, `contract_status_raw`/`is_contract_terminated`.
+  - Контракт (legacy): `teacher1_legacy_name`, `teacher2_legacy_name`, `contract_type_raw`/`is_monthly_contract`, `contract_status_raw`/`is_contract_terminated`, `contract_terminated_from_month`.
   - Поле `status` (enum: normal/pending/declined) для быстрых фильтров.
   - Уникальное ограничение: `(year, id)`.
 - В дальнейшем возможно выделение отдельных сущностей (`Family`, `Child`, `Subscription`), но первый шаг максимально близок к текущей структуре.
@@ -144,6 +148,8 @@
 - **Validation**: Форма валидирует, что выбранная цена принадлежит году записи и выбранному предмету; преподаватель имеет `TeachingAssignment` для предмета и года.
 - **Legacy sync**: При сохранении legacy-поля `subject1/subject2/price1/price2` синхронизируются с выбранными ref-полями для обратной совместимости с импортом/экспортом.
 - **Start months**: Поля `start_month_1` (1-6) и `start_month_2` (7-12) определяют, с какого месяца начинается начисление в каждом полугодии.
+- **Legacy-подсказки и быстрые ссылки (PROMPT_65…72):** Если legacy-значения `Fach/Lehrer/Preis` не соответствуют каталогам, UI показывает информативные бейджи и даёт быстрые ссылки на create-формы справочников с предзаполнением + `next` возвратом обратно в редактирование записи.
+- **Live-preview начислений (PROMPT_51,57,58,79):** В edit есть API-preview (`karteien:billing_preview_api`) и модалка с деталями начисления при клике на месяц.
 
 **Сервисный слой (`apps/karteien/services.py`):**
 
@@ -513,12 +519,13 @@
   - `created_at`, `updated_at` — timestamps.
   - Применяется к конкретной записи.
 
-**Скидки и расчёт начислений (будущий функционал):**
+**Скидки и расчёт начислений (реализовано):**
 
-В текущей реализации скидки только хранятся и управляются.
-Автоматический перерасчёт полей `month_1..month_12` с учётом скидок
-будет реализован в следующем шаге (PROMPT_21).
-Порядок применения: сначала процентные скидки, затем фиксированные.
+Скидки (`FamilyDiscount`, `RecordDiscount`) участвуют в расчёте `AUTO` начислений в `apps/karteien/billing.py`:
+
+- Базовые суммы берутся из `PriceOption` (с учётом `start_month_*` и режима Stundenfächer).
+- Затем применяются скидки (сначала процентные, затем фиксированные).
+- Поддерживается отключение скидок на всю запись или на конкретные месяцы (`discounts_disabled`, `discounts_disabled_months`).
 
 **Django Admin:**
 
@@ -533,9 +540,11 @@
 - `/catalog/assignments/copy-year/` — копирование назначений между годами.
 - `/catalog/prices/` — управление прайс-листом по годам и предметам.
 - `/catalog/prices/copy-year/` — копирование прайса между годами.
-- `/catalog/discounts/` — управление справочником скидок (процентные/фиксированные).
-- `/catalog/family-discounts/` — назначение скидок на семью+год.
-- `/catalog/record-discounts/` — назначение скидок на конкретные записи.
+- `/catalog/discounts/` - управление справочником скидок (процентные/фиксированные).
+- `/catalog/family-discounts/` - назначение скидок на семью+год.
+- `/catalog/record-discounts/` - назначение скидок на конкретные записи.
+
+Create-формы справочников поддерживают предзаполнение через query-params и `next` (для сценариев быстрого добавления из `/karteien/<pkid>/edit/`).
 
 ### 2.8 `legacy_import` (миграция из Access)
 
@@ -635,7 +644,13 @@ python manage.py import_access_year --year 2025 \
    - Система сравнивает изменённые поля (аналог `FindChangedIDs` + `HasTrackedFieldChanges`).
    - Safe изменения → напрямую обновляют `KarteiRecord` + создают историю.
    - Risky изменения → создают/обновляют `PendingChange` и помечают исходную запись как PENDING.
-4. При создании `PendingChange` система создаёт `Notification` для всех Superadmin’ов.
+4. При создании `PendingChange` система создаёт `Notification` для всех Superadmin'ов.
+
+Особенности edit-сценария начислений:
+
+- В `AUTO` режиме начисления рассчитываются из текущих цен/скидок (включая Stundenfächer с `hours_amounts`) и сохраняются в `month_*`.
+- В `LEGACY` режиме месячные поля отображаются как read-only (клик открывает пояснение). Для приведения legacy-значений к текущим правилам доступна кнопка **Monate neu berechnen** (конвертирует запись в `AUTO` и пересчитывает месяцы).
+- Для ручной правки начислений используется отдельный экран `months-override` (режим `OVERRIDE`), а в UI рядом с месяцами показывается бейдж `Override`.
 
 ### 3.2 Superadmin workflow (approve/decline)
 

@@ -3,11 +3,48 @@ Attribute VB_Name = "Geschichte"
 '   Module: Geschichte
 '   Purpose: Parse and display history for individual records in Superadmin file
 '   Updated: Support for new history formats (Address, Subject1/2, Decl_n:)
+'
+'   MULTI-YEAR SUPPORT:
+'   - GeshichteMachen now auto-detects the year from the active sheet name
+'   - If on KarteiYY sheet, routes to valid_HistoryPerYear.GeschichteMachenForYear
+'   - Falls back to legacy single-sheet behavior for backward compatibility
+'
+'   For explicit year-specific calls, use valid_HistoryPerYear module:
+'   - GeschichteMachen24, GeschichteMachen25, GeschichteMachen26
 '==========================
 
 Option Explicit
 
+' Main entry point: Auto-detect year from active sheet and route appropriately
 Sub GeshichteMachen()
+    ' Check if we're on a year-specific Kartei sheet (Kartei24, Kartei25, Kartei26)
+    Dim activeSheetName As String
+    activeSheetName = ActiveSheet.Name
+    
+    ' Try to detect year from sheet name
+    Dim year2 As Integer
+    year2 = valid_YearConfig.GetYearFromSheetName(activeSheetName)
+    
+    If year2 > 0 Then
+        ' Route to year-specific implementation
+        valid_HistoryPerYear.GeschichteMachenForYear year2
+        Exit Sub
+    End If
+    
+    ' Fall back to legacy behavior for "Kartei" sheet (default to year 25 for compatibility)
+    If activeSheetName = "Kartei" Then
+        GeshichteMachenLegacy
+        Exit Sub
+    End If
+    
+    ' Unknown sheet - show error
+    MsgBox "Bitte waehlen Sie zuerst eine Zeile auf einem Kartei-Blatt aus." & vbCrLf & _
+           "(Kartei24, Kartei25, Kartei26 oder Kartei)", _
+           vbExclamation, "Geschichte"
+End Sub
+
+' Legacy single-sheet implementation (for backward compatibility with "Kartei" sheet)
+Private Sub GeshichteMachenLegacy()
     Dim result As Collection
     Dim ws As Worksheet
     Dim currentRow As Long

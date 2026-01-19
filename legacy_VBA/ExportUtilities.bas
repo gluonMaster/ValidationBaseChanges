@@ -709,3 +709,113 @@ Sub SelectFolder()
     
 End Sub
 
+' ============================================================
+' PHONE COLUMN ENFORCEMENT HELPERS
+' Ensure phone columns (7=Tel., 8=Handy) are always displayed as TEXT
+' to prevent scientific notation display (e.g. "1,76E+13")
+' ============================================================
+
+' Enforces TEXT format on phone columns and normalizes any scientific-notation values.
+' Should be called after any operation that writes data to Kartei sheet.
+'
+' @param ws - The Kartei worksheet
+' @param startRow - First data row (typically 3)
+Public Sub EnforcePhoneColumnsAsText(ByVal ws As Worksheet, ByVal startRow As Long)
+    On Error Resume Next
+    
+    ' Determine last row using ID column (48) as anchor
+    Dim lastRow As Long
+    lastRow = ws.Cells(ws.Rows.Count, 48).End(xlUp).Row
+    
+    ' Also check column A in case ID column is empty
+    Dim lastRowA As Long
+    lastRowA = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    If lastRowA > lastRow Then lastRow = lastRowA
+    
+    If lastRow < startRow Then Exit Sub
+    
+    ' Pre-format phone columns as TEXT
+    ws.Range(ws.Cells(startRow, 7), ws.Cells(lastRow, 7)).NumberFormat = "@"
+    ws.Range(ws.Cells(startRow, 8), ws.Cells(lastRow, 8)).NumberFormat = "@"
+    
+    ' Convert any existing numeric/scientific cells to normalized text strings
+    Dim r As Long
+    Dim val7 As String, val8 As String
+    Dim norm7 As String, norm8 As String
+    
+    For r = startRow To lastRow
+        ' Use .Text to capture what the user sees (including scientific notation display)
+        val7 = ws.Cells(r, 7).Text
+        val8 = ws.Cells(r, 8).Text
+        
+        ' Normalize using phone_Normalize module
+        norm7 = phone_Normalize.NormalizePhoneText(val7)
+        norm8 = phone_Normalize.NormalizePhoneText(val8)
+        
+        ' Write back if value needs correction
+        If norm7 <> val7 And Len(norm7) > 0 Then
+            ws.Cells(r, 7).Value = norm7
+        End If
+        If norm8 <> val8 And Len(norm8) > 0 Then
+            ws.Cells(r, 8).Value = norm8
+        End If
+    Next r
+    
+    On Error GoTo 0
+End Sub
+
+' Checks phone columns for any remaining scientific notation values.
+' Returns the count of cells containing "E+" or "E-".
+' Optionally shows a warning message if count > 0.
+'
+' @param ws - The Kartei worksheet
+' @param startRow - First data row (typically 3)
+' @param showWarning - If True, shows a MsgBox warning if issues found
+' @return Long - Count of cells with scientific notation
+Public Function CheckPhoneColumnsForScientific(ByVal ws As Worksheet, _
+                                               ByVal startRow As Long, _
+                                               Optional ByVal showWarning As Boolean = False) As Long
+    On Error Resume Next
+    
+    Dim lastRow As Long
+    lastRow = ws.Cells(ws.Rows.Count, 48).End(xlUp).Row
+    Dim lastRowA As Long
+    lastRowA = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    If lastRowA > lastRow Then lastRow = lastRowA
+    
+    If lastRow < startRow Then
+        CheckPhoneColumnsForScientific = 0
+        Exit Function
+    End If
+    
+    Dim countFound As Long
+    countFound = 0
+    
+    Dim r As Long
+    Dim cellText As String
+    
+    For r = startRow To lastRow
+        ' Check column 7
+        cellText = UCase$(ws.Cells(r, 7).Text)
+        If InStr(1, cellText, "E+") > 0 Or InStr(1, cellText, "E-") > 0 Then
+            countFound = countFound + 1
+        End If
+        
+        ' Check column 8
+        cellText = UCase$(ws.Cells(r, 8).Text)
+        If InStr(1, cellText, "E+") > 0 Or InStr(1, cellText, "E-") > 0 Then
+            countFound = countFound + 1
+        End If
+    Next r
+    
+    On Error GoTo 0
+    
+    If showWarning And countFound > 0 Then
+        MsgBox "WARNUNG: " & countFound & " Telefon-Zelle(n) enthalten noch wissenschaftliche Notation (z.B. 1,76E+9)." & vbCrLf & vbCrLf & _
+               "Empfehlung: Fuehren Sie 'EnforcePhoneColumnsAsText' aus oder ueberpruefen Sie die Daten manuell.", _
+               vbExclamation, "Telefon-Formatierung"
+    End If
+    
+    CheckPhoneColumnsForScientific = countFound
+End Function
+

@@ -96,6 +96,32 @@ Includes autocomplete for parent/child names when creating new records.
     border-color: #6c757d !important;
     background-color: #f8f9fa !important;
   }
+  /* Month field mismatch - red border for suspicious values */
+  .month-field-mismatch {
+    border-color: #dc3545 !important;
+    box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25) !important;
+  }
+  /* Hide spinners for month value fields (id_month_*) */
+  input[id^="id_month_"]::-webkit-outer-spin-button,
+  input[id^="id_month_"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[id^="id_month_"] {
+    -moz-appearance: textfield;
+  }
+  /* Override badge next to month label */
+  .month-mode-badge {
+    font-size: 0.55rem;
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+  .month-mode-badge.badge-override {
+    background-color: #dc3545;
+    color: white;
+  }
   .month-preview-badge {
     position: absolute;
     top: -8px;
@@ -191,6 +217,9 @@ Includes autocomplete for parent/child names when creating new records.
   <!-- Form -->
   <form method="post" novalidate>
     {% csrf_token %}
+    
+    {# Hidden field for force recalculate months (LEGACY->AUTO conversion) #}
+    {{ form.force_recalculate_months }}
 
     <!-- Validation Errors -->
     {% if form.non_field_errors %}
@@ -709,6 +738,20 @@ Includes autocomplete for parent/child names when creating new records.
           <span class="badge bg-secondary ms-2">LEGACY</span>
           {% endif %}
         </span>
+        {% if not is_create and user.is_admin_role %}
+        <div class="btn-group">
+          {% if months_mode == 'LEGACY' %}
+          <button type="button" class="btn btn-outline-warning btn-sm" id="btn-recalculate-months">
+            <i class="bi bi-calculator"></i>
+            Monate neu berechnen
+          </button>
+          {% endif %}
+          <a href="{% url 'karteien:months_override' record.pk %}" class="btn btn-outline-danger btn-sm">
+            <i class="bi bi-exclamation-triangle"></i>
+            Override
+          </a>
+        </div>
+        {% endif %}
       </div>
       <div class="card-body">
         {% if is_auto_mode %}
@@ -845,22 +888,24 @@ Includes autocomplete for parent/child names when creating new records.
       </div>
     </div>
 
-    <!-- Price Change Application (edit mode only) -->
+    <!-- Price Change Application (edit mode only, shown only when price changed) -->
     {% if not is_create and is_auto_mode %}
-    <div class="card mb-4" id="price-change-card">
+    <div class="card mb-4" id="price-change-card" style="display: none;">
       <div class="card-header bg-warning text-dark">
         <i class="bi bi-arrow-right-circle"></i>
         Preis-Änderung anwenden
       </div>
       <div class="card-body">
         <p class="text-muted small">
-          Wenn Sie den Preis ändern, wählen Sie bitte, ab welchem Monat die neue Berechnung gelten soll.
-          Monate vor dem gewählten Monat behalten ihre bisherigen Werte.
+          <strong>Nur bei Preisänderung:</strong> Ab welchem Monat gilt der neue Preis?
+          Monate davor bleiben mit den bisherigen Werten unverändert.
+          Optional: Geben Sie einen Endmonat an, um nur einen begrenzten Bereich zu ändern.
         </p>
         <div class="row">
-          <div class="col-md-6 mb-3">
+          <!-- Preis 1 range -->
+          <div class="col-md-3 mb-3" id="apply-from-month-1-wrapper" style="display: none;">
             <label for="{{ form.apply_from_month_1.id_for_label }}" class="form-label">
-              Preis 1 anwenden ab Monat
+              Preis 1 ab Monat
             </label>
             {{ form.apply_from_month_1 }}
             {% if form.apply_from_month_1.errors %}
@@ -868,15 +913,36 @@ Includes autocomplete for parent/child names when creating new records.
             {% endif %}
             <small class="text-muted">{{ form.apply_from_month_1.help_text }}</small>
           </div>
-          <div class="col-md-6 mb-3">
+          <div class="col-md-3 mb-3" id="apply-to-month-1-wrapper" style="display: none;">
+            <label for="{{ form.apply_to_month_1.id_for_label }}" class="form-label">
+              Preis 1 bis Monat
+            </label>
+            {{ form.apply_to_month_1 }}
+            {% if form.apply_to_month_1.errors %}
+            <div class="invalid-feedback d-block">{{ form.apply_to_month_1.errors.0 }}</div>
+            {% endif %}
+            <small class="text-muted">{{ form.apply_to_month_1.help_text }}</small>
+          </div>
+          <!-- Preis 2 range -->
+          <div class="col-md-3 mb-3" id="apply-from-month-2-wrapper" style="display: none;">
             <label for="{{ form.apply_from_month_2.id_for_label }}" class="form-label">
-              Preis 2 anwenden ab Monat
+              Preis 2 ab Monat
             </label>
             {{ form.apply_from_month_2 }}
             {% if form.apply_from_month_2.errors %}
             <div class="invalid-feedback d-block">{{ form.apply_from_month_2.errors.0 }}</div>
             {% endif %}
             <small class="text-muted">{{ form.apply_from_month_2.help_text }}</small>
+          </div>
+          <div class="col-md-3 mb-3" id="apply-to-month-2-wrapper" style="display: none;">
+            <label for="{{ form.apply_to_month_2.id_for_label }}" class="form-label">
+              Preis 2 bis Monat
+            </label>
+            {{ form.apply_to_month_2 }}
+            {% if form.apply_to_month_2.errors %}
+            <div class="invalid-feedback d-block">{{ form.apply_to_month_2.errors.0 }}</div>
+            {% endif %}
+            <small class="text-muted">{{ form.apply_to_month_2.help_text }}</small>
           </div>
         </div>
       </div>
@@ -1035,6 +1101,44 @@ Includes autocomplete for parent/child names when creating new records.
 <script>
 (function() {
   const year = {{ year }};
+  
+  // ==========================================================================
+  // "Monate neu berechnen" button for LEGACY records (Admin only, edit mode)
+  // ==========================================================================
+  {% if not is_create and user.is_admin_role and months_mode == 'LEGACY' %}
+  (function() {
+    const recalcBtn = document.getElementById('btn-recalculate-months');
+    if (!recalcBtn) return;
+    
+    recalcBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      
+      // Build confirmation message
+      let confirmMsg = 'Sind Sie sicher? Alle Monatswerte werden anhand der aktuellen Preise und Rabatte neu berechnet. Legacy-Werte gehen dabei verloren.';
+      
+      {% if hourly_months %}
+      // Check if any hourly month is applicable
+      const hourlyMonths = {{ hourly_months|safe }};
+      if (hourlyMonths && hourlyMonths.length > 0) {
+        confirmMsg += '\n\nAchtung: Für Stundenfächer werden nicht eingetragene UE (Stunden) als 0 behandelt (Monatswert wird 0.00).';
+      }
+      {% endif %}
+      
+      if (confirm(confirmMsg)) {
+        // Set hidden field to trigger force recalculation
+        const forceField = document.getElementById('id_force_recalculate_months');
+        if (forceField) {
+          forceField.value = '1';
+        }
+        // Submit the form
+        const form = recalcBtn.closest('form');
+        if (form) {
+          form.submit();
+        }
+      }
+    });
+  })();
+  {% endif %}
   
   {% if is_create %}
   // ==========================================================================
@@ -1532,14 +1636,48 @@ Includes autocomplete for parent/child names when creating new records.
     };
   }
   
+  // ==========================================================================
+  // Month Mismatch Highlighting & Override Badge (for edit mode)
+  // ==========================================================================
+  {% if not is_create %}
+  // Mismatch months from server (values don't match expected calculation)
+  const mismatchMonths = {{ mismatch_months|safe }};
+  const isOverrideMode = {{ is_override_mode|yesno:"true,false" }};
+  
+  // Apply mismatch class and override badge on page load
+  for (let m = 1; m <= 12; m++) {
+    const input = monthFields[m].input;
+    if (!input) continue;
+    
+    const wrapper = input.closest('.col-md-2, .col-sm-4, .col-6');
+    const label = wrapper?.querySelector('label');
+    
+    // Apply mismatch class (red border) if month is in mismatchMonths
+    if (mismatchMonths.includes(m)) {
+      input.classList.add('month-field-mismatch');
+    }
+    
+    // Add Override badge if in OVERRIDE mode
+    if (isOverrideMode && label) {
+      const badge = document.createElement('span');
+      badge.className = 'month-mode-badge badge-override';
+      badge.textContent = 'Override';
+      badge.title = 'Wert wurde manuell überschrieben (Override-Modus)';
+      label.appendChild(badge);
+    }
+  }
+  {% endif %}
+
   // Preview-triggering elements
   const previewTriggers = [
     subject1Select, price1Select,
     document.getElementById('id_start_month_1'),
     document.getElementById('id_apply_from_month_1'),
+    document.getElementById('id_apply_to_month_1'),
     subject2Select, price2Select,
     document.getElementById('id_start_month_2'),
     document.getElementById('id_apply_from_month_2'),
+    document.getElementById('id_apply_to_month_2'),
     // Discounts disabled fields
     document.getElementById('id_discounts_disabled'),
     document.getElementById('id_discounts_disabled_von'),
@@ -1655,6 +1793,78 @@ Includes autocomplete for parent/child names when creating new records.
   }
   {% endif %}
   
+  // ==========================================================================
+  // Price Change Panel Toggle (Edit mode + AUTO mode only)
+  // Show panel only when price1_ref or price2_ref has changed from original
+  // ==========================================================================
+  
+  {% if not is_create and is_auto_mode %}
+  (function() {
+    // Elements
+    const priceChangeCard = document.getElementById('price-change-card');
+    const applyFromMonth1Wrapper = document.getElementById('apply-from-month-1-wrapper');
+    const applyFromMonth2Wrapper = document.getElementById('apply-from-month-2-wrapper');
+    const applyToMonth1Wrapper = document.getElementById('apply-to-month-1-wrapper');
+    const applyToMonth2Wrapper = document.getElementById('apply-to-month-2-wrapper');
+    
+    if (!priceChangeCard) return;
+    
+    // Original values from server (empty string if None/null)
+    const originalPrice1RefId = '{{ record.price1_ref_id|default:"" }}';
+    const originalPrice2RefId = '{{ record.price2_ref_id|default:"" }}';
+    
+    // Check if there are server-side validation errors on apply_from_month or apply_to_month fields
+    const hasApplyFromMonth1Error = {{ form.apply_from_month_1.errors|yesno:"true,false" }};
+    const hasApplyFromMonth2Error = {{ form.apply_from_month_2.errors|yesno:"true,false" }};
+    const hasApplyToMonth1Error = {{ form.apply_to_month_1.errors|yesno:"true,false" }};
+    const hasApplyToMonth2Error = {{ form.apply_to_month_2.errors|yesno:"true,false" }};
+    
+    /**
+     * Update visibility of price change panel based on price changes
+     */
+    function updatePriceChangePanelVisibility() {
+      const currentPrice1RefId = price1Select ? price1Select.value : '';
+      const currentPrice2RefId = price2Select ? price2Select.value : '';
+      
+      // Determine which prices have changed
+      const price1Changed = currentPrice1RefId !== originalPrice1RefId;
+      const price2Changed = currentPrice2RefId !== originalPrice2RefId;
+      
+      // Show individual wrappers based on which price changed (or has error)
+      // Show both from and to wrappers together for each price
+      if (applyFromMonth1Wrapper) {
+        applyFromMonth1Wrapper.style.display = (price1Changed || hasApplyFromMonth1Error || hasApplyToMonth1Error) ? 'block' : 'none';
+      }
+      if (applyToMonth1Wrapper) {
+        applyToMonth1Wrapper.style.display = (price1Changed || hasApplyFromMonth1Error || hasApplyToMonth1Error) ? 'block' : 'none';
+      }
+      if (applyFromMonth2Wrapper) {
+        applyFromMonth2Wrapper.style.display = (price2Changed || hasApplyFromMonth2Error || hasApplyToMonth2Error) ? 'block' : 'none';
+      }
+      if (applyToMonth2Wrapper) {
+        applyToMonth2Wrapper.style.display = (price2Changed || hasApplyFromMonth2Error || hasApplyToMonth2Error) ? 'block' : 'none';
+      }
+      
+      // Show card if any price changed or any error exists
+      const shouldShowCard = price1Changed || price2Changed || 
+                             hasApplyFromMonth1Error || hasApplyFromMonth2Error ||
+                             hasApplyToMonth1Error || hasApplyToMonth2Error;
+      priceChangeCard.style.display = shouldShowCard ? 'block' : 'none';
+    }
+    
+    // Initialize visibility on load
+    updatePriceChangePanelVisibility();
+    
+    // Toggle on price select change
+    if (price1Select) {
+      price1Select.addEventListener('change', updatePriceChangePanelVisibility);
+    }
+    if (price2Select) {
+      price2Select.addEventListener('change', updatePriceChangePanelVisibility);
+    }
+  })();
+  {% endif %}
+  
   // Debounce helper
   function debouncePreview(func, wait) {
     let timeout;
@@ -1675,10 +1885,12 @@ Includes autocomplete for parent/child names when creating new records.
       price1_ref: price1Select ? price1Select.value : '',
       start_month_1: document.getElementById('id_start_month_1')?.value || '1',
       apply_from_month_1: document.getElementById('id_apply_from_month_1')?.value || '',
+      apply_to_month_1: document.getElementById('id_apply_to_month_1')?.value || '',
       subject2_ref: subject2Select ? subject2Select.value : '',
       price2_ref: price2Select ? price2Select.value : '',
       start_month_2: document.getElementById('id_start_month_2')?.value || '7',
       apply_from_month_2: document.getElementById('id_apply_from_month_2')?.value || '',
+      apply_to_month_2: document.getElementById('id_apply_to_month_2')?.value || '',
       // Discounts disabled fields
       discounts_disabled: document.getElementById('id_discounts_disabled')?.checked ? 'true' : 'false',
       discounts_disabled_von: document.getElementById('id_discounts_disabled_von')?.value || '',

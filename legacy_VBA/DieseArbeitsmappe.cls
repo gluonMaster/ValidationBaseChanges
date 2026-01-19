@@ -36,6 +36,14 @@ Public Sub Workbook_Open()
     Call OverlayPendingAndDeclined(ws)
     Call ConvertAndFormatCellsOptimized
     
+    ' Enforce phone columns as TEXT after all imports/overlays
+    ' This catches any scientific notation introduced by overlays
+    Call EnforcePhoneColumnsAsText(ws, 3)
+    
+    ' Sanity check: warn if scientific notation still present after all processing
+    Dim phoneIssueCount As Long
+    phoneIssueCount = CheckPhoneColumnsForScientific(ws, 3, True)
+    
     ' Rebuild Kartei_Original (with pending/declined data overlaid)
     Call RebuildKarteiOriginalSheet(ws)
 
@@ -236,7 +244,12 @@ Public Sub ImportKarteiAndFormat_Optimized()
 
             ' Special handling for column 48 (AV): write Access ID instead of Value48
             If col <> 48 Then
-                arrValues(rowDest, col) = arrRaw(idxValue, rec)
+                ' Phone columns (7=Tel., 8=Handy): normalize to prevent scientific notation
+                If col = 7 Or col = 8 Then
+                    arrValues(rowDest, col) = phone_Normalize.NormalizePhoneText(arrRaw(idxValue, rec))
+                Else
+                    arrValues(rowDest, col) = arrRaw(idxValue, rec)
+                End If
             Else
                 ' Column 48 (AV) = Access ID field (arrRaw(0, rec))
                 arrValues(rowDest, 48) = arrRaw(0, rec)
@@ -252,6 +265,11 @@ Public Sub ImportKarteiAndFormat_Optimized()
     Next rec
 
     ' Now we write arrValues to the sheet in one operation
+    ' IMPORTANT: Pre-format phone columns (7=Tel., 8=Handy) as TEXT before bulk write
+    ' to prevent Excel from auto-converting numeric-looking strings to numbers
+    wsKartei.Range(wsKartei.Cells(3, 7), wsKartei.Cells(rowCount + 2, 7)).NumberFormat = "@"
+    wsKartei.Range(wsKartei.Cells(3, 8), wsKartei.Cells(rowCount + 2, 8)).NumberFormat = "@"
+    
     With wsKartei
         .Range("A3").Resize(rowCount, 52).value = arrValues
     End With
@@ -288,6 +306,16 @@ Public Sub ImportKarteiAndFormat_Optimized()
 
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
+    
+    ' Enforce phone columns as TEXT and normalize any remaining scientific notation
+    Call EnforcePhoneColumnsAsText(wsKartei, 3)
+    
+    ' Sanity check: warn if any scientific notation still present
+    Dim sciCount As Long
+    sciCount = CheckPhoneColumnsForScientific(wsKartei, 3, False)
+    If sciCount > 0 Then
+        Debug.Print "WARNING: " & sciCount & " phone cells still contain scientific notation after import"
+    End If
 
     ' Rebuild Kartei_Original
     'Call RebuildKarteiOriginalSheet(wsKartei)

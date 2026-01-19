@@ -634,16 +634,23 @@ Private Sub FillPreRecordFromArray(ByVal rs As DAO.Recordset, _
         Dim fieldName As String
         fieldName = "Value" & c
         If Not IsError(arrRow(1, c)) Then
-            rs.Fields(fieldName).value = arrRow(1, c)
+            ' Phone columns (7=Tel., 8=Handy): must be written as strings to preserve
+            ' leading zeros and prevent scientific notation in Access
+            ' Also normalize any existing scientific-notation strings (e.g. "1,76E+9" -> "176000000")
+            If c = 7 Or c = 8 Then
+                rs.Fields(fieldName).Value = phone_Normalize.NormalizePhoneText(arrRow(1, c))
+            Else
+                rs.Fields(fieldName).Value = arrRow(1, c)
+            End If
         Else
-            rs.Fields(fieldName).value = ""
+            rs.Fields(fieldName).Value = ""
         End If
         
         fieldName = "InteriorColor" & c
         If IsNull(arrFormats(1, c)) Or IsEmpty(arrFormats(1, c)) Then
-            rs.Fields(fieldName).value = 0
+            rs.Fields(fieldName).Value = 0
         Else
-            rs.Fields(fieldName).value = arrFormats(1, c)
+            rs.Fields(fieldName).Value = arrFormats(1, c)
         End If
     Next c
     

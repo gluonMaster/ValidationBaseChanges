@@ -1,5 +1,6 @@
 # Prompt files (internal documentation, not for repo)
 PROMPT*.md
+legacy_VBA/PROMPTS/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

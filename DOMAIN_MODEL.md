@@ -326,8 +326,9 @@
 
 | Excel Col | Excel Idx | Access Field | Django Field       | Django Type                 |
 | --------- | --------- | ------------ | ------------------ | --------------------------- |
-| —         | —         | —            | `year`             | `PositiveSmallIntegerField` |
-| AV        | 48        | `ID`         | `id`               | `PositiveIntegerField` (PK) |
+| -         | -         | -            | `pkid`             | `BigAutoField` (PK)         |
+| -         | -         | -            | `year`             | `PositiveSmallIntegerField` |
+| AV        | 48        | `ID`         | `id`               | `PositiveIntegerField`      |
 | A         | 1         | `Value1`     | `family_id`        | `CharField(50)`             |
 | B         | 2         | `Value2`     | `parent_name`      | `CharField(255)`            |
 | D         | 4         | `Value4`     | `child_name`       | `CharField(255)`            |
@@ -353,10 +354,11 @@
 
 ### 7.2 Ключевые особенности
 
-- **Primary Key**: Поле `id` задаётся явно (`PositiveIntegerField`), а не автоинкремент. Значение берётся из Access ID / Excel AV.
-- **Год**: Новое поле `year` заменяет отдельные файлы баз по годам. Уникальное ограничение `(year, id)`.
-- **Статус**: Поле `status` — enum (`RecordStatus`) со значениями `''` (normal), `'PENDING'`, `'DECLINED'`.
-- **История**: Поле `history_raw` сохраняет legacy-формат истории. Нормализованная история — в отдельной модели `history.HistoryEvent`.
+- **Primary Key**: Django PK — поле `pkid` (surrogate, BigAutoField).
+- **Access/Excel ID**: Поле `id` хранит Access ID / Excel AV (48). Не глобально уникально: доменный ключ записи — `(year, id)`.
+- **Год**: Поле `year` заменяет отдельные файлы баз по годам. Уникальность обеспечивается ограничением `(year, id)`.
+- **Статус**: Поле `status` - enum (`RecordStatus`) со значениями `''` (normal), `'PENDING'`, `'DECLINED'`.
+- **История**: Поле `history_raw` сохраняет legacy-формат истории. Нормализованная история - в отдельной модели `history.HistoryEvent`.
 - **Tracked Fields**: Константа `TRACKED_FIELDS` в `models.py` определяет поля, изменения которых фиксируются в истории и считаются "risky".
 
 ### 7.3 Месячные поля
@@ -408,6 +410,19 @@ EXCEL_COL_TO_MONTH = {21: 1, 22: 2, ..., 32: 12}
 
 - Все ref-поля nullable; импортированные записи с заполненными legacy-полями работают без ref.
 - При редактировании форма пытается prefill ref из legacy (по совпадению имени предмета/суммы).
+
+**Дополнительные поля в Postgres (web extension):**
+
+| Django Field                      | Django Type          | Описание |
+| -------------------------------- | -------------------- | -------- |
+| `months_mode`                     | `CharField`          | Режим начислений: `LEGACY` / `AUTO` / `OVERRIDE`. |
+| `base_amounts`                    | `JSONField`          | Базовые суммы по месяцам до скидок (в `AUTO`). |
+| `hours_amounts`                   | `JSONField`          | UE по месяцам для Stundenfächer (в `AUTO`). |
+| `discounts_disabled`              | `BooleanField`       | Отключить скидки для записи. |
+| `discounts_disabled_months`       | `JSONField`          | Месяцы (1-12), где скидки отключены точечно. |
+| `contract_terminated_from_month`  | `PositiveSmallIntegerField` | Месяц (1-12), с которого начисления должны быть 0 при расторгнутом контракте. |
+
+Дополнительные legacy-поля, импортируемые из Access (учителя/маркеры контракта), описаны в разделе §8.2.
 
 ### 7.5 Pending / Declined
 

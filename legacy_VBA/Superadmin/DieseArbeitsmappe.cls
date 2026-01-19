@@ -9,38 +9,73 @@ Attribute VB_PredeclaredId = True
 Attribute VB_Exposed = True
 '==========================
 '   Module: DieseArbeitsmappe (Superadmin)
-'   Purpose: Workbook events for KindElternDaten_25_Suprime.xlsm
+'   Purpose: Workbook events for the multi-year Superadmin workbook
 '   
-'   Key functionality:
-'   - On open: Refresh Neu list with new records
-'   - On close: Clear GrossGeschichte and Kartei sheets (from row 3 down)
-'   - Activate Kartei sheet before closing
+'   MULTI-YEAR SUPPORT (2024, 2025, 2026):
+'   - On open: Show Dashboard and refresh Neu list (2026 only)
+'   - On close: Clear ALL year-specific sheets (Kartei24/25/26, grossGeschichte24/25/26)
+'   - Activate Dashboard before closing
 '   - Save without prompting the user
+'
+'   Protected sheets (NOT cleared on close):
+'   - Dashboard (user instructions + year selection)
+'   - DBConfig (database path configuration)
+'   - NeuConfig (LastSeenID storage)
+'   - Neu (new records list - kept for reference)
+'   - GeschichteYY / GeschichteYY_Alle (history reports - view-only output)
+'
+'   Cleared sheets (transient data from pre_tblKartei):
+'   - KarteiYY (pending import staging)
+'   - grossGeschichteYY (decision sheet)
 '==========================
 
 Option Explicit
 
+' Whether to auto-refresh Neu list on open (can be disabled if slow)
+Private Const AUTO_REFRESH_NEU As Boolean = True
+
+' Whether to clear Kartei/grossGeschichte sheets on close
+' Set to False to preserve data across sessions (for debugging)
+Private Const CLEAR_ON_CLOSE As Boolean = True
+
 Private Sub Workbook_Open()
     On Error Resume Next
-    ' Refresh Neu list to show new records (ID > LastSeenID)
-    valid_NeuList.RefreshNeuList
+    
+    ' Show (and create if missing) Dashboard
+    valid_Dashboard.ShowDashboard
+    
+    ' Refresh Neu list (2026 only) to show new records
+    If AUTO_REFRESH_NEU Then
+        Dim status As String
+        Dim dbPath As String
+        dbPath = valid_YearConfig.TryGetDbPathForYearNoPrompt(26, status)
+        
+        ' Avoid prompting on workbook open. Refresh only if DB is already available.
+        If status = "ok" Then
+            valid_NeuList.RefreshNeuList
+        End If
+    End If
+    
     On Error GoTo 0
 End Sub
 
 Private Sub Workbook_BeforeClose(Cancel As Boolean)
     On Error GoTo ErrorHandler
     
+    If Not CLEAR_ON_CLOSE Then
+        ' Skip clearing - just save and exit
+        ThisWorkbook.Save
+        Exit Sub
+    End If
+    
     Application.ScreenUpdating = False
     Application.DisplayAlerts = False
     
-    ' Clear GrossGeschichte sheet (from row 3 down)
-    Call ClearSheetData("GrossGeschichte")
+    ' Clear all year-specific transient sheets
+    Call ClearAllYearSheets
     
-    ' Clear Kartei sheet (from row 3 down)
-    Call ClearSheetData("Kartei")
-    
-    ' Activate Kartei sheet
-    Call ActivateKarteiSheet
+    ' Activate Dashboard (or first sheet if Dashboard doesn't exist)
+    Call ActivateDashboardOrFirst
     
     ' Save the workbook without prompting
     ThisWorkbook.Save
@@ -54,6 +89,33 @@ ErrorHandler:
     Application.ScreenUpdating = True
     ' Don't show error message on close - just proceed with closing
     Debug.Print "Workbook_BeforeClose Error: " & Err.Description
+End Sub
+
+' Clear all year-specific transient sheets (Kartei24/25/26, grossGeschichte24/25/26)
+Private Sub ClearAllYearSheets()
+    On Error Resume Next
+    
+    Dim years As Variant
+    years = Array(24, 25, 26)
+    
+    Dim i As Long
+    For i = LBound(years) To UBound(years)
+        Dim year2 As Integer
+        year2 = CInt(years(i))
+        
+        ' Clear KarteiYY sheet
+        Call ClearSheetData("Kartei" & Format(year2, "00"))
+        
+        ' Clear grossGeschichteYY sheet
+        Call ClearSheetData("grossGeschichte" & Format(year2, "00"))
+    Next i
+    
+    ' Also clear legacy non-suffixed sheets if they exist (backwards compatibility)
+    Call ClearSheetData("Kartei")
+    Call ClearSheetData("GrossGeschichte")
+    Call ClearSheetData("grossGeschichte")
+    
+    On Error GoTo 0
 End Sub
 
 ' Clear data and formatting from row 3 down on specified sheet
@@ -100,12 +162,25 @@ Private Sub ClearSheetData(ByVal sheetName As String)
     On Error GoTo 0
 End Sub
 
-' Activate the Kartei sheet
-Private Sub ActivateKarteiSheet()
+' Activate the Dashboard sheet (or first sheet if not available)
+Private Sub ActivateDashboardOrFirst()
     On Error Resume Next
     
     Dim ws As Worksheet
-    Set ws = ThisWorkbook.Worksheets("Kartei")
+    
+    ' Try Dashboard first
+    Set ws = ThisWorkbook.Worksheets("Dashboard")
+    
+    ' Fall back to first visible sheet
+    If ws Is Nothing Then
+        Dim i As Long
+        For i = 1 To ThisWorkbook.Worksheets.Count
+            If ThisWorkbook.Worksheets(i).Visible = xlSheetVisible Then
+                Set ws = ThisWorkbook.Worksheets(i)
+                Exit For
+            End If
+        Next i
+    End If
     
     If Not ws Is Nothing Then
         ws.Activate

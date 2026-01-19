@@ -4,17 +4,27 @@ Attribute VB_Name = "valid_FormatMonths"
 '   Purpose: Format monthly columns (U-AF, 21-32) in Superadmin Kartei
 '   Ensures numeric values with proper decimal separators and formatting
 '   Adapted from alt/FormatCellsReal.bas for Superadmin self-containment
+'
+'   MULTI-YEAR SUPPORT (2024, 2025, 2026):
+'   FormatMonthlyColumnsForSheet(ws) - Works on any Kartei sheet
+'   FormatMonthlyColumns - Legacy (defaults to "Kartei" sheet)
 '==========================
 
 Option Explicit
 
-' Format monthly columns U-AF (21-32) after loading pending records
+' ============================================================
+' MULTI-YEAR API
+' ============================================================
+
+' Format monthly columns U-AF (21-32) for a specific worksheet
 ' Safe to call on empty ranges - will not error if no data present
-Public Sub FormatMonthlyColumns()
+' @param ws - The worksheet to format (e.g., Kartei24, Kartei25, Kartei26)
+Public Sub FormatMonthlyColumnsForSheet(ByVal ws As Worksheet)
     On Error GoTo ErrorHandler
     
-    Dim ws As Worksheet
-    Set ws = ThisWorkbook.Worksheets("Kartei")
+    If ws Is Nothing Then
+        Exit Sub
+    End If
     
     ' Find last used row based on column A
     Dim lastRow As Long
@@ -36,7 +46,7 @@ Public Sub FormatMonthlyColumns()
     ' Process each monthly column (U-AF = columns 21-32)
     Dim colIndex As Long
     For colIndex = 21 To 32
-        Call FormatSingleMonthColumn(ws, colIndex, lastRow, decimalSeparator)
+        Call FormatSingleMonthColumnOnSheet(ws, colIndex, lastRow, decimalSeparator)
     Next colIndex
     
     ' Re-enable updates
@@ -48,14 +58,46 @@ ErrorHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     ' Silent error handling - formatting is not critical to data integrity
-    Debug.Print "Error in FormatMonthlyColumns: " & Err.Description
+    Debug.Print "Error in FormatMonthlyColumnsForSheet: " & Err.Description
 End Sub
 
-' Format a single monthly column
-Private Sub FormatSingleMonthColumn(ByVal ws As Worksheet, _
-                                    ByVal colIndex As Long, _
-                                    ByVal lastRow As Long, _
-                                    ByVal decimalSeparator As String)
+' ============================================================
+' LEGACY API - Backward Compatibility
+' ============================================================
+
+' Format monthly columns U-AF (21-32) after loading pending records (legacy - "Kartei" sheet)
+' For new code, use FormatMonthlyColumnsForSheet(ws) instead.
+' Safe to call on empty ranges - will not error if no data present
+Public Sub FormatMonthlyColumns()
+    On Error Resume Next
+    
+    ' Try to find legacy "Kartei" sheet first, then fall back to Kartei25
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Worksheets("Kartei")
+    
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets("Kartei25")
+    End If
+    
+    If ws Is Nothing Then
+        Exit Sub
+    End If
+    
+    On Error GoTo 0
+    
+    ' Delegate to sheet-parameterized version
+    FormatMonthlyColumnsForSheet ws
+End Sub
+
+' ============================================================
+' INTERNAL HELPERS
+' ============================================================
+
+' Format a single monthly column on a specific sheet
+Private Sub FormatSingleMonthColumnOnSheet(ByVal ws As Worksheet, _
+                                           ByVal colIndex As Long, _
+                                           ByVal lastRow As Long, _
+                                           ByVal decimalSeparator As String)
     On Error Resume Next
     
     Dim rng As Range

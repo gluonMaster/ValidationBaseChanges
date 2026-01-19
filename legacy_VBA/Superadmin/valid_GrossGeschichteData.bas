@@ -349,7 +349,14 @@ Private Function MapRecordsetToArray(ByVal rs As DAO.Recordset) As Variant
     
     ' Map Value1..Value47 to positions 1..47
     For c = 1 To 47
-        arr(1, c) = NullToEmpty(rs.Fields("Value" & c).Value)
+        ' Phone columns (7=Tel., 8=Handy): must be stored as strings to preserve
+        ' leading zeros and prevent scientific notation (e.g. "0176..." not "1.76E+9")
+        ' Also normalize any existing scientific-notation strings (e.g. "1,76E+9" -> "176000000")
+        If c = 7 Or c = 8 Then
+            arr(1, c) = phone_Normalize.NormalizePhoneText(rs.Fields("Value" & c).Value)
+        Else
+            arr(1, c) = NullToEmpty(rs.Fields("Value" & c).Value)
+        End If
     Next c
     
     ' Map ID to position 48
@@ -382,7 +389,14 @@ Private Function MapWorksheetRowToArray(ByVal ws As Worksheet, ByVal rowIndex As
     
     Dim c As Long
     For c = 1 To TOTAL_COLUMNS
-        arr(1, c) = EmptyToEmpty(ws.Cells(rowIndex, c).Value)
+        ' Phone columns (7=Tel., 8=Handy): use .Text to preserve leading zeros
+        ' and prevent scientific notation. .Text returns the displayed string.
+        ' Also normalize any existing scientific-notation strings (e.g. "1,76E+9" -> "176000000")
+        If c = 7 Or c = 8 Then
+            arr(1, c) = phone_Normalize.NormalizePhoneText(ws.Cells(rowIndex, c).Text)
+        Else
+            arr(1, c) = EmptyToEmpty(ws.Cells(rowIndex, c).Value)
+        End If
     Next c
     
     On Error GoTo 0
@@ -428,10 +442,20 @@ End Function
 
 ' Gets the validated database path using valid_DatabasePath module.
 ' Convenience wrapper for external callers.
+' Defaults to year 25 for backward compatibility.
 '
 ' @return String - Full path to database or empty string if cancelled
 Public Function GetDatabasePath() As String
     GetDatabasePath = valid_DatabasePath.GetValidatedDatabasePath()
+End Function
+
+' Gets the validated database path for a specific year.
+' Use this for multi-year operations.
+'
+' @param year2 - Two-digit year (24, 25, or 26)
+' @return String - Full path to database or empty string if cancelled
+Public Function GetDatabasePathForYear(ByVal year2 As Integer) As String
+    GetDatabasePathForYear = valid_DatabasePath.GetValidatedDatabasePathForYear(year2)
 End Function
 
 ' Checks if a record with the given ID exists in tblKartei.

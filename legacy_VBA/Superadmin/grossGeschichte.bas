@@ -5,6 +5,14 @@ Attribute VB_Name = "grossGeschichte"
 '   Updated: Now outputs to "Geschichte" sheet (not GrossGeschichte)
 '           Decision columns (AC/AD/AE) removed - decisions handled by valid_GrossGeschichteDecision
 '
+'   MULTI-YEAR SUPPORT:
+'   - GrossGeshichteMachen now auto-detects the year from user's target sheet
+'   - Routes to valid_HistoryPerYear.GrossGeschichteMachenForYear for year-specific behavior
+'   - Falls back to legacy single-sheet behavior for backward compatibility
+'
+'   For explicit year-specific calls, use valid_HistoryPerYear module:
+'   - GrossGeschichteMachen24, GrossGeschichteMachen25, GrossGeschichteMachen26
+'
 '   Column Structure (A-AB):
 '   A=FamilyID, B=Parent, C=Child, D=Birthdate, E=Address, F=Phone, G=Mobile, H=Email
 '   I=Subject1, J=Price1, K=Subject2, L=Price2, M-X=Months 1-12, Y-AA=Extra1-3
@@ -14,10 +22,45 @@ Attribute VB_Name = "grossGeschichte"
 Option Explicit
 
 ' Main entry point: Generate a view-only history report
-' Mode A (JA): All history events -> outputs to "Geschichte" sheet
-' Mode B (NEIN): Last change per ID only -> outputs to "Geschichte" sheet
+' Auto-detects year from active sheet or prompts user for year selection
+' Mode A (JA): All history events
+' Mode B (NEIN): Last change per ID only
 ' NOTE: This is a VIEW-ONLY report. For pending decisions, use valid_GrossGeschichteDecision.BuildPendingDecisionSheet
 Sub GrossGeshichteMachen()
+    ' Check if we're on a year-specific Geschichte_Alle sheet
+    Dim activeSheetName As String
+    activeSheetName = ActiveSheet.Name
+    
+    ' Try to detect year from sheet name (e.g., Geschichte24_Alle, Kartei25)
+    Dim year2 As Integer
+    year2 = valid_YearConfig.GetYearFromSheetName(activeSheetName)
+    
+    If year2 > 0 Then
+        ' Route to year-specific implementation
+        valid_HistoryPerYear.GrossGeschichteMachenForYear year2
+        Exit Sub
+    End If
+    
+    ' Check for legacy sheet names (Geschichte, Kartei)
+    If activeSheetName = "Geschichte" Or activeSheetName = "Kartei" Then
+        GrossGeshichteMachenLegacy
+        Exit Sub
+    End If
+    
+    ' Unknown sheet - ask user which year to use
+    Dim userChoice As Integer
+    userChoice = MsgBox("Welches Jahr moechten Sie fuer den Geschichte-Bericht verwenden?" & vbCrLf & vbCrLf & _
+                        "JA = 2025" & vbCrLf & _
+                        "NEIN = Abbrechen (bitte erst Kartei-Blatt waehlen)", _
+                        vbYesNo + vbQuestion, "Jahr waehlen")
+    
+    If userChoice = vbYes Then
+        valid_HistoryPerYear.GrossGeschichteMachenForYear 25
+    End If
+End Sub
+
+' Legacy single-sheet implementation (for backward compatibility with "Kartei"/"Geschichte" sheets)
+Private Sub GrossGeshichteMachenLegacy()
     Dim wsHistory As Worksheet
     Dim wsKartei As Worksheet
     Dim startDate As Date
@@ -360,8 +403,10 @@ Private Sub CreateHistoryEntry(wsHistory As Worksheet, wsKartei As Worksheet, _
         wsHistory.Range("C" & currentRow).Value = CStr(wsKartei.Cells(karteiRow, 4).Value) ' Child from column D(4)
         wsHistory.Range("D" & currentRow).Value = FormatAsText(wsKartei.Cells(karteiRow, 5).Value) ' Birthdate from column E(5)
         wsHistory.Range("E" & currentRow).Value = CStr(wsKartei.Cells(karteiRow, 6).Value) ' Address from column F(6)
-        wsHistory.Range("F" & currentRow).Value = FormatAsText(wsKartei.Cells(karteiRow, 7).Value) ' Phone from column G(7)
-        wsHistory.Range("G" & currentRow).Value = FormatAsText(wsKartei.Cells(karteiRow, 8).Value) ' Mobile from column H(8)
+        ' Phone columns (7=Tel., 8=Handy): use .Text to preserve leading zeros and prevent
+        ' scientific notation. .Text returns the displayed string, not the internal value.
+        wsHistory.Range("F" & currentRow).Value = wsKartei.Cells(karteiRow, 7).Text ' Phone from column G(7)
+        wsHistory.Range("G" & currentRow).Value = wsKartei.Cells(karteiRow, 8).Text ' Mobile from column H(8)
         wsHistory.Range("H" & currentRow).Value = CStr(wsKartei.Cells(karteiRow, 9).Value) ' Email from column I(9)
         wsHistory.Range("I" & currentRow).Value = CStr(wsKartei.Cells(karteiRow, 10).Value) ' Subject1 from column J(10)
         wsHistory.Range("J" & currentRow).Value = CStr(wsKartei.Cells(karteiRow, 13).Value) ' Price1 from column M(13)
