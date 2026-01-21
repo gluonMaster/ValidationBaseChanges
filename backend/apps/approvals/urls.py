@@ -41,6 +41,7 @@ urlpatterns = [
     # Pending changes (info view for Admin)
     path('pending/', views.PendingChangesListView.as_view(), name='pending_list'),
     path('pending/<int:pk>/', views.PendingDetailView.as_view(), name='pending_detail'),
+    path('pending/<int:pk>/edit/', views.PendingChangeEditView.as_view(), name='pending_edit'),
     
     # ===========================================================================
     # Superadmin: Pending Overview and Decisions

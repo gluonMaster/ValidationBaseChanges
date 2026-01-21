@@ -273,12 +273,23 @@ def get_unread_count(user: User) -> int:
     """
     Get the count of unread notifications for a user.
     
+    For SUPERADMIN users, automatically cleans up stale pending notifications
+    (those whose pending changes have already been processed) before counting.
+    
     Args:
         user: The user to count notifications for.
     
     Returns:
         Number of unread notifications.
     """
+    # Auto-cleanup stale pending notifications for Superadmins
+    # so they don't see already-processed items in their count
+    if hasattr(user, 'role') and user.role == ROLE_SUPERADMIN:
+        try:
+            cleanup_stale_pending_notifications()
+        except Exception:
+            pass  # Don't fail if cleanup fails
+    
     return Notification.objects.filter(
         recipient=user,
         read_at__isnull=True,
@@ -294,6 +305,9 @@ def get_notifications(
     """
     Get notifications for a user with optional filtering.
     
+    For SUPERADMIN users, automatically cleans up stale pending notifications
+    (those whose pending changes have already been processed) before querying.
+    
     Args:
         user: The user to get notifications for.
         unread_only: If True, only return unread notifications.
@@ -303,6 +317,14 @@ def get_notifications(
     Returns:
         QuerySet of Notification instances, ordered by created_at descending.
     """
+    # Auto-cleanup stale pending notifications for Superadmins
+    # so they don't see already-processed items in the dropdown
+    if hasattr(user, 'role') and user.role == ROLE_SUPERADMIN:
+        try:
+            cleanup_stale_pending_notifications()
+        except Exception:
+            pass  # Don't fail if cleanup fails
+    
     queryset = Notification.objects.filter(recipient=user)
     
     if unread_only:
@@ -342,15 +364,79 @@ def mark_all_notifications_read(user: User) -> int:
     """
     Mark all unread notifications as read for a user.
     
+    For SUPERADMIN users: excludes PENDING_CREATED notifications, since
+    pending tasks should remain visible until a decision (approve/decline)
+    is made.
+    
     Args:
         user: The user whose notifications to mark as read.
     
     Returns:
         Number of notifications marked as read.
     """
-    count = Notification.objects.filter(
+    queryset = Notification.objects.filter(
         recipient=user,
         read_at__isnull=True,
+    )
+    
+    # For SUPERADMIN: do not mark PENDING_CREATED as read via "read all"
+    # Pending notifications should stay visible until decision is made
+    if hasattr(user, 'role') and user.role == ROLE_SUPERADMIN:
+        queryset = queryset.exclude(type=NotificationType.PENDING_CREATED)
+    
+    count = queryset.update(read_at=timezone.now())
+    
+    return count
+
+
+def mark_pending_notifications_read_for_record(record_pkid: int) -> int:
+    """
+    Mark all PENDING_CREATED notifications for a specific record as read.
+    
+    This is called after a Superadmin makes a decision (approve/decline)
+    to clear the pending notifications for that record from all Superadmins'
+    notification lists.
+    
+    IMPORTANT: The argument must be the Django PK (KarteiRecord.pkid),
+    NOT the domain ID (KarteiRecord.id). Notification.record_id stores
+    the Django PK.
+    
+    Args:
+        record_pkid: The Django PK (pkid) of the KarteiRecord whose pending
+                     notifications should be marked as read.
+    
+    Returns:
+        Number of notifications marked as read.
+    """
+    count = Notification.objects.filter(
+        record_id=record_pkid,
+        type=NotificationType.PENDING_CREATED,
+        read_at__isnull=True,
+    ).update(read_at=timezone.now())
+    
+    return count
+
+
+def cleanup_stale_pending_notifications() -> int:
+    """
+    Mark as read all PENDING_CREATED notifications for already-processed pending changes.
+    
+    This handles "stale" notifications that remained unread due to earlier bugs
+    (e.g., using record.id instead of record.pkid). After this cleanup,
+    Superadmins will no longer see notifications for pending changes that
+    have already been approved/declined.
+    
+    Called automatically during notification polling to ensure eventual cleanup.
+    
+    Returns:
+        Number of stale notifications marked as read.
+    """
+    # Mark as read any PENDING_CREATED notification where the associated
+    # pending_change is already processed
+    count = Notification.objects.filter(
+        type=NotificationType.PENDING_CREATED,
+        read_at__isnull=True,
+        record__pending_change__is_processed=True,
     ).update(read_at=timezone.now())
     
     return count

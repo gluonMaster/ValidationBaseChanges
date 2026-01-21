@@ -36,7 +36,7 @@ from django.views.generic import DetailView, ListView, TemplateView
 
 from apps.karteien.models import KarteiRecord, RecordStatus, TRACKED_FIELDS
 
-from .forms import DeclinedChangeEditForm
+from .forms import DeclinedChangeEditForm, PendingChangeEditForm
 from .models import DeclinedChange, PendingChange
 from .services import (
     apply_decision,
@@ -479,6 +479,130 @@ class PendingDetailView(AdminEditorMixin, DetailView):
         return context
 
 
+class PendingChangeEditView(AdminEditorMixin, View):
+    """
+    Edit view for PendingChange.snapshot (ADMIN only).
+    
+    Allows Admin to edit a pending change before Superadmin decides.
+    This updates PendingChange.snapshot and admin_comment without
+    affecting the actual KarteiRecord.
+    
+    Includes optimistic conflict guard to prevent edit if the pending
+    change was already processed or modified by another user.
+    
+    GET: Display form prefilled with snapshot values and admin_comment.
+    POST: Validate and update snapshot + admin_comment, notify Superadmin.
+    """
+    
+    template_name = "approvals/pending_edit.html"
+    
+    def get(self, request: HttpRequest, pk: int) -> HttpResponse:
+        """Show edit form prefilled with snapshot values."""
+        pending = get_object_or_404(PendingChange, pk=pk, is_processed=False)
+        record = pending.record
+        
+        # Check record is still PENDING
+        if record.status != RecordStatus.PENDING:
+            messages.warning(
+                request,
+                "Dieser Datensatz ist nicht mehr im Status 'Wartend'."
+            )
+            return redirect("approvals:pending_detail", pk=pk)
+        
+        form = PendingChangeEditForm(
+            snapshot=pending.snapshot,
+            admin_comment=pending.admin_comment or "",
+        )
+        
+        return render(request, self.template_name, {
+            "form": form,
+            "pending_change": pending,
+            "record": record,
+            "pending_updated_at": pending.updated_at.isoformat(),
+        })
+    
+    def post(self, request: HttpRequest, pk: int) -> HttpResponse:
+        """Validate and update snapshot + admin_comment."""
+        # Reload pending from DB to check current state
+        pending = PendingChange.objects.filter(pk=pk).first()
+        
+        if not pending:
+            messages.error(request, "Diese wartende Änderung wurde nicht gefunden.")
+            return redirect("approvals:pending_list")
+        
+        # Check if already processed
+        if pending.is_processed:
+            messages.warning(
+                request,
+                "Diese Änderung wurde bereits bearbeitet (genehmigt oder abgelehnt). "
+                "Bearbeitung nicht möglich."
+            )
+            return redirect("approvals:pending_detail", pk=pk)
+        
+        record = pending.record
+        
+        # Check record is still PENDING
+        if record.status != RecordStatus.PENDING:
+            messages.warning(
+                request,
+                "Dieser Datensatz ist nicht mehr im Status 'Wartend'."
+            )
+            return redirect("approvals:pending_detail", pk=pk)
+        
+        # Optimistic conflict guard: check updated_at
+        submitted_updated_at = request.POST.get("pending_updated_at", "")
+        if submitted_updated_at:
+            try:
+                from datetime import datetime
+                # Parse ISO format
+                submitted_dt = datetime.fromisoformat(submitted_updated_at.replace("Z", "+00:00"))
+                # Compare with current pending.updated_at
+                # Allow small delta for timezone rounding
+                current_dt = pending.updated_at
+                if hasattr(current_dt, "isoformat"):
+                    if submitted_dt.isoformat() != current_dt.isoformat():
+                        messages.warning(
+                            request,
+                            "Diese Änderung wurde zwischenzeitlich aktualisiert. "
+                            "Bitte laden Sie die Seite neu und versuchen Sie es erneut."
+                        )
+                        return redirect("approvals:pending_edit", pk=pk)
+            except (ValueError, TypeError):
+                # If we can't parse, proceed anyway (fail-open for usability)
+                pass
+        
+        form = PendingChangeEditForm(
+            request.POST,
+            snapshot=pending.snapshot,
+            admin_comment=pending.admin_comment or "",
+        )
+        
+        if form.is_valid():
+            # Update snapshot with new values
+            pending.snapshot = form.to_snapshot()
+            pending.admin_comment = form.cleaned_data["admin_comment"]
+            pending.save(update_fields=["snapshot", "admin_comment", "updated_at"])
+            
+            # Notify Superadmin about the update (raises pending in their list)
+            from apps.notifications.services import notify_pending_created
+            notify_pending_created(record, pending)
+            
+            messages.success(
+                request,
+                f"Wartende Änderung für Datensatz {record.id} wurde aktualisiert."
+            )
+            
+            return redirect("karteien:record_detail", pk=record.pk)
+        
+        # Form invalid - re-render with errors
+        return render(request, self.template_name, {
+            "form": form,
+            "pending_change": pending,
+            "record": record,
+            "pending_updated_at": pending.updated_at.isoformat(),
+        })
+
+
 # =============================================================================
 # Superadmin Pending Overview
 # =============================================================================
@@ -645,11 +769,42 @@ class SuperadminWarIstView(SuperadminMixin, DetailView):
         # Check if record has history
         context["has_history"] = bool(record.history_raw)
         
+        # Optimistic conflict guard: store exact timestamp for comparison
+        # Using isoformat() preserves microseconds (unlike Django's date:'c' filter)
+        context["pending_updated_at"] = pending.updated_at.isoformat()
+        
         return context
     
     def post(self, request: HttpRequest, pk: int) -> HttpResponse:
-        """Handle decision submission."""
+        """Handle decision submission with optimistic conflict guard."""
         pending = get_object_or_404(PendingChange, pk=pk, is_processed=False)
+        
+        # Optimistic conflict guard: check pending_updated_at from form
+        # against current pending.updated_at to detect if Admin updated
+        # the pending change while Superadmin had the page open.
+        submitted_updated_at = request.POST.get("pending_updated_at", "")
+        if submitted_updated_at:
+            try:
+                from datetime import datetime
+                # Parse ISO format (handles both with and without microseconds)
+                submitted_dt = datetime.fromisoformat(
+                    submitted_updated_at.replace("Z", "+00:00")
+                )
+                current_dt = pending.updated_at
+                
+                # Compare as datetime objects, not strings.
+                # This avoids issues with microseconds or timezone formatting.
+                # Both must be aware datetimes for proper comparison.
+                if submitted_dt != current_dt:
+                    messages.warning(
+                        request,
+                        "Diese Änderung wurde inzwischen aktualisiert. "
+                        "Bitte laden Sie die Seite neu und prüfen Sie erneut."
+                    )
+                    return redirect("approvals:superadmin_war_ist", pk=pk)
+            except (ValueError, TypeError):
+                # If we can't parse, proceed anyway (fail-open for usability)
+                pass
         
         decision = request.POST.get("decision", "").upper()
         comment = request.POST.get("comment", "").strip()

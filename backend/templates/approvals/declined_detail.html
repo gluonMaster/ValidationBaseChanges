@@ -28,7 +28,7 @@ Shows comparison between current and declined values (War/Ist).
     </div>
     <div class="col-auto">
       <a
-        href="{% url 'approvals:declined_edit' declined_change.pk %}"
+        href="{% url 'karteien:record_update' record.pk %}?declined_change_id={{ declined_change.pk }}"
         class="btn btn-primary"
       >
         <i class="bi bi-pencil"></i>

@@ -549,7 +549,11 @@ def apply_decision(
         >>> record = apply_decision(pending, "APPROVED", None, superadmin)
     """
     from django.db import transaction
-    from apps.notifications.services import notify_approved, notify_declined_created
+    from apps.notifications.services import (
+        notify_approved,
+        notify_declined_created,
+        mark_pending_notifications_read_for_record,
+    )
 
     decision = decision.upper()
     if decision not in ("APPROVED", "DECLINED"):
@@ -597,6 +601,14 @@ def apply_decision(
             except Exception:
                 pass  # Don't fail if notification fails
 
+            # Mark all PENDING_CREATED notifications for this record as read
+            # so they disappear from Superadmins' notification lists
+            # NOTE: Use record.pkid (Django PK), NOT record.id (domain key)
+            try:
+                mark_pending_notifications_read_for_record(record.pkid)
+            except Exception:
+                pass  # Don't fail if notification cleanup fails
+
         elif decision == "DECLINED":
             if not comment:
                 comment = "Keine Begründung angegeben"
@@ -633,6 +645,14 @@ def apply_decision(
                 notify_declined_created(record, declined)
             except Exception:
                 pass  # Don't fail if notification fails
+
+            # Mark all PENDING_CREATED notifications for this record as read
+            # so they disappear from Superadmins' notification lists
+            # NOTE: Use record.pkid (Django PK), NOT record.id (domain key)
+            try:
+                mark_pending_notifications_read_for_record(record.pkid)
+            except Exception:
+                pass  # Don't fail if notification cleanup fails
 
     return record
 

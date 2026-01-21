@@ -196,6 +196,77 @@ Includes autocomplete for parent/child names when creating new records.
         </a>
       </div>
       {% endif %}
+      
+      {# Discounts summary for edit mode #}
+      {% if not is_create %}
+      <div class="card mt-3 mb-0 border-info">
+        <div class="card-header py-2 bg-light d-flex justify-content-between align-items-center">
+          <span>
+            <i class="bi bi-percent"></i>
+            <strong>Aktive Rabatte</strong>
+            {% if record.discounts_disabled %}
+            <span class="badge bg-warning text-dark ms-1">Deaktiviert</span>
+            {% endif %}
+          </span>
+          {% if user.is_admin_role %}
+          <a href="{% url 'karteien:family_dashboard' %}?year={{ record.year }}&family_id={{ record.family_id }}" 
+             class="btn btn-sm btn-outline-info py-0" title="Familienrabatte verwalten">
+            <i class="bi bi-people"></i> Familie
+          </a>
+          {% endif %}
+        </div>
+        <div class="card-body py-2">
+          {% if record.discounts_disabled %}
+          <div class="text-warning small mb-2">
+            <i class="bi bi-exclamation-triangle"></i>
+            <strong>Rabatte deaktiviert</strong>
+            {% if disabled_months_display %}— {{ disabled_months_display }}{% else %}— alle Monate{% endif %}
+          </div>
+          {% endif %}
+          
+          {% if family_discounts or record_discounts %}
+          <div class="row small">
+            <div class="col-md-6">
+              <strong class="text-muted"><i class="bi bi-people"></i> Familie:</strong>
+              {% if family_discounts %}
+              {% for fd in family_discounts %}
+              <span class="ms-1">
+                {% if fd.discount.kind == 'PERCENT' %}
+                <span class="badge bg-success">{{ fd.discount.value|floatformat:0 }}%</span>
+                {% else %}
+                <span class="badge bg-primary">{{ fd.discount.value|floatformat:2 }}€</span>
+                {% endif %}
+                <small class="text-muted">({{ fd.months_display }})</small>
+              </span>
+              {% endfor %}
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </div>
+            <div class="col-md-6">
+              <strong class="text-muted"><i class="bi bi-tag"></i> Eintrag:</strong>
+              {% if record_discounts %}
+              {% for rd in record_discounts %}
+              <span class="ms-1">
+                {% if rd.discount.kind == 'PERCENT' %}
+                <span class="badge bg-success">{{ rd.discount.value|floatformat:0 }}%</span>
+                {% else %}
+                <span class="badge bg-primary">{{ rd.discount.value|floatformat:2 }}€</span>
+                {% endif %}
+                <small class="text-muted">({{ rd.months_display }})</small>
+              </span>
+              {% endfor %}
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </div>
+          </div>
+          {% else %}
+          <span class="text-muted small">Keine Rabatte definiert.</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
     </div>
   </div>
 
@@ -211,6 +282,24 @@ Includes autocomplete for parent/child names when creating new records.
     <i class="bi bi-calendar-x"></i>
     <strong>Einschränkung:</strong>
     {{ past_months_reason }}. Vergangene Monate können nicht geändert werden.
+  </div>
+  {% endif %}
+
+  {% comment %}Info alert when editing PENDING or DECLINED records{% endcomment %}
+  {% if is_pending_edit_mode %}
+  <div class="alert alert-primary" role="alert">
+    <i class="bi bi-hourglass-split"></i>
+    <strong>Wartend bearbeiten:</strong>
+    Sie bearbeiten die vorgeschlagenen Änderungen dieses wartenden Datensatzes.
+    Nach dem Speichern bleiben die Änderungen zur Genehmigung durch einen Superadmin.
+  </div>
+  {% endif %}
+  {% if is_declined_edit_mode %}
+  <div class="alert alert-danger" role="alert">
+    <i class="bi bi-x-circle"></i>
+    <strong>Abgelehnt bearbeiten:</strong>
+    Sie bearbeiten die abgelehnten Werte. Nach dem Speichern werden die korrigierten 
+    Änderungen erneut zur Genehmigung eingereicht und der abgelehnte Eintrag wird entfernt.
   </div>
   {% endif %}
 
@@ -387,11 +476,21 @@ Includes autocomplete for parent/child names when creating new records.
                        class="btn btn-sm btn-outline-primary">
                       <i class="bi bi-plus-circle"></i> Lehrer anlegen
                     </a>
-                    {% if teacher1_candidate_id and form.subject1_ref.value %}
-                    <a href="{% url 'catalog:assignment_create' %}?year={{ record.year }}&subject={{ form.subject1_ref.value }}&teacher={{ teacher1_candidate_id }}&next={{ edit_next_url|urlencode }}" 
-                       class="btn btn-sm btn-outline-success ms-1">
-                      <i class="bi bi-link-45deg"></i> Zuweisung erstellen
-                    </a>
+                    {# Always show assignment link when subject is selected (with or without candidate) #}
+                    {% if form.subject1_ref.value %}
+                      {% if teacher1_candidate_id %}
+                      <a href="{% url 'catalog:assignment_create' %}?year={{ record.year }}&subject={{ form.subject1_ref.value }}&teacher={{ teacher1_candidate_id }}&next={{ edit_next_url|urlencode }}" 
+                         class="btn btn-sm btn-outline-success ms-1">
+                        <i class="bi bi-link-45deg"></i> Zuweisung erstellen
+                      </a>
+                      {% else %}
+                      <a href="{% url 'catalog:assignment_create' %}?year={{ record.year }}&subject={{ form.subject1_ref.value }}&next={{ edit_next_url|urlencode }}" 
+                         class="btn btn-sm btn-outline-success ms-1">
+                        <i class="bi bi-link-45deg"></i> Zuweisung erstellen
+                      </a>
+                      {% endif %}
+                    {% else %}
+                    <span class="text-muted ms-2">Bitte zuerst Fach auswählen/anlegen.</span>
                     {% endif %}
                   </div>
                   {% endif %}
@@ -428,12 +527,29 @@ Includes autocomplete for parent/child names when creating new records.
                 </div>
                 {% endif %}
               </div>
-              <div class="col-md-6 mb-3">
+              <div class="col-md-3 mb-3">
                 <label for="{{ form.start_month_1.id_for_label }}" class="form-label">
                   Startmonat
                 </label>
                 {{ form.start_month_1 }}
                 <small class="text-muted">Ab welchem Monat wird berechnet</small>
+              </div>
+              <div class="col-md-3 mb-3">
+                <label for="{{ form.end_month_1.id_for_label }}" class="form-label">
+                  Endmonat (bis)
+                </label>
+                {{ form.end_month_1 }}
+                <small class="text-muted">Optional. Danach wird nichts mehr berechnet</small>
+              </div>
+            </div>
+            
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label for="{{ form.months_csv_1.id_for_label }}" class="form-label">
+                  Monate (CSV)
+                </label>
+                {{ form.months_csv_1 }}
+                <small class="text-muted">Optional. Kommagetrennte Monate (1-6). Überschreibt Start/Endmonat.</small>
               </div>
             </div>
             
@@ -486,11 +602,21 @@ Includes autocomplete for parent/child names when creating new records.
                        class="btn btn-sm btn-outline-primary">
                       <i class="bi bi-plus-circle"></i> Lehrer anlegen
                     </a>
-                    {% if teacher2_candidate_id and form.subject2_ref.value %}
-                    <a href="{% url 'catalog:assignment_create' %}?year={{ record.year }}&subject={{ form.subject2_ref.value }}&teacher={{ teacher2_candidate_id }}&next={{ edit_next_url|urlencode }}" 
-                       class="btn btn-sm btn-outline-success ms-1">
-                      <i class="bi bi-link-45deg"></i> Zuweisung erstellen
-                    </a>
+                    {# Always show assignment link when subject is selected (with or without candidate) #}
+                    {% if form.subject2_ref.value %}
+                      {% if teacher2_candidate_id %}
+                      <a href="{% url 'catalog:assignment_create' %}?year={{ record.year }}&subject={{ form.subject2_ref.value }}&teacher={{ teacher2_candidate_id }}&next={{ edit_next_url|urlencode }}" 
+                         class="btn btn-sm btn-outline-success ms-1">
+                        <i class="bi bi-link-45deg"></i> Zuweisung erstellen
+                      </a>
+                      {% else %}
+                      <a href="{% url 'catalog:assignment_create' %}?year={{ record.year }}&subject={{ form.subject2_ref.value }}&next={{ edit_next_url|urlencode }}" 
+                         class="btn btn-sm btn-outline-success ms-1">
+                        <i class="bi bi-link-45deg"></i> Zuweisung erstellen
+                      </a>
+                      {% endif %}
+                    {% else %}
+                    <span class="text-muted ms-2">Bitte zuerst Fach auswählen/anlegen.</span>
                     {% endif %}
                   </div>
                   {% endif %}
@@ -527,12 +653,29 @@ Includes autocomplete for parent/child names when creating new records.
                 </div>
                 {% endif %}
               </div>
-              <div class="col-md-6 mb-3">
+              <div class="col-md-3 mb-3">
                 <label for="{{ form.start_month_2.id_for_label }}" class="form-label">
                   Startmonat
                 </label>
                 {{ form.start_month_2 }}
                 <small class="text-muted">Ab welchem Monat wird berechnet</small>
+              </div>
+              <div class="col-md-3 mb-3">
+                <label for="{{ form.end_month_2.id_for_label }}" class="form-label">
+                  Endmonat (bis)
+                </label>
+                {{ form.end_month_2 }}
+                <small class="text-muted">Optional. Danach wird nichts mehr berechnet</small>
+              </div>
+            </div>
+            
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label for="{{ form.months_csv_2.id_for_label }}" class="form-label">
+                  Monate (CSV)
+                </label>
+                {{ form.months_csv_2 }}
+                <small class="text-muted">Optional. Kommagetrennte Monate (7-12). Überschreibt Start/Endmonat.</small>
               </div>
             </div>
             
@@ -736,6 +879,11 @@ Includes autocomplete for parent/child names when creating new records.
           <span class="badge bg-danger ms-2">OVERRIDE</span>
           {% else %}
           <span class="badge bg-secondary ms-2">LEGACY</span>
+          {% if legacy_base_amounts_enabled %}
+          <span class="badge bg-info ms-1" title="Rabatte wurden auf Legacy-Monatswerte angewendet (ohne Preisbezug)">
+            <i class="bi bi-arrow-repeat"></i> Recalc
+          </span>
+          {% endif %}
           {% endif %}
         </span>
         {% if not is_create and user.is_admin_role %}
@@ -1082,6 +1230,10 @@ Includes autocomplete for parent/child names when creating new records.
           <div id="monthExplLegacyNote" class="alert alert-secondary mt-3 d-none">
             <i class="bi bi-clock-history"></i>
             <strong>Legacy-Wert:</strong> Dieser Monat enthält einen manuell eingetragenen Wert aus dem Import und wurde nicht neu berechnet.
+          </div>
+          <div id="monthExplLegacyRecalcNote" class="alert alert-info mt-3 d-none">
+            <i class="bi bi-info-circle"></i>
+            <strong>Legacy-Recalc:</strong> Basis stammt aus Legacy-Monatswert (Import). Kein Preisbezug möglich. Rabatte wurden auf die vorhandenen Monatswerte angewendet.
           </div>
         </div>
         <div id="monthExplanationError" class="alert alert-danger d-none">
@@ -1672,10 +1824,14 @@ Includes autocomplete for parent/child names when creating new records.
   const previewTriggers = [
     subject1Select, price1Select,
     document.getElementById('id_start_month_1'),
+    document.getElementById('id_end_month_1'),
+    document.getElementById('id_months_csv_1'),
     document.getElementById('id_apply_from_month_1'),
     document.getElementById('id_apply_to_month_1'),
     subject2Select, price2Select,
     document.getElementById('id_start_month_2'),
+    document.getElementById('id_end_month_2'),
+    document.getElementById('id_months_csv_2'),
     document.getElementById('id_apply_from_month_2'),
     document.getElementById('id_apply_to_month_2'),
     // Discounts disabled fields
@@ -1884,11 +2040,15 @@ Includes autocomplete for parent/child names when creating new records.
       subject1_ref: subject1Select ? subject1Select.value : '',
       price1_ref: price1Select ? price1Select.value : '',
       start_month_1: document.getElementById('id_start_month_1')?.value || '1',
+      end_month_1: document.getElementById('id_end_month_1')?.value || '',
+      months_csv_1: document.getElementById('id_months_csv_1')?.value || '',
       apply_from_month_1: document.getElementById('id_apply_from_month_1')?.value || '',
       apply_to_month_1: document.getElementById('id_apply_to_month_1')?.value || '',
       subject2_ref: subject2Select ? subject2Select.value : '',
       price2_ref: price2Select ? price2Select.value : '',
       start_month_2: document.getElementById('id_start_month_2')?.value || '7',
+      end_month_2: document.getElementById('id_end_month_2')?.value || '',
+      months_csv_2: document.getElementById('id_months_csv_2')?.value || '',
       apply_from_month_2: document.getElementById('id_apply_from_month_2')?.value || '',
       apply_to_month_2: document.getElementById('id_apply_to_month_2')?.value || '',
       // Discounts disabled fields
@@ -2044,10 +2204,12 @@ Includes autocomplete for parent/child names when creating new records.
         sourceEl.className = 'badge bg-secondary';
         sourceEl.textContent = 'Legacy';
         document.getElementById('monthExplLegacyNote').classList.remove('d-none');
+        document.getElementById('monthExplLegacyRecalcNote').classList.add('d-none');
       } else {
         sourceEl.className = 'badge bg-success';
         sourceEl.textContent = 'Berechnet';
         document.getElementById('monthExplLegacyNote').classList.add('d-none');
+        document.getElementById('monthExplLegacyRecalcNote').classList.add('d-none');
       }
       
       document.getElementById('monthExplValue').textContent = previewData.value;
@@ -2070,14 +2232,22 @@ Includes autocomplete for parent/child names when creating new records.
             sourceEl.className = 'badge bg-secondary';
             sourceEl.textContent = 'Legacy';
             document.getElementById('monthExplLegacyNote').classList.remove('d-none');
+            document.getElementById('monthExplLegacyRecalcNote').classList.add('d-none');
+          } else if (data.source_mode === 'LEGACY_RECALC') {
+            sourceEl.className = 'badge bg-info';
+            sourceEl.textContent = 'Legacy-Recalc';
+            document.getElementById('monthExplLegacyNote').classList.add('d-none');
+            document.getElementById('monthExplLegacyRecalcNote').classList.remove('d-none');
           } else if (data.source_mode === 'OVERRIDE') {
             sourceEl.className = 'badge bg-danger';
             sourceEl.textContent = 'Override';
             document.getElementById('monthExplLegacyNote').classList.add('d-none');
+            document.getElementById('monthExplLegacyRecalcNote').classList.add('d-none');
           } else {
             sourceEl.className = 'badge bg-success';
             sourceEl.textContent = 'AUTO';
             document.getElementById('monthExplLegacyNote').classList.add('d-none');
+            document.getElementById('monthExplLegacyRecalcNote').classList.add('d-none');
           }
           
           document.getElementById('monthExplValue').textContent = data.final || '0.00';

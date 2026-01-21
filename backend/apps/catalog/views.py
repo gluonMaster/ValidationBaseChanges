@@ -19,7 +19,7 @@ from typing import Any
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.db import IntegrityError
-from django.db.models import QuerySet
+from django.db.models import OuterRef, QuerySet, Subquery
 from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse_lazy
@@ -961,7 +961,17 @@ class FamilyDiscountListView(CatalogAdminMixin, ListView):
     
     def get_queryset(self) -> QuerySet:
         from .models import FamilyDiscount
-        qs = FamilyDiscount.objects.select_related('discount').all()
+        from apps.karteien.models import KarteiRecord
+        
+        # Subquery to get parent_name from any KarteiRecord with same (year, family_id)
+        parent_subquery = KarteiRecord.objects.filter(
+            year=OuterRef('year'),
+            family_id=OuterRef('family_id')
+        ).order_by('pkid').values('parent_name')[:1]
+        
+        qs = FamilyDiscount.objects.select_related('discount').annotate(
+            parent_name=Subquery(parent_subquery)
+        )
         
         # Filter by year
         year = self.request.GET.get("year", "").strip()

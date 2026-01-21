@@ -2,6 +2,8 @@
 
 Этот документ описывает высокоуровневую архитектуру веб‑системы, которая заменяет набор Excel+VBA файлов (`KindElternDaten_XX_Admin.xlsm`, `KindElternDaten_XX_Suprime.xlsm`, `KindElternDaten_XX_Data.xlsm`) и Access‑баз (`KindElternDaten_XX_front.accdb`).
 
+Примечание для нового чата: чтобы экономить контекст, начните с `docs/ProjectMap.md`, а здесь открывайте только нужные разделы (через поиск по файлу).
+
 ## 1. Overview
 
 - Исходники legacy VBA-модулей для справки лежат в `legacy_VBA/`:

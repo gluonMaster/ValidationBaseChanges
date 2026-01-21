@@ -69,6 +69,31 @@ def _normalize_subject_name(name: str | None) -> str:
     return ' '.join(name.split()).casefold()
 
 
+def _parse_months_csv(csv_str: str) -> set[int]:
+    """
+    Parse a months CSV string into a set of month numbers.
+    
+    Args:
+        csv_str: CSV string like "7,8,12" or empty string.
+        
+    Returns:
+        Set of month numbers. Empty set if input is empty or invalid.
+    """
+    if not csv_str or not csv_str.strip():
+        return set()
+    
+    months_set: set[int] = set()
+    for part in csv_str.split(','):
+        part = part.strip()
+        if part:
+            try:
+                months_set.add(int(part))
+            except (ValueError, TypeError):
+                pass
+    
+    return months_set
+
+
 # =============================================================================
 # Semester Configuration
 # =============================================================================
@@ -362,6 +387,52 @@ def get_start_month_for_semester(record: "KarteiRecord", semester: int) -> int:
         return record.start_month_2 or 7
 
 
+def get_end_month_for_semester(record: "KarteiRecord", semester: int) -> int:
+    """
+    Get the end month for billing in a semester.
+    
+    Args:
+        record: The KarteiRecord instance.
+        semester: 1 or 2.
+        
+    Returns:
+        End month number (1-6 for semester 1, 7-12 for semester 2).
+        Returns 6 or 12 (end of semester) if end_month is not set.
+    """
+    if semester == 1:
+        return record.end_month_1 if record.end_month_1 is not None else 6
+    else:
+        return record.end_month_2 if record.end_month_2 is not None else 12
+
+
+def get_months_csv_for_semester(record: "KarteiRecord", semester: int) -> set[int] | None:
+    """
+    Get the set of specific months from CSV for a semester.
+    
+    Args:
+        record: The KarteiRecord instance.
+        semester: 1 or 2.
+        
+    Returns:
+        Set of month numbers if CSV is set and not empty, None otherwise.
+        If None, use start/end month logic instead.
+    """
+    csv_str = record.months_csv_1 if semester == 1 else record.months_csv_2
+    if not csv_str or not csv_str.strip():
+        return None
+    
+    months_set: set[int] = set()
+    for part in csv_str.split(','):
+        part = part.strip()
+        if part:
+            try:
+                months_set.add(int(part))
+            except (ValueError, TypeError):
+                pass
+    
+    return months_set if months_set else None
+
+
 def build_base_amounts(
     record: "KarteiRecord",
     *,
@@ -443,10 +514,25 @@ def build_base_amounts(
         price = get_price_for_semester(record, semester)
         start_month = get_start_month_for_semester(record, semester)
         
-        # Month before start_month: 0.00
-        if month_num < start_month:
-            result[field_key] = ZERO
-            continue
+        # Check if months_csv is set - if so, it overrides start/end month logic
+        months_csv_set = get_months_csv_for_semester(record, semester)
+        if months_csv_set is not None:
+            # months_csv is set - only bill months in the CSV list
+            if month_num not in months_csv_set:
+                result[field_key] = ZERO
+                continue
+        else:
+            # Use start/end month logic
+            # Month before start_month: 0.00
+            if month_num < start_month:
+                result[field_key] = ZERO
+                continue
+            
+            # Month after end_month: 0.00 (billing ended for this semester)
+            end_month = get_end_month_for_semester(record, semester)
+            if month_num > end_month:
+                result[field_key] = ZERO
+                continue
         
         # No subject or price: 0.00
         if not subject_name or price is None:
@@ -659,7 +745,10 @@ def get_month_breakdown(
     Get detailed breakdown of month charge calculation.
     
     Returns a dict with all calculation details for UI display.
-    For LEGACY or OVERRIDE mode, returns minimal info with available=False.
+    For LEGACY mode (without legacy_base_amounts_enabled) or OVERRIDE mode,
+    returns minimal info with available=False.
+    For LEGACY with legacy_base_amounts_enabled=True, returns breakdown
+    with source_mode='LEGACY_RECALC' to indicate discounts were applied.
     
     Args:
         record: The KarteiRecord instance.
@@ -681,16 +770,21 @@ def get_month_breakdown(
     
     # Check modes that cannot provide breakdown
     if record.months_mode == 'LEGACY':
-        result['reason'] = 'LEGACY_NO_DATA'
-        result['final'] = str(getattr(record, f'month_{month}', None) or '0.00')
-        return result
+        # Check if legacy_base_amounts_enabled - then we can show breakdown
+        legacy_recalc_enabled = getattr(record, 'legacy_base_amounts_enabled', False)
+        if not legacy_recalc_enabled:
+            result['reason'] = 'LEGACY_NO_DATA'
+            result['final'] = str(getattr(record, f'month_{month}', None) or '0.00')
+            return result
+        # LEGACY with recalc enabled - continue to provide breakdown
+        result['source_mode'] = 'LEGACY_RECALC'
     
     if record.months_mode == 'OVERRIDE':
         result['reason'] = 'OVERRIDE_MODE'
         result['final'] = str(getattr(record, f'month_{month}', None) or '0.00')
         return result
     
-    # AUTO mode - full breakdown available
+    # AUTO mode or LEGACY with legacy_base_amounts_enabled - full breakdown available
     result['available'] = True
     
     # Determine semester
@@ -1063,6 +1157,61 @@ def detect_meaningful_changes(
         max_start = max(old_start_2, new_start_2)
         touched_months.update(range(min_start, max_start))
     
+    # Check end_month_1 change - touch months between old and new end
+    new_end_1 = cleaned_data.get('end_month_1')
+    old_end_1 = original.end_month_1
+    if new_end_1 != old_end_1:
+        has_changes = True
+        # Compute effective values (None means end of semester)
+        eff_old_end_1 = old_end_1 if old_end_1 is not None else 6
+        eff_new_end_1 = new_end_1 if new_end_1 is not None else 6
+        # Touch months from min_end to max_end (months that changed their billing status)
+        min_end = min(eff_old_end_1, eff_new_end_1)
+        max_end = max(eff_old_end_1, eff_new_end_1)
+        # Touch months from (min_end + 1) to max_end - these are the ones that changed
+        touched_months.update(range(min_end + 1, max_end + 1))
+    
+    # Check end_month_2 change - touch months between old and new end
+    new_end_2 = cleaned_data.get('end_month_2')
+    old_end_2 = original.end_month_2
+    if new_end_2 != old_end_2:
+        has_changes = True
+        eff_old_end_2 = old_end_2 if old_end_2 is not None else 12
+        eff_new_end_2 = new_end_2 if new_end_2 is not None else 12
+        min_end = min(eff_old_end_2, eff_new_end_2)
+        max_end = max(eff_old_end_2, eff_new_end_2)
+        touched_months.update(range(min_end + 1, max_end + 1))
+    
+    # Check months_csv_1 change - touch symmetric difference of old/new months
+    new_csv_1 = cleaned_data.get('months_csv_1', '') or ''
+    old_csv_1 = original.months_csv_1 or ''
+    if new_csv_1 != old_csv_1:
+        has_changes = True
+        # Parse old and new month sets
+        old_months_1 = _parse_months_csv(old_csv_1)
+        new_months_1 = _parse_months_csv(new_csv_1)
+        # Touch symmetric difference (months that changed billing status)
+        diff_months_1 = old_months_1.symmetric_difference(new_months_1)
+        # Also consider months in range if going from CSV to empty or vice versa
+        if not old_months_1 or not new_months_1:
+            # One is empty - need to consider all semester 1 months
+            touched_months.update(range(1, 7))
+        else:
+            touched_months.update(diff_months_1)
+    
+    # Check months_csv_2 change - touch symmetric difference of old/new months
+    new_csv_2 = cleaned_data.get('months_csv_2', '') or ''
+    old_csv_2 = original.months_csv_2 or ''
+    if new_csv_2 != old_csv_2:
+        has_changes = True
+        old_months_2 = _parse_months_csv(old_csv_2)
+        new_months_2 = _parse_months_csv(new_csv_2)
+        diff_months_2 = old_months_2.symmetric_difference(new_months_2)
+        if not old_months_2 or not new_months_2:
+            touched_months.update(range(7, 13))
+        else:
+            touched_months.update(diff_months_2)
+    
     # Check discounts_disabled change
     new_discounts_disabled = cleaned_data.get('discounts_disabled', False)
     if new_discounts_disabled != original.discounts_disabled:
@@ -1136,8 +1285,9 @@ def recalculate_legacy_to_auto(
         touched_months=touched_months,
     )
     
-    # Set mode to AUTO
+    # Set mode to AUTO and reset legacy_base_amounts_enabled flag
     record.months_mode = 'AUTO'
+    record.legacy_base_amounts_enabled = False
     
     return flags
 

@@ -3,9 +3,11 @@ Forms for the approvals app.
 
 This module contains:
 - DeclinedChangeEditForm — form for editing DeclinedChange.snapshot fields
+- PendingChangeEditForm — form for editing PendingChange.snapshot fields (ADMIN)
 
 Used by:
 - DeclinedChangeEditView: Edit declined snapshot before re-submitting to pending
+- PendingChangeEditView: Edit pending snapshot before superadmin decision (ADMIN)
 """
 
 from __future__ import annotations
@@ -147,3 +149,45 @@ class DeclinedChangeEditForm(forms.Form):
                 snapshot[field_name] = value
         
         return snapshot
+
+
+class PendingChangeEditForm(DeclinedChangeEditForm):
+    """
+    Form for editing PendingChange.snapshot (ADMIN editing pending changes).
+
+    Extends DeclinedChangeEditForm with an additional required admin_comment
+    field so Superadmin can see why Admin edited the pending change.
+
+    UI labels are in German.
+    """
+
+    admin_comment = forms.CharField(
+        label="Änderungsgrund (erforderlich)",
+        widget=forms.Textarea(attrs={
+            "class": "form-control",
+            "rows": 3,
+            "placeholder": "Bitte beschreiben Sie, warum Sie diese Änderung vornehmen...",
+        }),
+        required=True,
+        help_text="Dieser Kommentar wird dem Superadmin angezeigt.",
+    )
+
+    def __init__(
+        self,
+        *args,
+        snapshot: dict[str, Any] | None = None,
+        admin_comment: str | None = None,
+        **kwargs
+    ):
+        """
+        Initialize the form with snapshot and admin comment.
+
+        Args:
+            snapshot: The PendingChange.snapshot dict to prefill fields.
+            admin_comment: Existing admin_comment from PendingChange.
+        """
+        super().__init__(*args, snapshot=snapshot, **kwargs)
+        
+        # Pre-fill admin_comment if provided
+        if admin_comment:
+            self.fields["admin_comment"].initial = admin_comment

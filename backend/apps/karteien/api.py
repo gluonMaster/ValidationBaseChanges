@@ -15,7 +15,7 @@ from datetime import date
 
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
-from django.db.models import Q
+from django.db.models import Count, Exists, OuterRef, Q
 from django.http import JsonResponse, HttpRequest
 from django.shortcuts import get_object_or_404
 from django.template.loader import render_to_string
@@ -46,6 +46,31 @@ def _check_can_edit_kartei(user) -> JsonResponse | None:
             'code': 'ACCESS_DENIED',
         }, status=403)
     return None
+
+
+def _parse_months_csv_for_preview(csv_str: str) -> set[int]:
+    """
+    Parse a months CSV string into a set of month numbers.
+    
+    Args:
+        csv_str: CSV string like "7,8,12" or empty string.
+        
+    Returns:
+        Set of month numbers. Empty set if input is empty or invalid.
+    """
+    if not csv_str or not csv_str.strip():
+        return set()
+    
+    months_set: set[int] = set()
+    for part in csv_str.split(','):
+        part = part.strip()
+        if part:
+            try:
+                months_set.add(int(part))
+            except (ValueError, TypeError):
+                pass
+    
+    return months_set
 
 
 def _search_records_by_field(field: str, query: str, target_year: int, limit: int) -> dict:
@@ -389,7 +414,17 @@ def live_search_api(request: HttpRequest) -> JsonResponse:
         }, status=403)
     
     # Build queryset with filters (same logic as KarteiRecordListView)
-    qs = KarteiRecord.objects.all()
+    from apps.catalog.models import FamilyDiscount
+    
+    qs = KarteiRecord.objects.annotate(
+        record_discounts_count=Count('record_discounts', distinct=True),
+        has_family_discounts=Exists(
+            FamilyDiscount.objects.filter(
+                year=OuterRef('year'),
+                family_id=OuterRef('family_id')
+            )
+        ),
+    )
     
     # Default to current year if not specified
     year = request.GET.get("year")
@@ -676,12 +711,16 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
     subject1_ref_id = parse_int_or_none(data.get('subject1_ref'))
     price1_ref_id = parse_int_or_none(data.get('price1_ref'))
     start_month_1 = parse_int_or_none(data.get('start_month_1')) or 1
+    end_month_1 = parse_int_or_none(data.get('end_month_1'))  # None = until end of semester
+    months_csv_1 = data.get('months_csv_1', '') or ''  # CSV of specific months
     apply_from_month_1 = parse_int_or_none(data.get('apply_from_month_1'))
     apply_to_month_1 = parse_int_or_none(data.get('apply_to_month_1'))
     
     subject2_ref_id = parse_int_or_none(data.get('subject2_ref'))
     price2_ref_id = parse_int_or_none(data.get('price2_ref'))
     start_month_2 = parse_int_or_none(data.get('start_month_2')) or 7
+    end_month_2 = parse_int_or_none(data.get('end_month_2'))  # None = until end of semester
+    months_csv_2 = data.get('months_csv_2', '') or ''  # CSV of specific months
     apply_from_month_2 = parse_int_or_none(data.get('apply_from_month_2'))
     apply_to_month_2 = parse_int_or_none(data.get('apply_to_month_2'))
     
@@ -766,31 +805,176 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         record.record_discounts.select_related('discount')
     ) if record.pk else []
     
-    # Determine which months would be affected by apply_from/apply_to parameters
-    # For LEGACY mode, months before apply_from or after apply_to are NOT recalculated
-    # For AUTO mode, ALL months are always calculated (apply_from/apply_to only affects base_amounts)
+    # Determine which months would be affected by changes
+    # For LEGACY mode, compute affected_months using same logic as detect_meaningful_changes
+    # For AUTO mode, ALL months are always calculated
     affected_months = set()
     
     if is_legacy_mode:
-        # LEGACY mode: only affected months are recalculated
+        # LEGACY mode: compute touched months based on meaningful changes
+        # Mirrors logic from detect_meaningful_changes for consistency with save behavior
+        
+        # Helper to normalize subject names for comparison
+        def _normalize_subject_name(name: str | None) -> str:
+            if not name:
+                return ''
+            return name.strip().lower()
+        
+        # Get original values from record for comparison
+        old_price1_ref_id = record.price1_ref_id
+        old_price2_ref_id = record.price2_ref_id
+        old_subject1_ref_id = record.subject1_ref_id
+        old_subject2_ref_id = record.subject2_ref_id
+        old_start_1 = record.start_month_1 or 1
+        old_start_2 = record.start_month_2 or 7
+        old_discounts_disabled = record.discounts_disabled
+        old_is_terminated = record.is_contract_terminated
+        old_hours_amounts = record.hours_amounts or {}
+        
+        # Check price1_ref change - touch months from apply_from_month_1 (default=1) to 6
+        if price1_ref_id != old_price1_ref_id:
+            # Check if just linking to same legacy price (not meaningful)
+            is_linking_to_same_price1 = False
+            if old_price1_ref_id is None and price1_ref_id is not None and record.price1 is not None:
+                try:
+                    new_price1 = PriceOption.objects.get(pk=price1_ref_id)
+                    if new_price1.amount == record.price1:
+                        is_linking_to_same_price1 = True
+                except PriceOption.DoesNotExist:
+                    pass
+            
+            if not is_linking_to_same_price1:
+                # Use apply_from_month_1 if provided, else default to 1
+                effective_apply_from = apply_from_month_1 if apply_from_month_1 is not None else 1
+                # Also respect apply_to
+                for m in range(effective_apply_from, 7):
+                    if apply_to_month_1 is None or m <= apply_to_month_1:
+                        affected_months.add(m)
+        
+        # Check price2_ref change - touch months from apply_from_month_2 (default=7) to 12
+        if price2_ref_id != old_price2_ref_id:
+            # Check if just linking to same legacy price (not meaningful)
+            is_linking_to_same_price2 = False
+            if old_price2_ref_id is None and price2_ref_id is not None and record.price2 is not None:
+                try:
+                    new_price2 = PriceOption.objects.get(pk=price2_ref_id)
+                    if new_price2.amount == record.price2:
+                        is_linking_to_same_price2 = True
+                except PriceOption.DoesNotExist:
+                    pass
+            
+            if not is_linking_to_same_price2:
+                # Use apply_from_month_2 if provided, else default to 7
+                effective_apply_from = apply_from_month_2 if apply_from_month_2 is not None else 7
+                # Also respect apply_to
+                for m in range(effective_apply_from, 13):
+                    if apply_to_month_2 is None or m <= apply_to_month_2:
+                        affected_months.add(m)
+        
+        # Check subject1_ref change - touch months from min(old_start, new_start) to 6
+        if subject1_ref_id != old_subject1_ref_id:
+            # Check if just linking to same legacy subject (not meaningful)
+            is_linking_to_same_subject1 = False
+            if old_subject1_ref_id is None and subject1_ref_id is not None and record.subject1:
+                try:
+                    new_subject1 = Subject.objects.get(pk=subject1_ref_id)
+                    if _normalize_subject_name(new_subject1.name) == _normalize_subject_name(record.subject1):
+                        is_linking_to_same_subject1 = True
+                except Subject.DoesNotExist:
+                    pass
+            
+            if not is_linking_to_same_subject1:
+                effective_start = min(old_start_1, start_month_1)
+                affected_months.update(range(effective_start, 7))
+        
+        # Check subject2_ref change - touch months from min(old_start, new_start) to 12
+        if subject2_ref_id != old_subject2_ref_id:
+            # Check if just linking to same legacy subject (not meaningful)
+            is_linking_to_same_subject2 = False
+            if old_subject2_ref_id is None and subject2_ref_id is not None and record.subject2:
+                try:
+                    new_subject2 = Subject.objects.get(pk=subject2_ref_id)
+                    if _normalize_subject_name(new_subject2.name) == _normalize_subject_name(record.subject2):
+                        is_linking_to_same_subject2 = True
+                except Subject.DoesNotExist:
+                    pass
+            
+            if not is_linking_to_same_subject2:
+                effective_start = min(old_start_2, start_month_2)
+                affected_months.update(range(effective_start, 13))
+        
+        # Check start_month_1 change - only touch months between old and new
+        if start_month_1 != old_start_1:
+            min_start = min(old_start_1, start_month_1)
+            max_start = max(old_start_1, start_month_1)
+            affected_months.update(range(min_start, max_start))
+        
+        # Check start_month_2 change - only touch months between old and new
+        if start_month_2 != old_start_2:
+            min_start = min(old_start_2, start_month_2)
+            max_start = max(old_start_2, start_month_2)
+            affected_months.update(range(min_start, max_start))
+        
+        # Check end_month_1 change - touch months between old and new end
+        old_end_1 = record.end_month_1
+        if end_month_1 != old_end_1:
+            eff_old_end_1 = old_end_1 if old_end_1 is not None else 6
+            eff_new_end_1 = end_month_1 if end_month_1 is not None else 6
+            min_end = min(eff_old_end_1, eff_new_end_1)
+            max_end = max(eff_old_end_1, eff_new_end_1)
+            affected_months.update(range(min_end + 1, max_end + 1))
+        
+        # Check end_month_2 change - touch months between old and new end
+        old_end_2 = record.end_month_2
+        if end_month_2 != old_end_2:
+            eff_old_end_2 = old_end_2 if old_end_2 is not None else 12
+            eff_new_end_2 = end_month_2 if end_month_2 is not None else 12
+            min_end = min(eff_old_end_2, eff_new_end_2)
+            max_end = max(eff_old_end_2, eff_new_end_2)
+            affected_months.update(range(min_end + 1, max_end + 1))
+        
+        # Check months_csv_1 change - touch symmetric difference
+        old_csv_1 = record.months_csv_1 or ''
+        if months_csv_1 != old_csv_1:
+            old_months_1 = _parse_months_csv_for_preview(old_csv_1)
+            new_months_1 = _parse_months_csv_for_preview(months_csv_1)
+            if not old_months_1 or not new_months_1:
+                affected_months.update(range(1, 7))
+            else:
+                affected_months.update(old_months_1.symmetric_difference(new_months_1))
+        
+        # Check months_csv_2 change - touch symmetric difference
+        old_csv_2 = record.months_csv_2 or ''
+        if months_csv_2 != old_csv_2:
+            old_months_2 = _parse_months_csv_for_preview(old_csv_2)
+            new_months_2 = _parse_months_csv_for_preview(months_csv_2)
+            if not old_months_2 or not new_months_2:
+                affected_months.update(range(7, 13))
+            else:
+                affected_months.update(old_months_2.symmetric_difference(new_months_2))
+        
+        # Check discounts_disabled change - affects all months
+        if discounts_disabled != old_discounts_disabled:
+            affected_months.update(range(1, 13))
+        
+        # Check contract termination change - affects all months
+        if contract_status_str:
+            if preview_is_terminated != old_is_terminated:
+                affected_months.update(range(1, 13))
+        
+        # Check hours changes for per-hour subjects
+        from decimal import Decimal as D
         for month_num in range(1, 13):
-            semester = 1 if month_num <= 6 else 2
-            apply_from = apply_from_month_1 if semester == 1 else apply_from_month_2
-            apply_to = apply_to_month_1 if semester == 1 else apply_to_month_2
-            
-            # Only affected if apply_from is set and month >= apply_from
-            # and (apply_to is not set or month <= apply_to)
-            in_range = True
-            if apply_from is not None and month_num < apply_from:
-                in_range = False
-            if apply_to is not None and month_num > apply_to:
-                in_range = False
-            
-            if in_range and apply_from is not None:
-                affected_months.add(month_num)
-            # Also affected if hours were provided for hourly subjects
-            elif hours_amounts.get(f'month_{month_num}'):
-                affected_months.add(month_num)
+            field_key = f'month_{month_num}'
+            new_hours = hours_amounts.get(field_key, '0.00')
+            old_hours = old_hours_amounts.get(field_key, '0.00')
+            try:
+                new_val = D(str(new_hours or '0.00'))
+                old_val = D(str(old_hours or '0.00'))
+                if new_val != old_val:
+                    affected_months.add(month_num)
+            except (ValueError, TypeError):
+                pass
     else:
         # AUTO mode: ALL months are always calculated
         # apply_from/apply_to only affects base_amounts (price history), not which months are shown
@@ -804,6 +988,10 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
     orig_price2_ref_id = record.price2_ref_id
     orig_start_month_1 = record.start_month_1
     orig_start_month_2 = record.start_month_2
+    orig_end_month_1 = record.end_month_1
+    orig_end_month_2 = record.end_month_2
+    orig_months_csv_1 = record.months_csv_1
+    orig_months_csv_2 = record.months_csv_2
     orig_hours_amounts = record.hours_amounts
     orig_base_amounts = record.base_amounts
     orig_discounts_disabled = record.discounts_disabled
@@ -822,6 +1010,17 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         record.price2_ref_id = price2_ref_id
     record.start_month_1 = start_month_1
     record.start_month_2 = start_month_2
+    # Apply end_month values for preview (if provided in request, or keep original)
+    # end_month_* can be None (meaning "until end of semester")
+    if 'end_month_1' in data:
+        record.end_month_1 = end_month_1
+    if 'end_month_2' in data:
+        record.end_month_2 = end_month_2
+    # Apply months_csv values for preview
+    if 'months_csv_1' in data:
+        record.months_csv_1 = months_csv_1
+    if 'months_csv_2' in data:
+        record.months_csv_2 = months_csv_2
     
     # Apply discounts_disabled fields
     record.discounts_disabled = discounts_disabled
@@ -866,6 +1065,10 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
     record.price2_ref_id = orig_price2_ref_id
     record.start_month_1 = orig_start_month_1
     record.start_month_2 = orig_start_month_2
+    record.end_month_1 = orig_end_month_1
+    record.end_month_2 = orig_end_month_2
+    record.months_csv_1 = orig_months_csv_1
+    record.months_csv_2 = orig_months_csv_2
     record.hours_amounts = orig_hours_amounts
     record.base_amounts = orig_base_amounts
     record.discounts_disabled = orig_discounts_disabled
@@ -1030,8 +1233,10 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         }
     
     # Add warnings
+    # Only show warning in LEGACY mode if there are no meaningful changes detected
+    # (i.e., no months would be recalculated on save)
     if is_legacy_mode and not affected_months:
-        warnings.append("Legacy-Modus: Wählen Sie 'Preis anwenden ab Monat', um Monate neu zu berechnen.")
+        warnings.append("Legacy-Modus: Keine Änderungen erkannt. Wählen Sie Fach, Preis oder Startmonat, um Monate neu zu berechnen.")
     
     # Add clamp warnings from calculation flags
     if calc_flags.clamped_to_zero_months:

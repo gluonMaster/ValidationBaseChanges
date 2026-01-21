@@ -22,6 +22,25 @@ Shows all fields of a single KarteiRecord.
     margin-left: 4px;
     vertical-align: middle;
   }
+  /* Pending field badge */
+  .pending-field-badge {
+    font-size: 0.65rem;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background-color: #0d6efd;
+    color: white;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  /* Pending toggle buttons */
+  .pending-toggle-btn {
+    border: 1px solid #0d6efd;
+    margin: 0 2px;
+  }
+  .pending-toggle-btn.active {
+    background-color: #0d6efd;
+    color: white;
+  }
 </style>
 {% endblock %}
 
@@ -63,6 +82,16 @@ Shows all fields of a single KarteiRecord.
         Bearbeiten
       </a>
       {% elif record.status == "PENDING" %}
+      {% if user.is_admin_role %}
+      <a
+        href="{% url 'karteien:record_update' record.pk %}"
+        class="btn btn-primary"
+        title="Wartende Änderungen bearbeiten"
+      >
+        <i class="bi bi-pencil-square"></i>
+        Bearbeiten
+      </a>
+      {% else %}
       <span
         class="btn btn-secondary disabled"
         title="Bearbeitung gesperrt – wartet auf Freigabe"
@@ -70,7 +99,18 @@ Shows all fields of a single KarteiRecord.
         <i class="bi bi-hourglass-split"></i>
         Wartend
       </span>
+      {% endif %}
       {% elif record.status == "DECLINED" %}
+      {% if user.is_admin_role %}
+      <a
+        href="{% url 'karteien:record_update' record.pk %}"
+        class="btn btn-primary"
+        title="Abgelehnte Werte korrigieren"
+      >
+        <i class="bi bi-pencil-square"></i>
+        Bearbeiten
+      </a>
+      {% endif %}
       <a
         href="{% url 'approvals:declined_overview' %}?family_id={{ record.family_id }}"
         class="btn btn-outline-danger"
@@ -114,6 +154,22 @@ Shows all fields of a single KarteiRecord.
       {% endif %}
     </div>
     {% endif %}
+    {% if show_pending_toggle %}
+    <div class="mt-2">
+      <span class="me-2">Ansicht:</span>
+      <a href="?view=pending" class="btn btn-sm pending-toggle-btn {% if pending_view_mode == 'pending' %}active{% endif %}">
+        <i class="bi bi-clock-history"></i> Wartend anzeigen
+      </a>
+      <a href="?view=current" class="btn btn-sm pending-toggle-btn {% if pending_view_mode == 'current' %}active{% endif %}">
+        <i class="bi bi-database"></i> Aktuelle Werte anzeigen
+      </a>
+      {% if pending_view_mode == 'pending' %}
+      <span class="badge bg-info ms-2">Sie sehen die vorgeschlagenen Änderungen</span>
+      {% else %}
+      <span class="badge bg-secondary ms-2">Sie sehen die aktuellen Datenbankwerte</span>
+      {% endif %}
+    </div>
+    {% endif %}
   </div>
   {% endif %} {% if record.status == "DECLINED" %}
   <div class="alert alert-danger" role="alert">
@@ -143,11 +199,11 @@ Shows all fields of a single KarteiRecord.
         </div>
         <div class="card-body">
           <dl class="row mb-0">
-            <dt class="col-sm-4">FamilyID</dt>
+            <dt class="col-sm-4">FamilyID{% if 'family_id' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
             <dd class="col-sm-8">
-              {{ record.family_id|default:"-" }}
-              {% if user.is_admin_role and record.family_id %}
-              <a href="{% url 'karteien:family_dashboard' %}?year={{ record.year }}&family_id={{ record.family_id }}" 
+              {{ display_record.family_id|default:"-" }}
+              {% if user.is_admin_role and display_record.family_id %}
+              <a href="{% url 'karteien:family_dashboard' %}?year={{ record.year }}&family_id={{ display_record.family_id }}" 
                  class="btn btn-sm btn-outline-info py-0 px-1 ms-1"
                  title="Familien-Dashboard öffnen">
                   <i class="bi bi-people"></i>
@@ -156,30 +212,30 @@ Shows all fields of a single KarteiRecord.
               {% endif %}
             </dd>
 
-            <dt class="col-sm-4">Eltern</dt>
-            <dd class="col-sm-8">{{ record.parent_name|default:"-" }}</dd>
+            <dt class="col-sm-4">Eltern{% if 'parent_name' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
+            <dd class="col-sm-8">{{ display_record.parent_name|default:"-" }}</dd>
 
-            <dt class="col-sm-4">Kind</dt>
-            <dd class="col-sm-8">{{ record.child_name|default:"-" }}</dd>
+            <dt class="col-sm-4">Kind{% if 'child_name' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
+            <dd class="col-sm-8">{{ display_record.child_name|default:"-" }}</dd>
 
-            <dt class="col-sm-4">Geburtsdatum</dt>
+            <dt class="col-sm-4">Geburtsdatum{% if 'birthdate' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
             <dd class="col-sm-8">
-              {{ record.birthdate|default:"-"|date:"d.m.Y" }}
+              {{ display_record.birthdate|default:"-"|date:"d.m.Y" }}
             </dd>
 
-            <dt class="col-sm-4">Adresse</dt>
-            <dd class="col-sm-8">{{ record.address|default:"-" }}</dd>
+            <dt class="col-sm-4">Adresse{% if 'address' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
+            <dd class="col-sm-8">{{ display_record.address|default:"-" }}</dd>
 
-            <dt class="col-sm-4">Telefon</dt>
-            <dd class="col-sm-8">{{ record.phone|default:"-" }}</dd>
+            <dt class="col-sm-4">Telefon{% if 'phone' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
+            <dd class="col-sm-8">{{ display_record.phone|default:"-" }}</dd>
 
-            <dt class="col-sm-4">Mobil</dt>
-            <dd class="col-sm-8">{{ record.mobile|default:"-" }}</dd>
+            <dt class="col-sm-4">Mobil{% if 'mobile' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
+            <dd class="col-sm-8">{{ display_record.mobile|default:"-" }}</dd>
 
-            <dt class="col-sm-4">E-Mail</dt>
+            <dt class="col-sm-4">E-Mail{% if 'email' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
             <dd class="col-sm-8">
-              {% if record.email %}
-              <a href="mailto:{{ record.email }}">{{ record.email }}</a>
+              {% if display_record.email %}
+              <a href="mailto:{{ display_record.email }}">{{ display_record.email }}</a>
               {% else %} - {% endif %}
             </dd>
 
@@ -214,30 +270,30 @@ Shows all fields of a single KarteiRecord.
         </div>
         <div class="card-body">
           <dl class="row mb-0">
-            <dt class="col-sm-4">Fach 1</dt>
-            <dd class="col-sm-8">{{ record.subject1|default:"-" }}</dd>
+            <dt class="col-sm-4">Fach 1{% if 'subject1' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
+            <dd class="col-sm-8">{{ display_record.subject1|default:"-" }}</dd>
 
-            <dt class="col-sm-4">Preis 1</dt>
+            <dt class="col-sm-4">Preis 1{% if 'price1' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
             <dd class="col-sm-8">
-              {% if record.price1 %}{{ record.price1|floatformat:2 }} €{% else %}-{% endif %}
+              {% if display_record.price1 %}{{ display_record.price1|floatformat:2 }} €{% else %}-{% endif %}
             </dd>
 
-            <dt class="col-sm-4">Fach 2</dt>
-            <dd class="col-sm-8">{{ record.subject2|default:"-" }}</dd>
+            <dt class="col-sm-4">Fach 2{% if 'subject2' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
+            <dd class="col-sm-8">{{ display_record.subject2|default:"-" }}</dd>
 
-            <dt class="col-sm-4">Preis 2</dt>
+            <dt class="col-sm-4">Preis 2{% if 'price2' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
             <dd class="col-sm-8">
-              {% if record.price2 %}{{ record.price2|floatformat:2 }} €{% else %}-{% endif %}
+              {% if display_record.price2 %}{{ display_record.price2|floatformat:2 }} €{% else %}-{% endif %}
             </dd>
 
-            <dt class="col-sm-4">Extra 1</dt>
-            <dd class="col-sm-8">{{ record.extra1|default:"-" }}</dd>
+            <dt class="col-sm-4">Extra 1{% if 'extra1' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
+            <dd class="col-sm-8">{{ display_record.extra1|default:"-" }}</dd>
 
-            <dt class="col-sm-4">Extra 2</dt>
-            <dd class="col-sm-8">{{ record.extra2|default:"-" }}</dd>
+            <dt class="col-sm-4">Extra 2{% if 'extra2' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
+            <dd class="col-sm-8">{{ display_record.extra2|default:"-" }}</dd>
 
-            <dt class="col-sm-4">Extra 3</dt>
-            <dd class="col-sm-8">{{ record.extra3|default:"-" }}</dd>
+            <dt class="col-sm-4">Extra 3{% if 'extra3' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</dt>
+            <dd class="col-sm-8">{{ display_record.extra3|default:"-" }}</dd>
 
             <dt class="col-sm-4">SEPA</dt>
             <dd class="col-sm-8">
@@ -261,6 +317,11 @@ Shows all fields of a single KarteiRecord.
         <span class="badge {% if record.months_mode == 'AUTO' %}bg-success{% elif record.months_mode == 'OVERRIDE' %}bg-danger{% else %}bg-secondary{% endif %} ms-2">
           {{ record.months_mode }}
         </span>
+        {% if record.months_mode == 'LEGACY' and record.legacy_base_amounts_enabled %}
+        <span class="badge bg-info ms-1" title="Rabatte wurden auf Legacy-Monatswerte angewendet (ohne Preisbezug)">
+          <i class="bi bi-arrow-repeat"></i> Recalc
+        </span>
+        {% endif %}
         {% endif %}
         {% if record.discounts_disabled %}
         <span class="badge bg-warning text-dark ms-1">Rabatte deaktiviert</span>
@@ -275,77 +336,182 @@ Shows all fields of a single KarteiRecord.
       <div class="row">
         <div class="col-md-2 col-sm-4 col-6 mb-2">
           <div class="p-2 border rounded text-center month-breakdown-btn{% if 1 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="1" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
-            <small class="text-muted">Monat 1{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}</small>
-            <div class="fw-bold">{% if record.month_1 %}{{ record.month_1|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
+            <small class="text-muted">Monat 1{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_1' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
+            <div class="fw-bold">{% if display_record.month_1 %}{{ display_record.month_1|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
           <div class="p-2 border rounded text-center month-breakdown-btn{% if 2 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="2" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
-            <small class="text-muted">Monat 2{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}</small>
-            <div class="fw-bold">{% if record.month_2 %}{{ record.month_2|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
+            <small class="text-muted">Monat 2{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_2' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
+            <div class="fw-bold">{% if display_record.month_2 %}{{ display_record.month_2|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
           <div class="p-2 border rounded text-center month-breakdown-btn{% if 3 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="3" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
-            <small class="text-muted">Monat 3{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}</small>
-            <div class="fw-bold">{% if record.month_3 %}{{ record.month_3|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
+            <small class="text-muted">Monat 3{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_3' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
+            <div class="fw-bold">{% if display_record.month_3 %}{{ display_record.month_3|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
           <div class="p-2 border rounded text-center month-breakdown-btn{% if 4 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="4" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
-            <small class="text-muted">Monat 4{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}</small>
-            <div class="fw-bold">{% if record.month_4 %}{{ record.month_4|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
+            <small class="text-muted">Monat 4{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_4' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
+            <div class="fw-bold">{% if display_record.month_4 %}{{ display_record.month_4|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
           <div class="p-2 border rounded text-center month-breakdown-btn{% if 5 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="5" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
-            <small class="text-muted">Monat 5{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}</small>
-            <div class="fw-bold">{% if record.month_5 %}{{ record.month_5|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
+            <small class="text-muted">Monat 5{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_5' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
+            <div class="fw-bold">{% if display_record.month_5 %}{{ display_record.month_5|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
           <div class="p-2 border rounded text-center month-breakdown-btn{% if 6 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="6" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
-            <small class="text-muted">Monat 6{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}</small>
-            <div class="fw-bold">{% if record.month_6 %}{{ record.month_6|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
+            <small class="text-muted">Monat 6{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_6' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
+            <div class="fw-bold">{% if display_record.month_6 %}{{ display_record.month_6|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
           <div class="p-2 border rounded text-center month-breakdown-btn{% if 7 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="7" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
-            <small class="text-muted">Monat 7{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}</small>
-            <div class="fw-bold">{% if record.month_7 %}{{ record.month_7|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
+            <small class="text-muted">Monat 7{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_7' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
+            <div class="fw-bold">{% if display_record.month_7 %}{{ display_record.month_7|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
           <div class="p-2 border rounded text-center month-breakdown-btn{% if 8 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="8" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
-            <small class="text-muted">Monat 8{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}</small>
-            <div class="fw-bold">{% if record.month_8 %}{{ record.month_8|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
+            <small class="text-muted">Monat 8{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_8' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
+            <div class="fw-bold">{% if display_record.month_8 %}{{ display_record.month_8|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
           <div class="p-2 border rounded text-center month-breakdown-btn{% if 9 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="9" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
-            <small class="text-muted">Monat 9{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}</small>
-            <div class="fw-bold">{% if record.month_9 %}{{ record.month_9|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
+            <small class="text-muted">Monat 9{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_9' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
+            <div class="fw-bold">{% if display_record.month_9 %}{{ display_record.month_9|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
           <div class="p-2 border rounded text-center month-breakdown-btn{% if 10 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="10" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
-            <small class="text-muted">Monat 10{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}</small>
-            <div class="fw-bold">{% if record.month_10 %}{{ record.month_10|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
+            <small class="text-muted">Monat 10{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_10' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
+            <div class="fw-bold">{% if display_record.month_10 %}{{ display_record.month_10|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
           <div class="p-2 border rounded text-center month-breakdown-btn{% if 11 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="11" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
-            <small class="text-muted">Monat 11{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}</small>
-            <div class="fw-bold">{% if record.month_11 %}{{ record.month_11|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
+            <small class="text-muted">Monat 11{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_11' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
+            <div class="fw-bold">{% if display_record.month_11 %}{{ display_record.month_11|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
           <div class="p-2 border rounded text-center month-breakdown-btn{% if 12 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="12" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
-            <small class="text-muted">Monat 12{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}</small>
-            <div class="fw-bold">{% if record.month_12 %}{{ record.month_12|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
+            <small class="text-muted">Monat 12{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_12' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
+            <div class="fw-bold">{% if display_record.month_12 %}{{ display_record.month_12|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Rabatte (Discounts Summary) -->
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span>
+        <i class="bi bi-percent"></i>
+        Rabatte
+        {% if record.discounts_disabled %}
+        <span class="badge bg-warning text-dark ms-2">Rabatte deaktiviert</span>
+        {% endif %}
+      </span>
+      {% if user.is_admin_role %}
+      <div>
+        <a href="{% url 'karteien:family_dashboard' %}?year={{ record.year }}&family_id={{ record.family_id }}" 
+           class="btn btn-sm btn-outline-info me-1" title="Familienrabatte verwalten">
+          <i class="bi bi-people"></i> Familienrabatte
+        </a>
+        <a href="{% url 'catalog:record_discount_list' %}?record_pk={{ record.pkid }}&next={% url 'karteien:record_detail' record.pk %}" 
+           class="btn btn-sm btn-outline-success" title="Eintragsrabatte verwalten">
+          <i class="bi bi-tag"></i> Eintragsrabatte
+        </a>
+      </div>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      {% if record.discounts_disabled %}
+      <div class="alert alert-warning mb-3">
+        <i class="bi bi-exclamation-triangle"></i>
+        <strong>Rabatte deaktiviert</strong>
+        {% if disabled_months_display %}
+        — {{ disabled_months_display }}
+        {% else %}
+        — für alle Monate
+        {% endif %}
+      </div>
+      {% endif %}
+      
+      {% if family_discounts or record_discounts %}
+      <div class="row">
+        <!-- Familienrabatte -->
+        <div class="col-md-6 mb-3">
+          <h6 class="text-muted mb-2">
+            <i class="bi bi-people"></i> Familienrabatte
+            <small class="text-muted">(Jahr {{ record.year }}, Familie {{ record.family_id }})</small>
+          </h6>
+          {% if family_discounts %}
+          <ul class="list-group list-group-flush">
+            {% for fd in family_discounts %}
+            <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+              <div>
+                {% if fd.discount.kind == 'PERCENT' %}
+                <span class="badge bg-success me-1">{{ fd.discount.value|floatformat:0 }}%</span>
+                {% else %}
+                <span class="badge bg-primary me-1">{{ fd.discount.value|floatformat:2 }} €</span>
+                {% endif %}
+                {% if fd.discount.description %}
+                <span class="text-muted small">{{ fd.discount.description }}</span>
+                {% endif %}
+              </div>
+              <span class="badge bg-secondary">{{ fd.months_display }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="text-muted mb-0">Keine Familienrabatte definiert.</p>
+          {% endif %}
+        </div>
+        
+        <!-- Eintragsrabatte -->
+        <div class="col-md-6 mb-3">
+          <h6 class="text-muted mb-2">
+            <i class="bi bi-tag"></i> Eintragsrabatte
+            <small class="text-muted">(nur dieser Datensatz)</small>
+          </h6>
+          {% if record_discounts %}
+          <ul class="list-group list-group-flush">
+            {% for rd in record_discounts %}
+            <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+              <div>
+                {% if rd.discount.kind == 'PERCENT' %}
+                <span class="badge bg-success me-1">{{ rd.discount.value|floatformat:0 }}%</span>
+                {% else %}
+                <span class="badge bg-primary me-1">{{ rd.discount.value|floatformat:2 }} €</span>
+                {% endif %}
+                {% if rd.discount.description %}
+                <span class="text-muted small">{{ rd.discount.description }}</span>
+                {% endif %}
+              </div>
+              <span class="badge bg-secondary">{{ rd.months_display }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="text-muted mb-0">Keine Eintragsrabatte definiert.</p>
+          {% endif %}
+        </div>
+      </div>
+      {% else %}
+      <p class="text-muted mb-0">
+        <i class="bi bi-info-circle"></i>
+        Keine Rabatte definiert.
+      </p>
+      {% endif %}
     </div>
   </div>
 
@@ -503,7 +669,19 @@ document.addEventListener('DOMContentLoaded', function() {
       `;
     }
     
-    let html = '<dl class="row">';
+    let html = '';
+    
+    // Show LEGACY_RECALC note if applicable
+    if (data.source_mode === 'LEGACY_RECALC') {
+      html += `
+        <div class="alert alert-info mb-3">
+          <i class="bi bi-info-circle"></i>
+          <strong>Legacy-Recalc:</strong> Basis stammt aus Legacy-Monatswert (Import). Kein Preisbezug möglich. Rabatte wurden auf die vorhandenen Monatswerte angewendet.
+        </div>
+      `;
+    }
+    
+    html += '<dl class="row">';
     
     // Basic info
     html += `

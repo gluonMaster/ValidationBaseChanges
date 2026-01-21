@@ -370,6 +370,41 @@ class KarteiRecord(models.Model):
         help_text="Starting month for billing in 2nd semester (7-12). Months before this are 0.00.",
     )
     
+    # End months for billing (optional, within each semester)
+    # Default: NULL = until end of semester (month 6 or 12)
+    # Months after end_month will be charged 0.00
+    end_month_1 = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Endmonat 1. HJ",
+        help_text="Optional. Last month for billing in 1st semester (1-6). Months after this are 0.00.",
+    )
+    
+    end_month_2 = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Endmonat 2. HJ",
+        help_text="Optional. Last month for billing in 2nd semester (7-12). Months after this are 0.00.",
+    )
+    
+    # Months CSV for specific billing months (overrides start/end month logic)
+    # Format: comma-separated month numbers, e.g. "1,3,6" or "7,8,12"
+    months_csv_1 = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        verbose_name="Monate (CSV) 1. HJ",
+        help_text="Optional. Comma-separated months for billing in 1st semester (1-6). Overrides start/end months.",
+    )
+    
+    months_csv_2 = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        verbose_name="Monate (CSV) 2. HJ",
+        help_text="Optional. Comma-separated months for billing in 2nd semester (7-12). Overrides start/end months.",
+    )
+    
     # -------------------------------------------------------------------------
     # Billing Mode and Calculation Data
     # -------------------------------------------------------------------------
@@ -410,6 +445,18 @@ class KarteiRecord(models.Model):
             "List of months (1-12) for which discounts are disabled. "
             "Empty list = discounts disabled for ALL months (when discounts_disabled=True). "
             "Non-empty list = discounts disabled only for these months."
+        ),
+    )
+    
+    # LEGACY recalc marker: when discounts are applied to a LEGACY record using
+    # existing month values as base (no price reference), this flag is set.
+    # Allows get_month_breakdown() to provide breakdown info for LEGACY records.
+    legacy_base_amounts_enabled = models.BooleanField(
+        default=False,
+        verbose_name="Legacy-Basis aktiv",
+        help_text=(
+            "True if discounts were applied to this LEGACY record using saved month values as base. "
+            "Enables breakdown display for LEGACY mode. Reset when converting to AUTO mode."
         ),
     )
     

@@ -121,7 +121,7 @@ Mirrors VBA: Export_DeclinedTools.ShowDeclinedOverview
                                        title="Details anzeigen">
                                         <i class="bi bi-eye"></i>
                                     </a>
-                                    <a href="{% url 'approvals:declined_edit' dc.pk %}" 
+                                    <a href="{% url 'karteien:record_update' dc.record.pk %}?declined_change_id={{ dc.pk }}" 
                                        class="btn btn-outline-secondary"
                                        title="Abgelehnte Werte bearbeiten">
                                         <i class="bi bi-pencil"></i>

@@ -152,21 +152,75 @@ Admin-only page showing all records for a family in a year, with discount manage
                 
                 <!-- Apply Discounts Button -->
                 <div class="card-footer">
-                    <form action="{% url 'karteien:apply_discounts' %}" method="post" class="d-grid"
-                          onsubmit="return confirm('Rabatte für alle NORMAL+AUTO Datensätze der Familie anwenden?\n\nDies erstellt PendingChange-Einträge, die vom Superadmin geprüft werden müssen.');">
+                    {% if legacy_records > 0 %}
+                    <div class="alert alert-warning py-2 mb-2">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Hinweis:</strong> {{ legacy_records }} Datensätze sind im LEGACY-Modus und werden standardmäßig übersprungen.
+                    </div>
+                    {% endif %}
+                    <form action="{% url 'karteien:apply_discounts' %}" method="post" id="applyDiscountsForm">
                         {% csrf_token %}
                         <input type="hidden" name="year" value="{{ year }}">
                         <input type="hidden" name="family_id" value="{{ family_id }}">
-                        <button type="submit" class="btn btn-primary" {% if normal_auto_records == 0 %}disabled{% endif %}>
-                            <i class="bi bi-check2-all"></i>
-                            Rabatte anwenden ({{ normal_auto_records }} Datensätze)
-                        </button>
+                        
+                        {% if legacy_records > 0 %}
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" name="include_legacy" id="includeLegacyCheck" value="1">
+                            <label class="form-check-label" for="includeLegacyCheck">
+                                <small>LEGACY einschließen (Rabatte auf vorhandene Monatswerte anwenden)</small>
+                            </label>
+                        </div>
+                        {% endif %}
+                        
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary" {% if normal_auto_records == 0 and legacy_records == 0 %}disabled{% endif %}>
+                                <i class="bi bi-check2-all"></i>
+                                Rabatte anwenden (<span id="recordCountLabel">{{ normal_auto_records }}</span> Datensätze)
+                            </button>
+                        </div>
                     </form>
-                    {% if normal_auto_records == 0 %}
+                    {% if normal_auto_records == 0 and legacy_records == 0 %}
                     <small class="text-muted d-block text-center mt-2">
-                        Keine NORMAL+AUTO Datensätze zum Verarbeiten.
+                        Keine Datensätze zum Verarbeiten.
                     </small>
                     {% endif %}
+                    
+                    <script>
+                    (function() {
+                        const form = document.getElementById('applyDiscountsForm');
+                        const checkbox = document.getElementById('includeLegacyCheck');
+                        const countLabel = document.getElementById('recordCountLabel');
+                        const normalAutoCount = {{ normal_auto_records }};
+                        const legacyCount = {{ legacy_records }};
+                        
+                        // Update count label when checkbox changes
+                        if (checkbox) {
+                            checkbox.addEventListener('change', function() {
+                                if (this.checked) {
+                                    countLabel.textContent = normalAutoCount + legacyCount;
+                                } else {
+                                    countLabel.textContent = normalAutoCount;
+                                }
+                            });
+                        }
+                        
+                        // Confirm dialog
+                        form.addEventListener('submit', function(e) {
+                            let msg;
+                            if (checkbox && checkbox.checked) {
+                                msg = 'Rabatte für alle NORMAL+AUTO Datensätze (' + normalAutoCount + ') UND LEGACY Datensätze (' + legacyCount + ') der Familie anwenden?\n\n' +
+                                      'LEGACY-Datensätze: Rabatte werden auf die vorhandenen Monatswerte angewendet (ohne Preisbezug).\n\n' +
+                                      'Dies erstellt PendingChange-Einträge, die vom Superadmin geprüft werden müssen.';
+                            } else {
+                                msg = 'Rabatte für alle NORMAL+AUTO Datensätze (' + normalAutoCount + ') der Familie anwenden?\n\n' +
+                                      'Dies erstellt PendingChange-Einträge, die vom Superadmin geprüft werden müssen.';
+                            }
+                            if (!confirm(msg)) {
+                                e.preventDefault();
+                            }
+                        });
+                    })();
+                    </script>
                 </div>
             </div>
         </div>
@@ -211,6 +265,11 @@ Admin-only page showing all records for a family in a year, with discount manage
                                         <span class="badge {% if record.months_mode == 'AUTO' %}bg-success{% elif record.months_mode == 'LEGACY' %}bg-secondary{% else %}bg-danger{% endif %}">
                                             {{ record.months_mode }}
                                         </span>
+                                        {% if record.months_mode == 'LEGACY' and record.legacy_base_amounts_enabled %}
+                                        <span class="badge bg-info" title="Rabatte wurden auf Legacy-Monatswerte angewendet">
+                                            <i class="bi bi-arrow-repeat"></i>
+                                        </span>
+                                        {% endif %}
                                     </td>
                                     <td>
                                         {% if record.status == "PENDING" %}

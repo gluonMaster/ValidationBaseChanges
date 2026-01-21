@@ -316,6 +316,7 @@ class ApplyDiscountsView(AdminOnlyMixin, View):
         """Apply discounts to family records."""
         year = request.POST.get("year")
         family_id = request.POST.get("family_id")
+        include_legacy = request.POST.get("include_legacy") == "1"
         
         # Validate
         if not year or not family_id:
@@ -328,13 +329,27 @@ class ApplyDiscountsView(AdminOnlyMixin, View):
             messages.error(request, "Ungültiges Jahr.")
             return redirect("karteien:record_list")
         
-        # Get all NORMAL + AUTO records for this family/year
-        eligible_records = KarteiRecord.objects.filter(
-            year=year,
-            family_id=family_id,
-            status=RecordStatus.NORMAL,
-            months_mode=MonthsMode.AUTO,
-        )
+        # Get eligible records for this family/year
+        # Always include NORMAL + AUTO
+        # If include_legacy is True, also include NORMAL + LEGACY
+        from django.db.models import Q
+        
+        if include_legacy:
+            # NORMAL status with either AUTO or LEGACY mode
+            eligible_records = KarteiRecord.objects.filter(
+                year=year,
+                family_id=family_id,
+                status=RecordStatus.NORMAL,
+                months_mode__in=[MonthsMode.AUTO, MonthsMode.LEGACY],
+            )
+        else:
+            # Only NORMAL + AUTO (original behavior)
+            eligible_records = KarteiRecord.objects.filter(
+                year=year,
+                family_id=family_id,
+                status=RecordStatus.NORMAL,
+                months_mode=MonthsMode.AUTO,
+            )
         
         # Get family discounts once
         family_discounts = list(
@@ -346,7 +361,8 @@ class ApplyDiscountsView(AdminOnlyMixin, View):
         
         # Statistics
         processed_count = 0
-        pending_created = 0
+        pending_created_auto = 0
+        pending_created_legacy = 0
         skipped_no_change = 0
         skipped_no_refs = 0
         errors = []
@@ -354,11 +370,15 @@ class ApplyDiscountsView(AdminOnlyMixin, View):
         with transaction.atomic():
             for record in eligible_records:
                 try:
-                    result = self._process_record(record, family_discounts)
+                    is_legacy = record.months_mode == MonthsMode.LEGACY
+                    result = self._process_record(record, family_discounts, is_legacy=is_legacy)
                     processed_count += 1
                     
                     if result == "pending":
-                        pending_created += 1
+                        if is_legacy:
+                            pending_created_legacy += 1
+                        else:
+                            pending_created_auto += 1
                     elif result == "no_change":
                         skipped_no_change += 1
                     elif result == "no_refs":
@@ -368,10 +388,16 @@ class ApplyDiscountsView(AdminOnlyMixin, View):
                     errors.append(f"Record {record.id}: {str(e)}")
         
         # Report results
-        if pending_created > 0:
+        pending_created_total = pending_created_auto + pending_created_legacy
+        if pending_created_total > 0:
+            parts = []
+            if pending_created_auto > 0:
+                parts.append(f"{pending_created_auto} AUTO")
+            if pending_created_legacy > 0:
+                parts.append(f"{pending_created_legacy} LEGACY")
             messages.success(
                 request,
-                f"{pending_created} Datensätze wurden zu PENDING geändert und warten auf Superadmin-Prüfung."
+                f"{pending_created_total} Datensätze ({', '.join(parts)}) wurden zu PENDING geändert und warten auf Superadmin-Prüfung."
             )
         
         if skipped_no_change > 0:
@@ -401,17 +427,20 @@ class ApplyDiscountsView(AdminOnlyMixin, View):
             declined_count = KarteiRecord.objects.filter(
                 year=year, family_id=family_id, status=RecordStatus.DECLINED
             ).count()
-            legacy_count = KarteiRecord.objects.filter(
-                year=year, family_id=family_id, months_mode=MonthsMode.LEGACY
-            ).count()
             
             skip_parts = []
             if pending_count > 0:
                 skip_parts.append(f"{pending_count} PENDING")
             if declined_count > 0:
                 skip_parts.append(f"{declined_count} DECLINED")
-            if legacy_count > 0:
-                skip_parts.append(f"{legacy_count} LEGACY")
+            
+            # Only count LEGACY as skipped if include_legacy was False
+            if not include_legacy:
+                legacy_count = KarteiRecord.objects.filter(
+                    year=year, family_id=family_id, months_mode=MonthsMode.LEGACY, status=RecordStatus.NORMAL
+                ).count()
+                if legacy_count > 0:
+                    skip_parts.append(f"{legacy_count} LEGACY")
             
             if skip_parts:
                 messages.info(
@@ -433,21 +462,43 @@ class ApplyDiscountsView(AdminOnlyMixin, View):
         self,
         record: KarteiRecord,
         family_discounts: list[FamilyDiscount],
+        is_legacy: bool = False,
     ) -> str:
         """
         Process a single record for discount application.
         
+        Args:
+            record: The KarteiRecord to process.
+            family_discounts: List of FamilyDiscount objects to apply.
+            is_legacy: If True, use current month values as base (no price refs needed).
+        
         Returns:
             "pending" - PendingChange created, record marked PENDING
             "no_change" - No value changes, skipped
-            "no_refs" - No price references, skipped
+            "no_refs" - No price references, skipped (only for AUTO)
         """
-        # Check if record has price references (either catalog refs or legacy prices)
-        has_price_1 = record.price1_ref_id or record.price1
-        has_price_2 = record.price2_ref_id or record.price2
-        
-        if not has_price_1 and not has_price_2:
-            return "no_refs"
+        # For LEGACY records, we use current month values as base
+        # For AUTO records, we need price references
+        if is_legacy:
+            # LEGACY mode: build base_amounts from current saved month values
+            base_amounts: dict[str, Decimal] = {}
+            for month_num in range(1, 13):
+                field_key = f"month_{month_num}"
+                current_val = getattr(record, field_key)
+                if current_val is None:
+                    base_amounts[field_key] = ZERO
+                else:
+                    base_amounts[field_key] = Decimal(str(current_val))
+        else:
+            # AUTO mode: check if record has price references
+            has_price_1 = record.price1_ref_id or record.price1
+            has_price_2 = record.price2_ref_id or record.price2
+            
+            if not has_price_1 and not has_price_2:
+                return "no_refs"
+            
+            # Build base amounts from price references
+            base_amounts = build_base_amounts(record)
         
         # Get record-level discounts
         record_discounts = list(
@@ -455,7 +506,6 @@ class ApplyDiscountsView(AdminOnlyMixin, View):
         )
         
         # Calculate new month values with current discounts
-        base_amounts = build_base_amounts(record)
         new_month_values, flags = calculate_month_values(
             record,
             family_discounts=family_discounts,
@@ -517,11 +567,24 @@ class ApplyDiscountsView(AdminOnlyMixin, View):
         # Build snapshot
         snapshot = build_snapshot(snapshot_record)
         
+        # Prepare admin_comment based on mode
+        if is_legacy:
+            admin_comment = "Rabatte (Familie) angewendet – LEGACY-Basis (Monatswerte als Basis, ohne Preisbezug)"
+            # For LEGACY records, save base_amounts and set legacy_base_amounts_enabled
+            # This allows get_month_breakdown() to show breakdown for LEGACY records
+            record.base_amounts = {k: str(v) for k, v in base_amounts.items()}
+            record.legacy_base_amounts_enabled = True
+        else:
+            admin_comment = "Rabatte (Familie) angewendet"
+        
         # Create/update PendingChange
-        create_or_update_pending_change_from_snapshot(record, snapshot)
+        create_or_update_pending_change_from_snapshot(record, snapshot, admin_comment=admin_comment)
         
         # Update record status to PENDING
+        update_fields = ["status", "updated_at"]
+        if is_legacy:
+            update_fields.extend(["base_amounts", "legacy_base_amounts_enabled"])
         record.status = RecordStatus.PENDING
-        record.save(update_fields=["status", "updated_at"])
+        record.save(update_fields=update_fields)
         
         return "pending"

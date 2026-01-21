@@ -89,6 +89,10 @@ Extends blocks:
         color: #0d6efd;
       }
 
+      .notification-type.approved {
+        color: #198754;
+      }
+
       .notification-type.declined {
         color: #dc3545;
       }
@@ -291,11 +295,11 @@ Extends blocks:
           this.fetchUnreadCount();
           this.fetchNotifications();
 
-          // Refresh every 60 seconds
+          // Refresh every 10 seconds for near-realtime updates
           setInterval(() => {
             this.fetchUnreadCount();
             this.fetchNotifications();
-          }, 60000);
+          }, 10000);
 
           // Refresh when dropdown opens
           document
@@ -317,7 +321,8 @@ Extends blocks:
 
         async fetchNotifications() {
           try {
-            const response = await fetch("/api/notifications/?limit=10");
+            // Only fetch unread notifications so resolved pending items disappear
+            const response = await fetch("/api/notifications/?unread=true&limit=10");
             const data = await response.json();
             this.renderNotifications(data.results || data);
           } catch (error) {
@@ -349,12 +354,19 @@ Extends blocks:
 
           notifications.forEach((notification) => {
             const isUnread = !notification.is_read;
-            const typeClass =
-              notification.type === "PENDING_CREATED" ? "pending" : "declined";
-            const typeLabel =
-              notification.type === "PENDING_CREATED"
-                ? "Neue Pending"
-                : "Abgelehnt";
+            // Determine type class and label based on notification type
+            let typeClass = "declined";
+            let typeLabel = "Abgelehnt";
+            if (notification.type === "PENDING_CREATED") {
+              typeClass = "pending";
+              typeLabel = "Neue Pending";
+            } else if (notification.type === "APPROVED") {
+              typeClass = "approved";
+              typeLabel = "Genehmigt";
+            } else if (notification.type === "DECLINED_CREATED") {
+              typeClass = "declined";
+              typeLabel = "Abgelehnt";
+            }
 
             // Merge payload and record_info for display fields; pending_id is always in payload
             const payload = notification.payload || {};
@@ -404,9 +416,12 @@ Extends blocks:
                     `;
           });
 
-          // Add "Mark all as read" button if there are unread notifications
-          const hasUnread = notifications.some((n) => !n.is_read);
-          if (hasUnread) {
+          // Add "Mark all as read" button only if there are unread notifications
+          // that are NOT PENDING_CREATED (those should only be cleared by approve/decline)
+          const hasMarkableUnread = notifications.some(
+            (n) => !n.is_read && n.type !== "PENDING_CREATED"
+          );
+          if (hasMarkableUnread) {
             html += `
                         <div class="text-center py-2 border-top">
                             <button class="btn btn-sm btn-primary" onclick="NotificationSystem.markAllAsRead()">
@@ -468,19 +483,9 @@ Extends blocks:
         },
 
         async openPending(notificationId, pendingId) {
-          // Mark notification as read, then navigate to War/Ist page
-          try {
-            await fetch(`/api/notifications/${notificationId}/read/`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-CSRFToken": this.getCsrfToken(),
-              },
-            });
-          } catch (error) {
-            console.error("Failed to mark notification as read:", error);
-          }
-          // Navigate to pending detail (War/Ist) page
+          // For SUPERADMIN: do NOT mark pending notification as read on click.
+          // Pending notifications should remain visible until the decision
+          // (approve/decline) is made. Just navigate to the War/Ist page.
           window.location.href = `/approvals/superadmin/pending/${pendingId}/`;
         },
       };

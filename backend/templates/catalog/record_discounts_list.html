@@ -95,6 +95,7 @@ Record discounts list view - Shows discounts assigned to individual records.
                             <th style="width: 80px;">PKID</th>
                             <th style="width: 80px;">Jahr</th>
                             <th style="width: 150px;">FamilyID</th>
+                            <th style="width: 180px;">Eltern</th>
                             <th>Rabatt</th>
                             <th style="width: 150px;">Monate</th>
                             <th style="width: 150px;">Erstellt</th>
@@ -112,6 +113,7 @@ Record discounts list view - Shows discounts assigned to individual records.
                             </td>
                             <td>{{ rd.record.year }}</td>
                             <td>{{ rd.record.family_id }}</td>
+                            <td>{{ rd.record.parent_name|truncatechars:25|default:"-" }}</td>
                             <td>
                                 {% if rd.discount.kind == 'PERCENT' %}
                                 <span class="badge bg-primary">{% widthratio rd.discount.value 1 100 %}%</span>
@@ -139,7 +141,7 @@ Record discounts list view - Shows discounts assigned to individual records.
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="7" class="text-center text-muted py-4">
+                            <td colspan="8" class="text-center text-muted py-4">
                                 <i class="bi bi-inbox fs-1 d-block mb-2"></i>
                                 Keine Eintragsrabatte gefunden.
                                 {% if not record_pk and not year and not family_id %}

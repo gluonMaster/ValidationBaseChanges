@@ -42,6 +42,21 @@ Used by record_list.html and live-search API.
         {% endif %}
     </td>
     <td>
+        {% comment %}Discount badges{% endcomment %}
+        {% if record.discounts_disabled %}
+        <span class="badge bg-warning text-dark" title="Rabatte deaktiviert">Aus</span>
+        {% endif %}
+        {% if record.has_family_discounts %}
+        <span class="badge bg-info text-dark" title="Familienrabatt vorhanden">Fam</span>
+        {% endif %}
+        {% if record.record_discounts_count > 0 %}
+        <span class="badge bg-primary" title="Eintragsrabatte: {{ record.record_discounts_count }}">Eintrag: {{ record.record_discounts_count }}</span>
+        {% endif %}
+        {% if not record.discounts_disabled and not record.has_family_discounts and record.record_discounts_count == 0 %}
+        <span class="text-muted">-</span>
+        {% endif %}
+    </td>
+    <td>
         {% comment %}Contract type and status badges{% endcomment %}
         {% if record.is_monthly_contract %}
         <span class="badge bg-info text-dark" title="Monatlicher Vertrag">M</span>
@@ -89,7 +104,7 @@ Used by record_list.html and live-search API.
 </tr>
 {% empty %}
 <tr>
-    <td colspan="10" class="text-center py-5">
+    <td colspan="11" class="text-center py-5">
         <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
         <p class="text-muted mt-3">Keine Datensätze gefunden.</p>
     </td>
