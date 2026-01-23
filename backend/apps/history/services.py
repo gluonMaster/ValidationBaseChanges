@@ -125,6 +125,7 @@ def is_new_format(segment: str) -> bool:
     - Contains -> (value separator)
     - Contains /@ or @/ (comment delimiters)
     - Starts with DCL( or RUCK: followed by tag
+    - Starts with APR: or ADM: (approve/admin comment)
     - Contains field tags like M01(, ADR(, SB1( etc.
     
     Args:
@@ -142,6 +143,10 @@ def is_new_format(segment: str) -> bool:
     
     # Check for DCL( at start
     if segment.startswith("DCL("):
+        return True
+    
+    # Check for APR: or ADM: prefixes (approve/admin comment)
+    if segment.startswith("APR:") or segment.startswith("ADM:"):
         return True
     
     # Check for RUCK: prefix with new format after it
@@ -196,7 +201,9 @@ def parse_new_format_segment(segment: str) -> HistoryEventData:
     Parse a history segment in new format.
     
     New format: [RUCK:]<TAG>(<OLD>-><NEW>);.../@<COMMENT>@/<DATE>
-                DCL(<N>-><comment>)
+                DCL(<N>-><comment>)/@<user>@/<date>
+                APR:<username>/.../@<comment>@/<date>
+                ADM:<username>/.../@<comment>@/<date>
     
     Args:
         segment: A single history session segment
@@ -214,6 +221,30 @@ def parse_new_format_segment(segment: str) -> HistoryEventData:
         event.event_type = "RUCK"
         working = working[len(HD_RUCK_PREFIX):].strip()
     
+    # Check for APR: approve entry
+    if working.startswith("APR:"):
+        event.event_type = "APPROVE"
+        # Parse date from the tail (e.g., APR:username/.../@comment@/20.01.2026)
+        event.event_time = parse_date(working)
+        # Extract comment if present
+        comment_pattern = re.compile(r"/@(.*)@/", re.DOTALL)
+        comment_match = comment_pattern.search(working)
+        if comment_match:
+            event.comment = comment_match.group(1).strip()
+        return event
+    
+    # Check for ADM: admin comment entry
+    if working.startswith("ADM:"):
+        event.event_type = "CHANGE"  # Keep as CHANGE but don't lose the event
+        # Parse date from the tail
+        event.event_time = parse_date(working)
+        # Extract comment if present
+        comment_pattern = re.compile(r"/@(.*)@/", re.DOTALL)
+        comment_match = comment_pattern.search(working)
+        if comment_match:
+            event.comment = comment_match.group(1).strip()
+        return event
+    
     # Check for DCL( decline entry
     if working.startswith("DCL("):
         event.event_type = "DECLINE"
@@ -226,6 +257,9 @@ def parse_new_format_segment(segment: str) -> HistoryEventData:
             event.decline_number = int(dcl_match.group(1))
             event.decline_comment = dcl_match.group(2)
             event.comment = event.decline_comment
+        
+        # Parse date from the tail (after DCL(...) there may be /@user@/date)
+        event.event_time = parse_date(working)
         
         return event
     
@@ -404,8 +438,17 @@ def parse_raw_history(raw: str) -> list[HistoryEventData]:
         else:
             event = parse_legacy_format_segment(segment)
         
-        # Only add if we got meaningful data
-        if event.changes or event.event_type in ("DECLINE", "CREATE", "IMPORT"):
+        # Only add if we got meaningful data:
+        # - Has changes, OR
+        # - Has comment/decline_comment (comment-only events), OR
+        # - Is a significant event type (DECLINE, CREATE, IMPORT, APPROVE, RUCK)
+        has_meaningful_content = (
+            event.changes
+            or event.comment
+            or event.decline_comment
+            or event.event_type in ("DECLINE", "CREATE", "IMPORT", "APPROVE", "RUCK")
+        )
+        if has_meaningful_content:
             result.append(event)
     
     return result

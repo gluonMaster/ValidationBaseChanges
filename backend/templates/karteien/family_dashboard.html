@@ -26,6 +26,11 @@ Admin-only page showing all records for a family in a year, with discount manage
             </h1>
         </div>
         <div class="col-auto">
+            <a href="{% url 'karteien:record_create' %}?year={{ year }}&prefill_family_id={{ family_id }}" 
+               class="btn btn-success me-2">
+                <i class="bi bi-plus-lg"></i>
+                Neuer Datensatz
+            </a>
             <a href="{% url 'karteien:record_list' %}?year={{ year }}&family_id={{ family_id }}" 
                class="btn btn-outline-secondary">
                 <i class="bi bi-arrow-left"></i>

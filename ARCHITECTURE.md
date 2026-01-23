@@ -233,8 +233,8 @@
 
 - **NeuList** (`/approvals/superadmin/neu/`):
 
-  - Список новых записей (ID > last_seen_id).
-  - Кнопка "Mark as Seen" для обновления last_seen_id.
+  - Список новых записей **по выбранному году**: `id > last_seen_by_year[year]` (доменный ключ `(year, id)`).
+  - Кнопка "Mark as Seen" обновляет `last_seen_by_year[year]`.
   - Аналог VBA valid_NeuList.
 
 - **Record History** (`/approvals/superadmin/history/<id>/`):
@@ -262,15 +262,16 @@
 
 - `get_new_records(user, year) -> list[KarteiRecord]`:
 
-  - Возвращает записи с ID > last_seen_id пользователя.
+  - Возвращает записи `KarteiRecord(year=year, id__gt=last_seen_by_year[year])`.
 
-- `update_last_seen_id(user, max_id=None)`:
-  - Обновляет last_seen_id для NeuList.
+- `update_last_seen_id(user, year, max_id=None)`:
+  - Обновляет `last_seen_by_year[year]` для NeuList (и может поддерживать legacy `last_seen_id` как диагностическое поле).
 
 **Модель SuperadminState** (`apps/approvals/models.py`):
 
 - `user` — OneToOneField на User.
-- `last_seen_id` — PositiveIntegerField для NeuList.
+- `last_seen_by_year` — JSONField: `{ "<year>": <last_seen_id>, ... }` для NeuList (per-year).
+- `last_seen_id` — legacy PositiveIntegerField (не используется для фильтрации NeuList per-year; нужен только для совместимости/диагностики).
 - `last_seen_date` — DateTimeField (альтернативный трекер).
 
 **Admin/Operator Web UI:**
@@ -278,7 +279,7 @@
 Реализован веб-интерфейс для ролей Admin/Operator:
 
 - **Kartei List View** (`/karteien/`):
-  - Список записей с фильтрами по году, FamilyID, Parent, Child, статусу.
+  - Список записей с фильтрами по году, FamilyID, Parent, Child, статусу, типу/статусу договора (в т.ч. SEPA-варианты), а также динамическими фильтрами Unterricht/Lehrer по семестру.
   - Быстрые ссылки на PENDING/DECLINED обзоры.
 - **Kartei Create/Edit** (`/karteien/create/`, `/karteien/<id>/edit/`):
 
@@ -286,6 +287,7 @@
   - Ограничения для Operator: SEPA-строки, прошлые месяцы.
   - Классификация изменений: safe → прямое обновление, risky → создание PendingChange.
   - Поле комментария (Notitzen) для risky-изменений.
+  - Create: UX-подсказка по FamilyID (max + рекомендация) и предупреждение для Freitext; entry-point создания записи из Family Dashboard с prefill данных семьи.
 
 - **Declined Overview** (`/approvals/declined/`):
 
@@ -351,6 +353,7 @@
   - Парсит сырую строку истории (AZ/Value52) в список структурированных событий.
   - Поддерживает новый формат `[RUCK:]<TAG>(<OLD>-><NEW>);.../@<COMMENT>@/<DATE>||`
   - Поддерживает legacy формат `Mnt.N: War(X); Ist(Y). /Comment/ DD.MM.YYYY ||`.
+  - Не теряет comment-only события (например, `APR:`/`ADM:`), и извлекает дату из записей вида `DCL(...)/@...@/<DATE>`.
 - `sync_history_from_raw(record: KarteiRecord) -> list[HistoryEvent]`:
   - Парсит `history_raw` записи и создаёт отсутствующие `HistoryEvent`.
   - Не изменяет исходную строку истории.

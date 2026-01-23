@@ -998,10 +998,10 @@ class SuperadminNeuListView(SuperadminMixin, ListView):
         except ValueError:
             context["current_year"] = date.today().year
         
-        # Get state for display
-        from .services import get_or_create_superadmin_state
+        # Get per-year last_seen_id for display
+        from .services import get_or_create_superadmin_state, _get_last_seen_id_for_year
         state = get_or_create_superadmin_state(self.request.user)
-        context["last_seen_id"] = state.last_seen_id
+        context["last_seen_id"] = _get_last_seen_id_for_year(state, context["current_year"])
         context["new_count"] = get_new_records_count(
             self.request.user, context["current_year"]
         )
@@ -1011,17 +1011,25 @@ class SuperadminNeuListView(SuperadminMixin, ListView):
 
 class SuperadminMarkSeenView(SuperadminMixin, View):
     """
-    Mark all current records as seen (update last_seen_id).
+    Mark all current records as seen (update last_seen_id) for a specific year.
     """
     
     def post(self, request: HttpRequest) -> HttpResponse:
-        """Update last_seen_id to current max."""
-        update_last_seen_id(request.user)
+        """Update last_seen_id to current max for the given year."""
+        # Get year from POST data or default to current year
+        year_str = request.POST.get("year")
+        try:
+            year = int(year_str) if year_str else date.today().year
+        except ValueError:
+            year = date.today().year
+
+        update_last_seen_id(request.user, year=year)
         messages.success(
             request,
-            "Alle Datensätze wurden als gesehen markiert."
+            f"Alle Datensätze für Jahr {year} wurden als gesehen markiert."
         )
-        return redirect("approvals:superadmin_neu_list")
+        # Redirect back with year parameter to preserve selection
+        return redirect(f"{reverse('approvals:superadmin_neu_list')}?year={year}")
 
 
 # =============================================================================
@@ -1046,15 +1054,21 @@ class SuperadminRecordHistoryView(SuperadminMixin, DetailView):
         
         # Parse raw history
         history_entries = []
+        raw_history_fallback = None
+        
         if record.history_raw:
             from apps.history.services import parse_raw_history
             try:
                 history_entries = parse_raw_history(record.history_raw)
+                # If parsing returned empty but we have raw data, show raw as fallback
+                if not history_entries:
+                    raw_history_fallback = record.history_raw
             except Exception:
-                # Fallback: show raw history
-                context["raw_history"] = record.history_raw
+                # Fallback: show raw history if parsing failed
+                raw_history_fallback = record.history_raw
         
         context["history_entries"] = history_entries
+        context["raw_history"] = raw_history_fallback
         context["has_history"] = bool(history_entries or record.history_raw)
         
         return context

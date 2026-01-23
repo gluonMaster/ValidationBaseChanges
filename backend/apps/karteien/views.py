@@ -201,13 +201,67 @@ class KarteiRecordListView(KarteiViewerMixin, ListView):
             elif contract_type == "yearly":
                 qs = qs.filter(is_monthly_contract=False)
         
-        # Filter by contract status (active/terminated)
+        # Filter by contract status (active/terminated/active_sepa/terminated_sepa)
         contract_status = self.request.GET.get("contract_status")
         if contract_status:
             if contract_status == "active":
                 qs = qs.filter(is_contract_terminated=False)
             elif contract_status == "terminated":
                 qs = qs.filter(is_contract_terminated=True)
+            elif contract_status == "active_sepa":
+                qs = qs.filter(is_contract_terminated=False, sepa_marker__iexact="SEPA")
+            elif contract_status == "terminated_sepa":
+                qs = qs.filter(is_contract_terminated=True, sepa_marker__iexact="SEPA")
+        
+        # Filter by subject (Unterricht)
+        subject_query = self.request.GET.get("subject_query", "").strip()
+        subject_semester = self.request.GET.get("subject_semester", "")
+        if subject_query:
+            if subject_semester == "1":
+                qs = qs.filter(
+                    Q(subject1__icontains=subject_query) |
+                    Q(subject1_ref__name__icontains=subject_query)
+                )
+            elif subject_semester == "2":
+                qs = qs.filter(
+                    Q(subject2__icontains=subject_query) |
+                    Q(subject2_ref__name__icontains=subject_query)
+                )
+            else:
+                # Both semesters
+                qs = qs.filter(
+                    Q(subject1__icontains=subject_query) |
+                    Q(subject1_ref__name__icontains=subject_query) |
+                    Q(subject2__icontains=subject_query) |
+                    Q(subject2_ref__name__icontains=subject_query)
+                )
+        
+        # Filter by teacher (Lehrer)
+        teacher_query = self.request.GET.get("teacher_query", "").strip()
+        teacher_semester = self.request.GET.get("teacher_semester", "")
+        if teacher_query:
+            if teacher_semester == "1":
+                qs = qs.filter(
+                    Q(teacher1_legacy_name__icontains=teacher_query) |
+                    Q(teacher1_ref__first_name__icontains=teacher_query) |
+                    Q(teacher1_ref__last_name__icontains=teacher_query)
+                )
+            elif teacher_semester == "2":
+                qs = qs.filter(
+                    Q(teacher2_legacy_name__icontains=teacher_query) |
+                    Q(teacher2_ref__first_name__icontains=teacher_query) |
+                    Q(teacher2_ref__last_name__icontains=teacher_query)
+                )
+            else:
+                # Both semesters
+                qs = qs.filter(
+                    Q(teacher1_legacy_name__icontains=teacher_query) |
+                    Q(teacher1_ref__first_name__icontains=teacher_query) |
+                    Q(teacher1_ref__last_name__icontains=teacher_query) |
+                    Q(teacher2_legacy_name__icontains=teacher_query) |
+                    Q(teacher2_ref__first_name__icontains=teacher_query) |
+                    Q(teacher2_ref__last_name__icontains=teacher_query)
+                )
         
         return qs.order_by("family_id", "parent_name", "child_name")
     
@@ -235,6 +289,10 @@ class KarteiRecordListView(KarteiViewerMixin, ListView):
             "status": self.request.GET.get("status", ""),
             "contract_type": self.request.GET.get("contract_type", ""),
             "contract_status": self.request.GET.get("contract_status", ""),
+            "subject_semester": self.request.GET.get("subject_semester", ""),
+            "subject_query": self.request.GET.get("subject_query", ""),
+            "teacher_semester": self.request.GET.get("teacher_semester", ""),
+            "teacher_query": self.request.GET.get("teacher_query", ""),
         }
         
         return context
@@ -390,6 +448,27 @@ class KarteiRecordDetailView(KarteiViewerMixin, DetailView):
         else:
             context["disabled_months_display"] = None
         
+        # -------------------------------------------------------------------------
+        # History Parsing for Timeline UI
+        # -------------------------------------------------------------------------
+        history_entries = []
+        raw_history_fallback = None
+        
+        if record.history_raw:
+            from apps.history.services import parse_raw_history
+            try:
+                history_entries = parse_raw_history(record.history_raw)
+                # If parsing returned empty but we have raw data, show raw as fallback
+                if not history_entries:
+                    raw_history_fallback = record.history_raw
+            except Exception:
+                # Parsing failed - show raw history as fallback
+                raw_history_fallback = record.history_raw
+        
+        context["history_entries"] = history_entries
+        context["raw_history"] = raw_history_fallback
+        context["has_history"] = bool(history_entries or record.history_raw)
+        
         return context
     
     def _values_equal(self, val1: Any, val2: Any) -> bool:
@@ -423,11 +502,19 @@ class KarteiRecordCreateView(KarteiEditorMixin, CreateView):
     Create view for new KarteiRecord entries.
     
     New records are always considered "safe" and don't require approval.
+    
+    Supports prefill_family_id query param to prefill form fields from
+    an existing family record (used by Family Dashboard).
     """
     
     model = KarteiRecord
     form_class = KarteiRecordForm
     template_name = "karteien/record_form.html"
+    
+    # Store prefill info for context
+    _prefill_from_family = False
+    _prefill_source_year = None
+    _prefill_family_id = None
     
     def get_form_kwargs(self) -> dict[str, Any]:
         """Pass user and year to form."""
@@ -436,15 +523,77 @@ class KarteiRecordCreateView(KarteiEditorMixin, CreateView):
         kwargs["year"] = int(self.request.GET.get("year", date.today().year))
         return kwargs
     
+    def get_initial(self) -> dict[str, Any]:
+        """
+        Get initial form values.
+        
+        If prefill_family_id is provided in query params, find a reference record
+        for this family and prefill contact fields from it.
+        """
+        initial = super().get_initial()
+        
+        prefill_family_id = self.request.GET.get("prefill_family_id", "").strip()
+        if not prefill_family_id:
+            return initial
+        
+        year = int(self.request.GET.get("year", date.today().year))
+        
+        # Find a reference record for this family
+        # Priority: same year, then fallback to most recent year
+        reference_record = (
+            KarteiRecord.objects
+            .filter(family_id=prefill_family_id, year=year)
+            .order_by("-id")
+            .first()
+        )
+        
+        if not reference_record:
+            # Fallback: find most recent record from any year
+            reference_record = (
+                KarteiRecord.objects
+                .filter(family_id=prefill_family_id)
+                .order_by("-year", "-id")
+                .first()
+            )
+        
+        if reference_record:
+            # Prefill family and contact fields
+            initial["family_id"] = reference_record.family_id
+            initial["parent_name"] = reference_record.parent_name
+            initial["child_name"] = reference_record.child_name
+            initial["birthdate"] = reference_record.birthdate
+            initial["address"] = reference_record.address
+            initial["phone"] = reference_record.phone
+            initial["mobile"] = reference_record.mobile
+            initial["email"] = reference_record.email
+            
+            # Store prefill info for context
+            self._prefill_from_family = True
+            self._prefill_source_year = reference_record.year
+            self._prefill_family_id = prefill_family_id
+        
+        return initial
+    
     def get_context_data(self, **kwargs) -> dict[str, Any]:
         """Add year info to context."""
         context = super().get_context_data(**kwargs)
         context["is_create"] = True
         context["year"] = int(self.request.GET.get("year", date.today().year))
         
+        # Prefill from family info
+        context["prefill_from_family"] = self._prefill_from_family
+        context["prefill_source_year"] = self._prefill_source_year
+        context["prefill_family_id"] = self._prefill_family_id
+        
+        # Collect family prefill options if family_id is provided
+        context.update(self._collect_family_prefill_options())
+        
         # New records are AUTO mode by default
         context["is_auto_mode"] = True
         context["months_mode"] = MonthsMode.AUTO
+        
+        # Compute max FamilyID and suggestion for next
+        context.update(self._compute_family_id_hints())
         
         # Get hourly months for template
         form = context.get('form')
@@ -461,6 +610,118 @@ class KarteiRecordCreateView(KarteiEditorMixin, CreateView):
                 context["clamped_zero_months"] = []
         
         return context
+    
+    def _collect_family_prefill_options(self) -> dict[str, Any]:
+        """
+        Collect unique non-empty values for family fields from existing records.
+        
+        Used when prefill_family_id is provided to show dropdown options for fields
+        where the family has multiple different values.
+        
+        Returns:
+            dict with family_prefill_options and family_prefill_active
+        """
+        if not self._prefill_family_id:
+            return {
+                "family_prefill_options": {},
+                "family_prefill_active": False,
+            }
+        
+        # Get all records for this family (across all years for comprehensive options)
+        family_records = KarteiRecord.objects.filter(
+            family_id=self._prefill_family_id
+        ).values(
+            "parent_name", "child_name", "birthdate",
+            "address", "phone", "mobile", "email"
+        )
+        
+        # Collect unique non-empty values for each field
+        options = {
+            "parent_name": set(),
+            "child_name": set(),
+            "birthdate": [],  # Will be list of (value, label) tuples
+            "address": set(),
+            "phone": set(),
+            "mobile": set(),
+            "email": set(),
+        }
+        
+        birthdate_set = set()  # For deduplication
+        
+        for record in family_records:
+            for field_name in ["parent_name", "child_name", "address", "phone", "mobile", "email"]:
+                value = record.get(field_name)
+                if value and str(value).strip():
+                    options[field_name].add(str(value).strip())
+            
+            # Handle birthdate specially (serialize for value, format for label)
+            bd = record.get("birthdate")
+            if bd:
+                bd_value = bd.strftime("%Y-%m-%d") if hasattr(bd, "strftime") else str(bd)
+                if bd_value not in birthdate_set:
+                    birthdate_set.add(bd_value)
+                    bd_label = bd.strftime("%d.%m.%Y") if hasattr(bd, "strftime") else str(bd)
+                    options["birthdate"].append({"value": bd_value, "label": bd_label})
+        
+        # Convert sets to sorted lists
+        for field_name in ["parent_name", "child_name", "address", "phone", "mobile", "email"]:
+            options[field_name] = sorted(options[field_name])
+        
+        # Sort birthdates by value
+        options["birthdate"] = sorted(options["birthdate"], key=lambda x: x["value"])
+        
+        return {
+            "family_prefill_options": options,
+            "family_prefill_active": True,
+        }
+    
+    def _compute_family_id_hints(self) -> dict[str, str]:
+        """
+        Compute max FamilyID in database and suggest next one.
+        
+        FamilyID format: "N. NNNN" (prefix.number)
+        Returns dict with family_id_max_display and family_id_next_suggestion.
+        """
+        import re
+        
+        family_ids = (
+            KarteiRecord.objects
+            .exclude(family_id__isnull=True)
+            .exclude(family_id="")
+            .values_list("family_id", flat=True)
+            .distinct()
+        )
+        
+        # Pattern: optional spaces, digit(s), dot, optional spaces, digit(s), optional spaces
+        pattern = re.compile(r'^\s*(\d+)\.\s*(\d+)\s*$')
+        
+        max_entry = None
+        max_prefix = 0
+        max_number = 0
+        
+        for fid in family_ids:
+            if not fid:
+                continue
+            match = pattern.match(fid)
+            if match:
+                prefix = int(match.group(1))
+                number = int(match.group(2))
+                # Compare by (prefix, number) tuple
+                if (prefix, number) > (max_prefix, max_number):
+                    max_prefix = prefix
+                    max_number = number
+                    max_entry = fid.strip()
+        
+        if max_entry:
+            return {
+                "family_id_max_display": max_entry,
+                "family_id_next_suggestion": f"{max_prefix}. {max_number + 1}",
+            }
+        else:
+            return {
+                "family_id_max_display": "(unbekannt)",
+                "family_id_next_suggestion": "",
+            }
     
     def form_valid(self, form) -> HttpResponse:
         """Save new record with metadata and AUTO billing."""

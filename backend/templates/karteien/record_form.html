@@ -79,6 +79,67 @@ Includes autocomplete for parent/child names when creating new records.
     background-color: #fff3cd !important;
     border-color: #ffc107 !important;
   }
+  
+  /* Family prefill options dropdown helper */
+  .family-prefill-helper {
+    position: relative;
+    display: inline-block;
+  }
+  .family-prefill-btn {
+    cursor: pointer;
+    padding: 0.25rem 0.4rem;
+    font-size: 0.85rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    background-color: #f8f9fa;
+    color: #0d6efd;
+    transition: all 0.15s ease;
+  }
+  .family-prefill-btn:hover {
+    background-color: #e9ecef;
+    border-color: #0d6efd;
+  }
+  .family-prefill-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    min-width: 200px;
+    max-width: 350px;
+    max-height: 200px;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    z-index: 1055;
+    display: none;
+  }
+  .family-prefill-dropdown.show {
+    display: block;
+  }
+  .family-prefill-option {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 0.9rem;
+    word-break: break-word;
+  }
+  .family-prefill-option:last-child {
+    border-bottom: none;
+  }
+  .family-prefill-option:hover {
+    background-color: #e9ecef;
+  }
+  .input-with-helper {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+  }
+  .input-with-helper .form-control,
+  .input-with-helper .autocomplete-wrapper {
+    flex: 1;
+  }
+  }
 {% endif %}
   
   /* Month field preview styles */
@@ -232,9 +293,9 @@ Includes autocomplete for parent/child names when creating new records.
               {% for fd in family_discounts %}
               <span class="ms-1">
                 {% if fd.discount.kind == 'PERCENT' %}
-                <span class="badge bg-success">{{ fd.discount.value|floatformat:0 }}%</span>
+                <span class="badge bg-success">{{ fd.discount.badge_text }}</span>
                 {% else %}
-                <span class="badge bg-primary">{{ fd.discount.value|floatformat:2 }}€</span>
+                <span class="badge bg-primary">{{ fd.discount.badge_text }}</span>
                 {% endif %}
                 <small class="text-muted">({{ fd.months_display }})</small>
               </span>
@@ -249,9 +310,9 @@ Includes autocomplete for parent/child names when creating new records.
               {% for rd in record_discounts %}
               <span class="ms-1">
                 {% if rd.discount.kind == 'PERCENT' %}
-                <span class="badge bg-success">{{ rd.discount.value|floatformat:0 }}%</span>
+                <span class="badge bg-success">{{ rd.discount.badge_text }}</span>
                 {% else %}
-                <span class="badge bg-primary">{{ rd.discount.value|floatformat:2 }}€</span>
+                <span class="badge bg-primary">{{ rd.discount.badge_text }}</span>
                 {% endif %}
                 <small class="text-muted">({{ rd.months_display }})</small>
               </span>
@@ -303,6 +364,16 @@ Includes autocomplete for parent/child names when creating new records.
   </div>
   {% endif %}
 
+  {% comment %}Info alert when prefilling from family (create mode){% endcomment %}
+  {% if is_create and prefill_from_family %}
+  <div class="alert alert-info" role="alert">
+    <i class="bi bi-people-fill"></i>
+    <strong>Hinweis:</strong>
+    Felder wurden aus einer bestehenden Familien-Aufzeichnung vorbefüllt{% if prefill_source_year %} ({{ prefill_source_year }}){% endif %}.
+    <strong>Bitte Kind und Geburtsdatum prüfen.</strong>
+  </div>
+  {% endif %}
+
   <!-- Form -->
   <form method="post" novalidate>
     {% csrf_token %}
@@ -335,6 +406,17 @@ Includes autocomplete for parent/child names when creating new records.
             <div class="mb-3">
               <label for="{{ form.family_id.id_for_label }}" class="form-label">
                 FamilyID <span class="text-danger">*</span>
+                {% if is_create %}
+                <button type="button" class="btn btn-link btn-sm p-0 ms-1" 
+                        id="familyIdHelpBtn"
+                        data-bs-toggle="popover" 
+                        data-bs-trigger="click" 
+                        data-bs-html="true"
+                        data-bs-title="FamilyID Hilfe"
+                        data-bs-content="<strong>Max. FamilyID:</strong> {{ family_id_max_display }}{% if family_id_next_suggestion %}<br><strong>Empfehlung für neue Familie:</strong> {{ family_id_next_suggestion }}{% endif %}<hr class='my-2'><small><i class='bi bi-lightbulb'></i> Für eine bestehende Familie zuerst &quot;Eltern&quot; oder &quot;Kind&quot; auswählen – die übrigen Felder werden automatisch vorbefüllt.</small>">
+                  <i class="bi bi-question-circle text-info"></i>
+                </button>
+                {% endif %}
               </label>
               {{ form.family_id }} {% if form.family_id.errors %}
               <div class="invalid-feedback d-block">
@@ -351,9 +433,23 @@ Includes autocomplete for parent/child names when creating new records.
                 Eltern
               </label>
               {% if is_create %}
-              <div class="autocomplete-wrapper" id="parent-autocomplete-wrapper">
-                {{ form.parent_name }}
-                <div class="autocomplete-dropdown" id="parent-autocomplete-dropdown"></div>
+              <div class="input-with-helper">
+                <div class="autocomplete-wrapper" id="parent-autocomplete-wrapper">
+                  {{ form.parent_name }}
+                  <div class="autocomplete-dropdown" id="parent-autocomplete-dropdown"></div>
+                </div>
+                {% if family_prefill_active and family_prefill_options.parent_name|length > 1 %}
+                <div class="family-prefill-helper">
+                  <button type="button" class="family-prefill-btn" data-field="parent_name" title="Aus Familie wählen">
+                    <i class="bi bi-caret-down-fill"></i>
+                  </button>
+                  <div class="family-prefill-dropdown" id="family-prefill-parent_name">
+                    {% for opt in family_prefill_options.parent_name %}
+                    <div class="family-prefill-option" data-value="{{ opt }}">{{ opt }}</div>
+                    {% endfor %}
+                  </div>
+                </div>
+                {% endif %}
               </div>
               {% else %}
               {{ form.parent_name }}
@@ -373,9 +469,23 @@ Includes autocomplete for parent/child names when creating new records.
                 Kind
               </label>
               {% if is_create %}
-              <div class="autocomplete-wrapper" id="child-autocomplete-wrapper">
-                {{ form.child_name }}
-                <div class="autocomplete-dropdown" id="child-autocomplete-dropdown"></div>
+              <div class="input-with-helper">
+                <div class="autocomplete-wrapper" id="child-autocomplete-wrapper">
+                  {{ form.child_name }}
+                  <div class="autocomplete-dropdown" id="child-autocomplete-dropdown"></div>
+                </div>
+                {% if family_prefill_active and family_prefill_options.child_name|length > 1 %}
+                <div class="family-prefill-helper">
+                  <button type="button" class="family-prefill-btn" data-field="child_name" title="Aus Familie wählen">
+                    <i class="bi bi-caret-down-fill"></i>
+                  </button>
+                  <div class="family-prefill-dropdown" id="family-prefill-child_name">
+                    {% for opt in family_prefill_options.child_name %}
+                    <div class="family-prefill-option" data-value="{{ opt }}">{{ opt }}</div>
+                    {% endfor %}
+                  </div>
+                </div>
+                {% endif %}
               </div>
               {% else %}
               {{ form.child_name }}
@@ -386,14 +496,46 @@ Includes autocomplete for parent/child names when creating new records.
               <label for="{{ form.birthdate.id_for_label }}" class="form-label">
                 Geburtsdatum
               </label>
+              {% if is_create and family_prefill_active and family_prefill_options.birthdate|length > 1 %}
+              <div class="input-with-helper">
+                {{ form.birthdate }}
+                <div class="family-prefill-helper">
+                  <button type="button" class="family-prefill-btn" data-field="birthdate" title="Aus Familie wählen">
+                    <i class="bi bi-caret-down-fill"></i>
+                  </button>
+                  <div class="family-prefill-dropdown" id="family-prefill-birthdate">
+                    {% for opt in family_prefill_options.birthdate %}
+                    <div class="family-prefill-option" data-value="{{ opt.value }}">{{ opt.label }}</div>
+                    {% endfor %}
+                  </div>
+                </div>
+              </div>
+              {% else %}
               {{ form.birthdate }}
+              {% endif %}
             </div>
 
             <div class="mb-3">
               <label for="{{ form.address.id_for_label }}" class="form-label">
                 Adresse
               </label>
+              {% if is_create and family_prefill_active and family_prefill_options.address|length > 1 %}
+              <div class="input-with-helper">
+                {{ form.address }}
+                <div class="family-prefill-helper">
+                  <button type="button" class="family-prefill-btn" data-field="address" title="Aus Familie wählen">
+                    <i class="bi bi-caret-down-fill"></i>
+                  </button>
+                  <div class="family-prefill-dropdown" id="family-prefill-address">
+                    {% for opt in family_prefill_options.address %}
+                    <div class="family-prefill-option" data-value="{{ opt }}">{{ opt }}</div>
+                    {% endfor %}
+                  </div>
+                </div>
+              </div>
+              {% else %}
               {{ form.address }}
+              {% endif %}
             </div>
 
             <div class="row">
@@ -401,13 +543,45 @@ Includes autocomplete for parent/child names when creating new records.
                 <label for="{{ form.phone.id_for_label }}" class="form-label">
                   Telefon
                 </label>
+                {% if is_create and family_prefill_active and family_prefill_options.phone|length > 1 %}
+                <div class="input-with-helper">
+                  {{ form.phone }}
+                  <div class="family-prefill-helper">
+                    <button type="button" class="family-prefill-btn" data-field="phone" title="Aus Familie wählen">
+                      <i class="bi bi-caret-down-fill"></i>
+                    </button>
+                    <div class="family-prefill-dropdown" id="family-prefill-phone">
+                      {% for opt in family_prefill_options.phone %}
+                      <div class="family-prefill-option" data-value="{{ opt }}">{{ opt }}</div>
+                      {% endfor %}
+                    </div>
+                  </div>
+                </div>
+                {% else %}
                 {{ form.phone }}
+                {% endif %}
               </div>
               <div class="col-md-6 mb-3">
                 <label for="{{ form.mobile.id_for_label }}" class="form-label">
                   Mobil
                 </label>
+                {% if is_create and family_prefill_active and family_prefill_options.mobile|length > 1 %}
+                <div class="input-with-helper">
+                  {{ form.mobile }}
+                  <div class="family-prefill-helper">
+                    <button type="button" class="family-prefill-btn" data-field="mobile" title="Aus Familie wählen">
+                      <i class="bi bi-caret-down-fill"></i>
+                    </button>
+                    <div class="family-prefill-dropdown" id="family-prefill-mobile">
+                      {% for opt in family_prefill_options.mobile %}
+                      <div class="family-prefill-option" data-value="{{ opt }}">{{ opt }}</div>
+                      {% endfor %}
+                    </div>
+                  </div>
+                </div>
+                {% else %}
                 {{ form.mobile }}
+                {% endif %}
               </div>
             </div>
 
@@ -415,7 +589,23 @@ Includes autocomplete for parent/child names when creating new records.
               <label for="{{ form.email.id_for_label }}" class="form-label">
                 E-Mail
               </label>
+              {% if is_create and family_prefill_active and family_prefill_options.email|length > 1 %}
+              <div class="input-with-helper">
+                {{ form.email }}
+                <div class="family-prefill-helper">
+                  <button type="button" class="family-prefill-btn" data-field="email" title="Aus Familie wählen">
+                    <i class="bi bi-caret-down-fill"></i>
+                  </button>
+                  <div class="family-prefill-dropdown" id="family-prefill-email">
+                    {% for opt in family_prefill_options.email %}
+                    <div class="family-prefill-option" data-value="{{ opt }}">{{ opt }}</div>
+                    {% endfor %}
+                  </div>
+                </div>
+              </div>
+              {% else %}
               {{ form.email }}
+              {% endif %}
             </div>
           </div>
         </div>
@@ -691,6 +881,9 @@ Includes autocomplete for parent/child names when creating new records.
             <h6 class="text-muted mb-3">
               <i class="bi bi-plus-circle"></i> Zusätzliche Fächer (Freitext)
             </h6>
+            <div class="alert alert-warning py-2 mb-3">
+              <small><i class="bi bi-exclamation-triangle"></i> Sektion für Rückwärtskompatibilität. Für neue Datensätze wird die Nutzung nicht empfohlen.</small>
+            </div>
 
             <div class="mb-3">
               <label for="{{ form.extra1.id_for_label }}" class="form-label">
@@ -1294,6 +1487,64 @@ Includes autocomplete for parent/child names when creating new records.
   
   {% if is_create %}
   // ==========================================================================
+  // FamilyID help popover with lazy initialization (waits for Bootstrap to load)
+  // ==========================================================================
+  (function() {
+    const familyIdHelpBtn = document.getElementById('familyIdHelpBtn');
+    if (!familyIdHelpBtn) return;
+    
+    // Fallback message data (from Django template)
+    const maxFamilyId = '{{ family_id_max_display|escapejs }}';
+    const nextSuggestion = '{{ family_id_next_suggestion|escapejs }}';
+    
+    function showFallbackAlert() {
+      let msg = 'FamilyID Hilfe\n\nMax. FamilyID: ' + maxFamilyId;
+      if (nextSuggestion) {
+        msg += '\nEmpfehlung für neue Familie: ' + nextSuggestion;
+      }
+      msg += '\n\nFür eine bestehende Familie zuerst "Eltern" oder "Kind" auswählen – die übrigen Felder werden automatisch vorbefüllt.';
+      alert(msg);
+    }
+    
+    // Lazy-init on first click: Bootstrap may not be loaded at script parse time
+    familyIdHelpBtn.addEventListener('click', function(evt) {
+      evt.preventDefault();
+      evt.stopPropagation();
+      
+      // Check if already initialized as popover
+      if (familyIdHelpBtn.dataset.popoverInit === '1') {
+        // Popover already created, Bootstrap handles the toggle via data-bs-toggle
+        // But since we prevented default, manually toggle it
+        const popoverInstance = bootstrap.Popover.getInstance(familyIdHelpBtn);
+        if (popoverInstance) {
+          popoverInstance.toggle();
+        }
+        return;
+      }
+      
+      // First click: try to init Bootstrap Popover if available
+      if (typeof bootstrap !== 'undefined' && bootstrap.Popover) {
+        try {
+          const popover = new bootstrap.Popover(familyIdHelpBtn, {
+            container: 'body',
+            placement: 'right',
+            trigger: 'click'
+          });
+          familyIdHelpBtn.dataset.popoverInit = '1';
+          // Show immediately on this first click
+          popover.show();
+          return;
+        } catch (e) {
+          console.warn('FamilyID popover init failed, using fallback:', e);
+        }
+      }
+      
+      // Fallback: Bootstrap not available or init failed
+      showFallbackAlert();
+    });
+  })();
+  
+  // ==========================================================================
   // Autocomplete functionality for parent/child names (create mode only)
   // ==========================================================================
   
@@ -1576,6 +1827,90 @@ Includes autocomplete for parent/child names when creating new records.
   if (childInput && childDropdown) {
     setupKeyboardNav(childInput, childDropdown);
   }
+  
+  // ==========================================================================
+  // Family Prefill Options Dropdown (when prefill_family_id is provided)
+  // ==========================================================================
+  (function() {
+    // Map field names to input IDs
+    const fieldInputMap = {
+      'parent_name': 'id_parent_name',
+      'child_name': 'id_child_name',
+      'birthdate': 'id_birthdate',
+      'address': 'id_address',
+      'phone': 'id_phone',
+      'mobile': 'id_mobile',
+      'email': 'id_email'
+    };
+    
+    // Get all family prefill buttons
+    const prefillBtns = document.querySelectorAll('.family-prefill-btn');
+    
+    // Close all family prefill dropdowns
+    function closeFamilyPrefillDropdowns() {
+      document.querySelectorAll('.family-prefill-dropdown').forEach(dd => {
+        dd.classList.remove('show');
+      });
+    }
+    
+    // Handle click outside to close dropdowns
+    document.addEventListener('click', function(e) {
+      if (!e.target.closest('.family-prefill-helper')) {
+        closeFamilyPrefillDropdowns();
+      }
+    });
+    
+    // Set up each prefill button
+    prefillBtns.forEach(btn => {
+      const fieldName = btn.dataset.field;
+      const dropdown = document.getElementById('family-prefill-' + fieldName);
+      const inputId = fieldInputMap[fieldName];
+      const input = inputId ? document.getElementById(inputId) : null;
+      
+      if (!dropdown || !input) return;
+      
+      // Toggle dropdown on button click
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Close other dropdowns
+        document.querySelectorAll('.family-prefill-dropdown').forEach(dd => {
+          if (dd !== dropdown) dd.classList.remove('show');
+        });
+        
+        dropdown.classList.toggle('show');
+      });
+      
+      // Handle option selection
+      const options = dropdown.querySelectorAll('.family-prefill-option');
+      options.forEach(opt => {
+        opt.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          
+          const value = this.dataset.value;
+          input.value = value;
+          
+          // Add prefilled highlight
+          input.classList.add('prefilled-field');
+          
+          // Close dropdown
+          dropdown.classList.remove('show');
+          
+          // Trigger input event for any listeners (e.g., billing preview)
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          
+          // Add listener to remove highlight on manual change
+          input.addEventListener('input', function onManualChange() {
+            input.classList.remove('prefilled-field');
+            input.removeEventListener('input', onManualChange);
+          }, { once: true });
+        });
+      });
+    });
+  })();
   
   {% endif %}
   
@@ -2177,7 +2512,23 @@ Includes autocomplete for parent/child names when creating new records.
   
   // Month click handler for explanation modal
   function showMonthExplanation(month) {
-    const modal = new bootstrap.Modal(document.getElementById('monthExplanationModal'));
+    // Check if Bootstrap Modal is available
+    if (typeof bootstrap === 'undefined' || !bootstrap.Modal) {
+      console.warn('Bootstrap Modal not available, skipping month explanation modal');
+      return;
+    }
+    
+    const modalEl = document.getElementById('monthExplanationModal');
+    if (!modalEl) return;
+    
+    let modal;
+    try {
+      modal = new bootstrap.Modal(modalEl);
+    } catch (e) {
+      console.warn('Failed to create month explanation modal:', e);
+      return;
+    }
+    
     const monthSpan = document.getElementById('monthExplanationMonth');
     const loadingEl = document.getElementById('monthExplanationLoading');
     const contentEl = document.getElementById('monthExplanationContent');

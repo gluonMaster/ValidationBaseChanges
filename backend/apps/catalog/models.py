@@ -294,6 +294,18 @@ class Discount(models.Model):
         else:
             return f"{self.value:.2f} € – {self.description}" if self.description else f"{self.value:.2f} €"
 
+    @property
+    def badge_text(self) -> str:
+        """
+        Return formatted display text for badge:
+        - PERCENT: "25%" (value * 100, rounded to integer)
+        - FIXED: "10.00 €" (value as EUR amount)
+        """
+        if self.kind == DiscountKind.PERCENT:
+            return f"{self.value * 100:.0f}%"
+        else:
+            return f"{self.value:.2f} €"
+
     def clean(self):
         super().clean()
         if self.kind == DiscountKind.PERCENT:

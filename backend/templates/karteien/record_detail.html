@@ -41,6 +41,71 @@ Shows all fields of a single KarteiRecord.
     background-color: #0d6efd;
     color: white;
   }
+  /* History timeline styles */
+  .history-timeline {
+    position: relative;
+    padding-left: 30px;
+  }
+  .history-timeline::before {
+    content: "";
+    position: absolute;
+    left: 10px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #dee2e6;
+  }
+  .history-event {
+    position: relative;
+    padding-bottom: 20px;
+  }
+  .history-event::before {
+    content: "";
+    position: absolute;
+    left: -24px;
+    top: 4px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #6c757d;
+    border: 2px solid #fff;
+  }
+  .history-event.event-approve::before {
+    background: #198754;
+  }
+  .history-event.event-decline::before {
+    background: #dc3545;
+  }
+  .history-event.event-create::before {
+    background: #0d6efd;
+  }
+  .history-event.event-change::before {
+    background: #ffc107;
+  }
+  .history-event.event-ruck::before {
+    background: #6c757d;
+  }
+  .history-event.event-import::before {
+    background: #6c757d;
+  }
+  .history-changes {
+    font-size: 0.9rem;
+  }
+  .change-item {
+    padding: 4px 0;
+    border-bottom: 1px dashed #eee;
+  }
+  .change-item:last-child {
+    border-bottom: none;
+  }
+  .old-value {
+    text-decoration: line-through;
+    color: #dc3545;
+  }
+  .new-value {
+    color: #198754;
+    font-weight: 500;
+  }
 </style>
 {% endblock %}
 
@@ -460,9 +525,9 @@ Shows all fields of a single KarteiRecord.
             <li class="list-group-item d-flex justify-content-between align-items-center py-2">
               <div>
                 {% if fd.discount.kind == 'PERCENT' %}
-                <span class="badge bg-success me-1">{{ fd.discount.value|floatformat:0 }}%</span>
+                <span class="badge bg-success me-1">{{ fd.discount.badge_text }}</span>
                 {% else %}
-                <span class="badge bg-primary me-1">{{ fd.discount.value|floatformat:2 }} €</span>
+                <span class="badge bg-primary me-1">{{ fd.discount.badge_text }}</span>
                 {% endif %}
                 {% if fd.discount.description %}
                 <span class="text-muted small">{{ fd.discount.description }}</span>
@@ -489,9 +554,9 @@ Shows all fields of a single KarteiRecord.
             <li class="list-group-item d-flex justify-content-between align-items-center py-2">
               <div>
                 {% if rd.discount.kind == 'PERCENT' %}
-                <span class="badge bg-success me-1">{{ rd.discount.value|floatformat:0 }}%</span>
+                <span class="badge bg-success me-1">{{ rd.discount.badge_text }}</span>
                 {% else %}
-                <span class="badge bg-primary me-1">{{ rd.discount.value|floatformat:2 }} €</span>
+                <span class="badge bg-primary me-1">{{ rd.discount.badge_text }}</span>
                 {% endif %}
                 {% if rd.discount.description %}
                 <span class="text-muted small">{{ rd.discount.description }}</span>
@@ -573,14 +638,81 @@ Shows all fields of a single KarteiRecord.
       >
         <i class="bi bi-clock-history"></i>
         Historie
+        {% if has_history %}
+        <span class="badge bg-secondary ms-1">{{ history_entries|length }} Ereignisse</span>
+        {% endif %}
       </button>
     </div>
     <div id="historyCollapse" class="collapse">
       <div class="card-body">
-        {% if record.history_raw %}
-        <pre class="mb-0" style="white-space: pre-wrap; font-size: 0.85rem">
-{{ record.history_raw }}</pre
-        >
+        {% if has_history %}
+          {% if history_entries %}
+          <div class="history-timeline">
+            {% for entry in history_entries %}
+            <div class="history-event event-{{ entry.event_type|lower }}">
+              <div class="d-flex justify-content-between align-items-start mb-2">
+                <div>
+                  {% if entry.event_type == "APPROVE" %}
+                  <span class="badge bg-success">
+                    <i class="bi bi-check-circle"></i> Genehmigt
+                  </span>
+                  {% elif entry.event_type == "DECLINE" %}
+                  <span class="badge bg-danger">
+                    <i class="bi bi-x-circle"></i> Abgelehnt
+                  </span>
+                  {% elif entry.event_type == "CREATE" %}
+                  <span class="badge bg-primary">
+                    <i class="bi bi-plus-circle"></i> Erstellt
+                  </span>
+                  {% elif entry.event_type == "RUCK" %}
+                  <span class="badge bg-secondary">
+                    <i class="bi bi-arrow-counterclockwise"></i> Rückwirkend
+                  </span>
+                  {% elif entry.event_type == "IMPORT" %}
+                  <span class="badge bg-secondary">
+                    <i class="bi bi-download"></i> Importiert
+                  </span>
+                  {% else %}
+                  <span class="badge bg-warning">
+                    <i class="bi bi-pencil"></i> Geändert
+                  </span>
+                  {% endif %}
+                </div>
+                <small class="text-muted">
+                  {% if entry.event_time %}{{ entry.event_time|date:"d.m.Y H:i" }}{% endif %}
+                </small>
+              </div>
+
+              {% if entry.comment %}
+              <div class="alert alert-light mb-2 py-2">
+                <i class="bi bi-chat-left-quote"></i>
+                {{ entry.comment }}
+              </div>
+              {% endif %}
+
+              {% if entry.changes %}
+              <div class="history-changes bg-light p-2 rounded">
+                {% for field, values in entry.changes.items %}
+                <div class="change-item">
+                  <strong>{{ field }}:</strong>
+                  <span class="old-value">{{ values.old|default:"(leer)" }}</span>
+                  →
+                  <span class="new-value">{{ values.new|default:"(leer)" }}</span>
+                </div>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+          {% elif raw_history %}
+          <!-- Fallback: Show raw history if parsing failed or returned empty -->
+          <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i>
+            Die Historie konnte nicht vollständig geparst werden. Rohdaten:
+          </div>
+          <pre class="bg-light p-3 rounded mb-0" style="max-height: 400px; overflow-y: auto; white-space: pre-wrap; font-size: 0.85rem">{{ raw_history }}</pre>
+          {% endif %}
         {% else %}
         <p class="text-muted mb-0">Keine Historie vorhanden.</p>
         {% endif %}
@@ -604,7 +736,21 @@ Shows all fields of a single KarteiRecord.
 {% block extra_js %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-  const modal = new bootstrap.Modal(document.getElementById('monthBreakdownModal'));
+  // Check if Bootstrap Modal is available
+  const modalEl = document.getElementById('monthBreakdownModal');
+  if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) {
+    console.warn('Bootstrap Modal not available for month breakdown');
+    return;
+  }
+  
+  let modal;
+  try {
+    modal = new bootstrap.Modal(modalEl);
+  } catch (e) {
+    console.warn('Failed to create month breakdown modal:', e);
+    return;
+  }
+  
   const breakdownContent = document.getElementById('breakdownContent');
   const breakdownMonthNum = document.getElementById('breakdownMonthNum');
   

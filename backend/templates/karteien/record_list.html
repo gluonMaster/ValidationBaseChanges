@@ -38,10 +38,24 @@ Supports live-search via AJAX for instant filtering.
 
     <!-- Filters -->
     <div class="card mb-4">
-        <div class="card-header">
-            <i class="bi bi-funnel"></i>
-            Filter
+        <div class="card-header d-flex justify-content-between align-items-center" 
+             role="button" 
+             data-bs-toggle="collapse" 
+             data-bs-target="#filterCollapse" 
+             aria-expanded="{% if current_filters.family_id or current_filters.parent or current_filters.child or current_filters.status or current_filters.contract_type or current_filters.contract_status or current_filters.subject_query or current_filters.teacher_query %}true{% else %}false{% endif %}"
+             aria-controls="filterCollapse"
+             id="filterCollapseHeader">
+            <span>
+                <i class="bi bi-funnel"></i>
+                Filter
+                {% if current_filters.family_id or current_filters.parent or current_filters.child or current_filters.status or current_filters.contract_type or current_filters.contract_status or current_filters.subject_query or current_filters.teacher_query %}
+                <span class="badge bg-primary ms-2" id="activeFilterBadge">Aktiv</span>
+                {% endif %}
+                <small class="text-muted ms-2" id="filterHint">{% if current_filters.family_id or current_filters.parent or current_filters.child or current_filters.status or current_filters.contract_type or current_filters.contract_status or current_filters.subject_query or current_filters.teacher_query %}Klicken zum Schließen{% else %}Klicken zum Öffnen{% endif %}</small>
+            </span>
+            <i class="bi bi-chevron-{% if current_filters.family_id or current_filters.parent or current_filters.child or current_filters.status or current_filters.contract_type or current_filters.contract_status or current_filters.subject_query or current_filters.teacher_query %}up{% else %}down{% endif %}" id="filterCollapseIcon"></i>
         </div>
+        <div class="collapse{% if current_filters.family_id or current_filters.parent or current_filters.child or current_filters.status or current_filters.contract_type or current_filters.contract_status or current_filters.subject_query or current_filters.teacher_query %} show{% endif %}" id="filterCollapse">
         <div class="card-body">
             <form method="get" id="filter-form" class="row g-3">
                 <div class="col-md-2">
@@ -105,6 +119,8 @@ Supports live-search via AJAX for instant filtering.
                         <option value="">Alle</option>
                         <option value="active" {% if current_filters.contract_status == "active" %}selected{% endif %}>Aktiv</option>
                         <option value="terminated" {% if current_filters.contract_status == "terminated" %}selected{% endif %}>Gekündigt</option>
+                        <option value="active_sepa" {% if current_filters.contract_status == "active_sepa" %}selected{% endif %}>Aktiv-SEPA</option>
+                        <option value="terminated_sepa" {% if current_filters.contract_status == "terminated_sepa" %}selected{% endif %}>Gekündigt-SEPA</option>
                     </select>
                 </div>
                 <div class="col-md-6 d-flex align-items-end flex-wrap gap-2">
@@ -123,7 +139,82 @@ Supports live-search via AJAX for instant filtering.
                     </button>
                 </div>
             </div>
+            <!-- Subject & Teacher filters row -->
+            <div class="row g-3 mt-2 border-top pt-3">
+                <!-- Unterricht (Subject) dropdown -->
+                <div class="col-md-4">
+                    <label class="form-label">Unterricht</label>
+                    <div class="dropdown">
+                        <button class="btn btn-outline-secondary w-100 dropdown-toggle d-flex justify-content-between align-items-center{% if current_filters.subject_query %} btn-primary text-white{% endif %}" 
+                                type="button" id="subjectDropdownBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                            <span>
+                                <i class="bi bi-book"></i> Unterricht
+                                {% if current_filters.subject_query %}<span class="badge bg-light text-dark ms-1">1</span>{% endif %}
+                            </span>
+                        </button>
+                        <div class="dropdown-menu p-3" style="min-width: 280px;" aria-labelledby="subjectDropdownBtn">
+                            <div class="mb-2">
+                                <label class="form-label small text-muted mb-1">Semester</label>
+                                <div class="btn-group w-100" role="group" aria-label="Subject semester selection">
+                                    <input type="radio" class="btn-check" name="subject_semester_radio" id="subject_sem_all" value="" autocomplete="off" {% if not current_filters.subject_semester %}checked{% endif %}>
+                                    <label class="btn btn-outline-secondary btn-sm" for="subject_sem_all">Alle</label>
+                                    <input type="radio" class="btn-check" name="subject_semester_radio" id="subject_sem_1" value="1" autocomplete="off" {% if current_filters.subject_semester == "1" %}checked{% endif %}>
+                                    <label class="btn btn-outline-secondary btn-sm" for="subject_sem_1">1. Sem</label>
+                                    <input type="radio" class="btn-check" name="subject_semester_radio" id="subject_sem_2" value="2" autocomplete="off" {% if current_filters.subject_semester == "2" %}checked{% endif %}>
+                                    <label class="btn btn-outline-secondary btn-sm" for="subject_sem_2">2. Sem</label>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="form-label small text-muted mb-1">Fach suchen</label>
+                                <input type="text" class="form-control form-control-sm" id="subject_query_input" 
+                                       placeholder="Fach suchen..." value="{{ current_filters.subject_query }}">
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Hidden inputs for form submission -->
+                    <input type="hidden" name="subject_semester" id="subject_semester" class="filter-input" value="{{ current_filters.subject_semester }}">
+                    <input type="hidden" name="subject_query" id="subject_query" class="filter-input" value="{{ current_filters.subject_query }}">
+                </div>
+                <!-- Lehrer (Teacher) dropdown -->
+                <div class="col-md-4">
+                    <label class="form-label">Lehrer</label>
+                    <div class="dropdown">
+                        <button class="btn btn-outline-secondary w-100 dropdown-toggle d-flex justify-content-between align-items-center{% if current_filters.teacher_query %} btn-primary text-white{% endif %}" 
+                                type="button" id="teacherDropdownBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                            <span>
+                                <i class="bi bi-person-badge"></i> Lehrer
+                                {% if current_filters.teacher_query %}<span class="badge bg-light text-dark ms-1">1</span>{% endif %}
+                            </span>
+                        </button>
+                        <div class="dropdown-menu p-3" style="min-width: 280px;" aria-labelledby="teacherDropdownBtn">
+                            <div class="mb-2">
+                                <label class="form-label small text-muted mb-1">Semester</label>
+                                <div class="btn-group w-100" role="group" aria-label="Teacher semester selection">
+                                    <input type="radio" class="btn-check" name="teacher_semester_radio" id="teacher_sem_all" value="" autocomplete="off" {% if not current_filters.teacher_semester %}checked{% endif %}>
+                                    <label class="btn btn-outline-secondary btn-sm" for="teacher_sem_all">Alle</label>
+                                    <input type="radio" class="btn-check" name="teacher_semester_radio" id="teacher_sem_1" value="1" autocomplete="off" {% if current_filters.teacher_semester == "1" %}checked{% endif %}>
+                                    <label class="btn btn-outline-secondary btn-sm" for="teacher_sem_1">1. Sem</label>
+                                    <input type="radio" class="btn-check" name="teacher_semester_radio" id="teacher_sem_2" value="2" autocomplete="off" {% if current_filters.teacher_semester == "2" %}checked{% endif %}>
+                                    <label class="btn btn-outline-secondary btn-sm" for="teacher_sem_2">2. Sem</label>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="form-label small text-muted mb-1">Lehrer suchen</label>
+                                <input type="text" class="form-control form-control-sm" id="teacher_query_input" 
+                                       placeholder="Lehrer suchen..." value="{{ current_filters.teacher_query }}">
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Hidden inputs for form submission -->
+                    <input type="hidden" name="teacher_semester" id="teacher_semester" class="filter-input" value="{{ current_filters.teacher_semester }}">
+                    <input type="hidden" name="teacher_query" id="teacher_query" class="filter-input" value="{{ current_filters.teacher_query }}">
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <span class="text-muted small"><i class="bi bi-info-circle"></i> Filter werden live angewendet</span>
+                </div>
+            </div>
         </div>
+        </div><!-- end collapse -->
     </div>
 
     <!-- Results -->
@@ -218,6 +309,10 @@ Supports live-search via AJAX for instant filtering.
             status: document.getElementById('status').value,
             contract_type: document.getElementById('contract_type').value,
             contract_status: document.getElementById('contract_status').value,
+            subject_semester: document.getElementById('subject_semester').value,
+            subject_query: document.getElementById('subject_query').value,
+            teacher_semester: document.getElementById('teacher_semester').value,
+            teacher_query: document.getElementById('teacher_query').value,
             page: currentPage
         };
     }
@@ -366,6 +461,19 @@ Supports live-search via AJAX for instant filtering.
             document.getElementById('status').value = '';
             document.getElementById('contract_type').value = '';
             document.getElementById('contract_status').value = '';
+            // Reset subject/teacher filters
+            document.getElementById('subject_semester').value = '';
+            document.getElementById('subject_query').value = '';
+            document.getElementById('subject_query_input').value = '';
+            document.getElementById('teacher_semester').value = '';
+            document.getElementById('teacher_query').value = '';
+            document.getElementById('teacher_query_input').value = '';
+            // Reset radio buttons to "Alle"
+            document.getElementById('subject_sem_all').checked = true;
+            document.getElementById('teacher_sem_all').checked = true;
+            // Update dropdown button styles
+            updateDropdownButtonStyle('subject');
+            updateDropdownButtonStyle('teacher');
             currentPage = 1;
             performSearch(true);
         });
@@ -397,6 +505,76 @@ Supports live-search via AJAX for instant filtering.
         const pageParam = urlParams.get('page');
         if (pageParam) {
             currentPage = parseInt(pageParam, 10) || 1;
+        }
+        
+        // Subject filter: sync radio and text input to hidden inputs
+        initDropdownFilter('subject');
+        initDropdownFilter('teacher');
+        
+        // Initialize filter collapse toggle icon/hint
+        initFilterCollapse();
+    }
+    
+    /**
+     * Initialize filter collapse behavior (icon and hint toggle)
+     */
+    function initFilterCollapse() {
+        const filterCollapse = document.getElementById('filterCollapse');
+        const collapseIcon = document.getElementById('filterCollapseIcon');
+        const filterHint = document.getElementById('filterHint');
+        
+        if (!filterCollapse || !collapseIcon || !filterHint) return;
+        
+        filterCollapse.addEventListener('shown.bs.collapse', function() {
+            collapseIcon.classList.remove('bi-chevron-down');
+            collapseIcon.classList.add('bi-chevron-up');
+            filterHint.textContent = 'Klicken zum Schließen';
+        });
+        
+        filterCollapse.addEventListener('hidden.bs.collapse', function() {
+            collapseIcon.classList.remove('bi-chevron-up');
+            collapseIcon.classList.add('bi-chevron-down');
+            filterHint.textContent = 'Klicken zum Öffnen';
+        });
+    }
+    
+    /**
+     * Initialize dropdown filter (subject or teacher)
+     */
+    function initDropdownFilter(prefix) {
+        const semesterRadios = document.querySelectorAll(`input[name="${prefix}_semester_radio"]`);
+        const queryInput = document.getElementById(`${prefix}_query_input`);
+        const hiddenSemester = document.getElementById(`${prefix}_semester`);
+        const hiddenQuery = document.getElementById(`${prefix}_query`);
+        
+        // Semester radio change
+        semesterRadios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                hiddenSemester.value = this.value;
+                debouncedSearch();
+            });
+        });
+        
+        // Query input change
+        queryInput.addEventListener('input', function() {
+            hiddenQuery.value = this.value;
+            updateDropdownButtonStyle(prefix);
+            debouncedSearch();
+        });
+    }
+    
+    /**
+     * Update dropdown button style based on whether filter is active
+     */
+    function updateDropdownButtonStyle(prefix) {
+        const queryValue = document.getElementById(`${prefix}_query`).value;
+        const btn = document.getElementById(`${prefix}DropdownBtn`);
+        if (queryValue) {
+            btn.classList.remove('btn-outline-secondary');
+            btn.classList.add('btn-primary', 'text-white');
+        } else {
+            btn.classList.remove('btn-primary', 'text-white');
+            btn.classList.add('btn-outline-secondary');
         }
     }
     

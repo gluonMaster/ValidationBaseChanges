@@ -284,8 +284,17 @@ class SuperadminState(models.Model):
 
     last_seen_id = models.PositiveIntegerField(
         default=0,
-        help_text="Last seen record ID. Records with ID > this value "
-                  "are considered 'new' in NeuList view.",
+        help_text="Last seen record ID (legacy/fallback). Records with ID > this value "
+                  "are considered 'new' in NeuList view. For proper per-year tracking, "
+                  "see last_seen_by_year.",
+    )
+
+    last_seen_by_year = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Mapping: year (as string) -> last_seen_id for NeuList. "
+                  "Enables correct per-year tracking since record IDs are only unique "
+                  "within a year (domain key is (year, id)).",
     )
 
     last_seen_date = models.DateTimeField(

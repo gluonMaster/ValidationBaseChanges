@@ -910,59 +910,86 @@ def get_or_create_superadmin_state(user: User) -> SuperadminState:
     return state
 
 
-def get_new_records(user: User, year: int | None = None) -> list[KarteiRecord]:
+def _get_last_seen_id_for_year(state: SuperadminState, year: int) -> int:
     """
-    Get records that are "new" for the given Superadmin.
+    Get the last_seen_id for a specific year.
 
-    A record is "new" if its ID is greater than the user's last_seen_id.
+    Uses the per-year tracking in last_seen_by_year if available.
+    If the year key doesn't exist, returns 0 (meaning no records have been
+    "seen" for this year yet).
+
+    Note: We intentionally do NOT fall back to the legacy last_seen_id field,
+    because that value may come from a different year and cause incorrect
+    filtering (e.g., legacy last_seen_id=1000 from year 2025 would hide
+    all records with id<=1000 in year 2026, even though IDs restart per year).
+
+    Args:
+        state: The SuperadminState instance.
+        year: The year to get the last_seen_id for.
+
+    Returns:
+        The last_seen_id for the given year, or 0 if not yet tracked.
+    """
+    year_key = str(year)
+    if state.last_seen_by_year and year_key in state.last_seen_by_year:
+        return state.last_seen_by_year[year_key]
+    # Year not yet tracked - return 0 (show all records as "new" for this year)
+    return 0
+
+
+def get_new_records(user: User, year: int) -> list[KarteiRecord]:
+    """
+    Get records that are "new" for the given Superadmin and year.
+
+    A record is "new" if its ID is greater than the user's per-year last_seen_id.
     Mirrors VBA valid_NeuList.RefreshNeuList logic.
+
+    Note: Since record IDs are only unique within a year (domain key is (year, id)),
+    we now track last_seen_id per-year in last_seen_by_year JSONField.
 
     Args:
         user: The Superadmin user.
-        year: Optional year filter.
+        year: The year to filter by (required).
 
     Returns:
-        List of new KarteiRecord instances.
+        List of new KarteiRecord instances for the given year.
     """
     state = get_or_create_superadmin_state(user)
-    last_seen_id = state.last_seen_id
+    last_seen_id = _get_last_seen_id_for_year(state, year)
 
-    qs = KarteiRecord.objects.filter(id__gt=last_seen_id).order_by("id")
-    if year:
-        qs = qs.filter(year=year)
+    qs = KarteiRecord.objects.filter(year=year, id__gt=last_seen_id).order_by("id")
 
     return list(qs)
 
 
-def get_new_records_count(user: User, year: int | None = None) -> int:
+def get_new_records_count(user: User, year: int) -> int:
     """
-    Get count of new records for a Superadmin.
+    Get count of new records for a Superadmin and year.
 
     Args:
         user: The Superadmin user.
-        year: Optional year filter.
+        year: The year to filter by (required).
 
     Returns:
-        Count of new records.
+        Count of new records for the given year.
     """
     state = get_or_create_superadmin_state(user)
-    
-    qs = KarteiRecord.objects.filter(id__gt=state.last_seen_id)
-    if year:
-        qs = qs.filter(year=year)
-    
-    return qs.count()
+    last_seen_id = _get_last_seen_id_for_year(state, year)
+
+    return KarteiRecord.objects.filter(year=year, id__gt=last_seen_id).count()
 
 
-def update_last_seen_id(user: User, max_id: int | None = None) -> None:
+def update_last_seen_id(user: User, year: int, max_id: int | None = None) -> None:
     """
-    Update the last seen ID for a Superadmin.
+    Update the last seen ID for a Superadmin for a specific year.
 
-    If max_id is None, it's set to the current maximum ID in the database.
+    If max_id is None, it's set to the current maximum ID for the given year.
+    Updates both the per-year tracking (last_seen_by_year) and legacy last_seen_id.
 
     Args:
         user: The Superadmin user.
-        max_id: The new last_seen_id value, or None to use max.
+        year: The year to update last_seen_id for (required).
+        max_id: The new last_seen_id value, or None to use max for the year.
     """
     from django.db.models import Max
     from django.utils import timezone
@@ -970,9 +997,15 @@ def update_last_seen_id(user: User, max_id: int | None = None) -> None:
     state = get_or_create_superadmin_state(user)
 
     if max_id is None:
-        result = KarteiRecord.objects.aggregate(Max("id"))
+        result = KarteiRecord.objects.filter(year=year).aggregate(Max("id"))
         max_id = result["id__max"] or 0
 
+    # Update per-year tracking
+    if state.last_seen_by_year is None:
+        state.last_seen_by_year = {}
+    state.last_seen_by_year[str(year)] = max_id
+
+    # Also update legacy field for compatibility/debugging
     state.last_seen_id = max_id
     state.last_seen_date = timezone.now()
-    state.save(update_fields=["last_seen_id", "last_seen_date", "updated_at"])
+    state.save(update_fields=["last_seen_id", "last_seen_by_year", "last_seen_date", "updated_at"])

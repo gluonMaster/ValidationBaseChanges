@@ -351,6 +351,9 @@ class UserRecordHistoryView(UserRoleMixin, DetailView):
     - Chronological list of history events
     - For each event: date/time, user, changed fields (old → new), comment
     
+    If HistoryEvent records are not available but history_raw exists,
+    falls back to parsing history_raw directly.
+    
     GET /user/record/<pk>/history/
     """
     
@@ -369,15 +372,35 @@ class UserRecordHistoryView(UserRoleMixin, DetailView):
         ).select_related("user").order_by("-event_time", "-id")
         
         # Parse and format events for display
-        context["history_events"] = [
-            self._format_event(event) for event in events
-        ]
+        formatted_events = [self._format_event(event) for event in events]
+        
+        # If no HistoryEvent records but we have raw history, parse it
+        history_entries_from_raw = []
+        raw_history_fallback = None
+        
+        if not formatted_events and record.history_raw:
+            from apps.history.services import parse_raw_history
+            try:
+                parsed = parse_raw_history(record.history_raw)
+                if parsed:
+                    history_entries_from_raw = parsed
+                else:
+                    # Parsing returned empty - show raw as fallback
+                    raw_history_fallback = record.history_raw
+            except Exception:
+                # Parsing failed - show raw as fallback
+                raw_history_fallback = record.history_raw
+        
+        context["history_events"] = formatted_events
+        context["history_entries_from_raw"] = history_entries_from_raw
+        context["raw_history"] = raw_history_fallback
         
         # Total events count
-        context["total_events"] = events.count()
+        context["total_events"] = len(formatted_events) or len(history_entries_from_raw)
         
         # Check if there's raw history but no parsed events
         context["has_raw_history"] = bool(record.history_raw)
+        context["has_history"] = bool(formatted_events or history_entries_from_raw or record.history_raw)
         
         return context
     

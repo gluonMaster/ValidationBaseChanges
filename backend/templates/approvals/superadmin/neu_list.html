@@ -59,6 +59,7 @@ Shows records with ID > last_seen_id for the current Superadmin.
                 <div class="col-auto">
                     <form method="post" action="{% url 'approvals:superadmin_mark_seen' %}" class="d-inline">
                         {% csrf_token %}
+                        <input type="hidden" name="year" value="{{ current_year }}">
                         <button type="submit" class="btn btn-success">
                             <i class="bi bi-check-all"></i>
                             Alle als gesehen markieren
@@ -73,8 +74,8 @@ Shows records with ID > last_seen_id for the current Superadmin.
     <div class="alert alert-info mb-4">
         <i class="bi bi-info-circle"></i>
         <strong>Info:</strong>
-        Diese Liste zeigt alle Datensätze mit einer ID größer als {{ last_seen_id }}.
-        Klicken Sie auf "Alle als gesehen markieren", um die Liste zurückzusetzen.
+        Diese Liste zeigt alle Datensätze für Jahr {{ current_year }} mit einer ID größer als {{ last_seen_id }}.
+        Klicken Sie auf "Alle als gesehen markieren", um die Liste für dieses Jahr zurückzusetzen.
     </div>
 
     <!-- Results -->

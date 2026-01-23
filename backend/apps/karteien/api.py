@@ -469,13 +469,67 @@ def live_search_api(request: HttpRequest) -> JsonResponse:
         elif contract_type == "yearly":
             qs = qs.filter(is_monthly_contract=False)
     
-    # Filter by contract status (active/terminated)
+    # Filter by contract status (active/terminated/active_sepa/terminated_sepa)
     contract_status = request.GET.get("contract_status")
     if contract_status:
         if contract_status == "active":
             qs = qs.filter(is_contract_terminated=False)
         elif contract_status == "terminated":
             qs = qs.filter(is_contract_terminated=True)
+        elif contract_status == "active_sepa":
+            qs = qs.filter(is_contract_terminated=False, sepa_marker__iexact="SEPA")
+        elif contract_status == "terminated_sepa":
+            qs = qs.filter(is_contract_terminated=True, sepa_marker__iexact="SEPA")
+    
+    # Filter by subject (Unterricht)
+    subject_query = request.GET.get("subject_query", "").strip()
+    subject_semester = request.GET.get("subject_semester", "")
+    if subject_query:
+        if subject_semester == "1":
+            qs = qs.filter(
+                Q(subject1__icontains=subject_query) |
+                Q(subject1_ref__name__icontains=subject_query)
+            )
+        elif subject_semester == "2":
+            qs = qs.filter(
+                Q(subject2__icontains=subject_query) |
+                Q(subject2_ref__name__icontains=subject_query)
+            )
+        else:
+            # Both semesters
+            qs = qs.filter(
+                Q(subject1__icontains=subject_query) |
+                Q(subject1_ref__name__icontains=subject_query) |
+                Q(subject2__icontains=subject_query) |
+                Q(subject2_ref__name__icontains=subject_query)
+            )
+    
+    # Filter by teacher (Lehrer)
+    teacher_query = request.GET.get("teacher_query", "").strip()
+    teacher_semester = request.GET.get("teacher_semester", "")
+    if teacher_query:
+        if teacher_semester == "1":
+            qs = qs.filter(
+                Q(teacher1_legacy_name__icontains=teacher_query) |
+                Q(teacher1_ref__first_name__icontains=teacher_query) |
+                Q(teacher1_ref__last_name__icontains=teacher_query)
+            )
+        elif teacher_semester == "2":
+            qs = qs.filter(
+                Q(teacher2_legacy_name__icontains=teacher_query) |
+                Q(teacher2_ref__first_name__icontains=teacher_query) |
+                Q(teacher2_ref__last_name__icontains=teacher_query)
+            )
+        else:
+            # Both semesters
+            qs = qs.filter(
+                Q(teacher1_legacy_name__icontains=teacher_query) |
+                Q(teacher1_ref__first_name__icontains=teacher_query) |
+                Q(teacher1_ref__last_name__icontains=teacher_query) |
+                Q(teacher2_legacy_name__icontains=teacher_query) |
+                Q(teacher2_ref__first_name__icontains=teacher_query) |
+                Q(teacher2_ref__last_name__icontains=teacher_query)
+            )
     
     # Order results
     qs = qs.order_by("family_id", "parent_name", "child_name")
