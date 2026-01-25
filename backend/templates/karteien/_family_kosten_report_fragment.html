@@ -1,0 +1,422 @@
+{% comment %}
+Fragment template for Family Kosten report (used in Offcanvas).
+This template renders only the report content without the base layout.
+Includes embedded CSS and JS for standalone functionality.
+{% endcomment %}
+
+<style>
+    /* Kosten report fragment styles */
+    .kosten-report-fragment {
+        font-size: 0.85rem;
+    }
+    
+    .kosten-report-fragment .kosten-table {
+        margin-bottom: 0;
+    }
+    
+    .kosten-report-fragment .kosten-table th,
+    .kosten-report-fragment .kosten-table td {
+        padding: 0.3rem 0.4rem;
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+    
+    /* Month columns - fixed width */
+    .kosten-report-fragment .col-month {
+        width: 55px;
+        text-align: right;
+    }
+    
+    /* Subject columns */
+    .kosten-report-fragment .col-subject {
+        max-width: 100px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    /* Child name column */
+    .kosten-report-fragment .col-child {
+        max-width: 120px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    /* Total column */
+    .kosten-report-fragment .col-total {
+        width: 70px;
+        text-align: right;
+        font-weight: 600;
+    }
+    
+    /* Summary row */
+    .kosten-report-fragment .row-sum {
+        background-color: #f8f9fa;
+        font-weight: 600;
+    }
+    
+    .kosten-report-fragment .row-sum td {
+        border-top: 2px solid #dee2e6;
+    }
+    
+    /* Semester separator */
+    .kosten-report-fragment .col-subject-sep {
+        border-left: 2px solid #dee2e6 !important;
+    }
+    
+    /* PENDING badge */
+    .kosten-report-fragment .badge-pending {
+        font-size: 0.6rem;
+        padding: 2px 4px;
+        vertical-align: middle;
+    }
+    
+    /* Year section card */
+    .kosten-report-fragment .year-section {
+        margin-bottom: 1.5rem;
+    }
+    
+    .kosten-report-fragment .year-section .card-header {
+        background-color: #495057;
+        color: white;
+        padding: 0.5rem 1rem;
+    }
+    
+    /* Payment summary row */
+    .kosten-report-fragment .payment-summary {
+        background-color: #e9ecef;
+        padding: 0.5rem 0.75rem;
+        border-top: 1px solid #dee2e6;
+        font-size: 0.85rem;
+    }
+    
+    .kosten-report-fragment .payment-summary .form-label {
+        margin-bottom: 0;
+        font-weight: 500;
+    }
+    
+    .kosten-report-fragment .payment-summary .bezahlt-input {
+        width: 100px;
+        text-align: right;
+    }
+    
+    .kosten-report-fragment .payment-summary .differenz-value {
+        font-weight: 600;
+        min-width: 80px;
+        display: inline-block;
+        text-align: right;
+    }
+    
+    /* Noch zu bezahlen card */
+    .kosten-report-fragment .noch-zu-bezahlen-card {
+        margin-top: 1rem;
+    }
+    
+    .kosten-report-fragment .noch-zu-bezahlen-card .card-body {
+        padding: 0.75rem 1rem;
+    }
+    
+    .kosten-report-fragment .noch-zu-bezahlen-value {
+        font-size: 1.25rem;
+        font-weight: 700;
+    }
+</style>
+
+<div class="kosten-report-fragment" data-family-id="{{ family_id }}">
+    <!-- Header -->
+    <div class="mb-3 pb-2 border-bottom">
+        <h5 class="mb-1">
+            <i class="bi bi-receipt"></i>
+            Kosten-Bericht
+        </h5>
+        <p class="text-muted mb-0 small">
+            <strong>FamilyID:</strong> {{ family_id }}
+            {% if parent_name %}<span class="ms-2"><strong>Eltern:</strong> {{ parent_name }}</span>{% endif %}
+        </p>
+        <div class="mt-2">
+            <a href="{% url 'karteien:family_kosten_report' %}?family_id={{ family_id }}" 
+               target="_blank" 
+               class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-box-arrow-up-right"></i>
+                Vollansicht
+            </a>
+        </div>
+    </div>
+
+    <!-- Year Sections -->
+    {% for year_data in years_data %}
+    <div class="year-section">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center py-2">
+                <span>
+                    <i class="bi bi-calendar3"></i>
+                    <strong>{{ year_data.year }}</strong>
+                </span>
+                <span class="badge bg-light text-dark">
+                    Summe: {{ year_data.year_total|floatformat:2 }} €
+                </span>
+            </div>
+            
+            <div class="card-body p-0">
+                {% if year_data.has_pending_records %}
+                <div class="alert alert-info m-2 mb-0 py-1 small">
+                    <i class="bi bi-info-circle"></i>
+                    Wartende Änderungen vorhanden.
+                </div>
+                {% endif %}
+                
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover table-bordered kosten-table mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="col-child">Kind</th>
+                                <th class="col-subject">Fach 1</th>
+                                {% for month_name in month_names_sem1 %}
+                                <th class="col-month">{{ month_name }}</th>
+                                {% endfor %}
+                                <th class="col-subject col-subject-sep">Fach 2</th>
+                                {% for month_name in month_names_sem2 %}
+                                <th class="col-month">{{ month_name }}</th>
+                                {% endfor %}
+                                <th class="col-total">Gesamt</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in year_data.rows %}
+                            <tr>
+                                <td class="col-child" title="{{ row.child_name }}">
+                                    {{ row.child_name }}
+                                    {% if row.is_pending %}
+                                    <span class="badge bg-primary badge-pending ms-1">P</span>
+                                    {% endif %}
+                                </td>
+                                <td class="col-subject" title="{{ row.subject1 }}">{{ row.subject1 }}</td>
+                                {% for val in row.months_sem1 %}
+                                <td class="col-month">
+                                    {% if val is not None %}
+                                        {{ val|floatformat:2 }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                                <td class="col-subject col-subject-sep" title="{{ row.subject2 }}">{{ row.subject2 }}</td>
+                                {% for val in row.months_sem2 %}
+                                <td class="col-month">
+                                    {% if val is not None %}
+                                        {{ val|floatformat:2 }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                                <td class="col-total">{{ row.row_total|floatformat:2 }}</td>
+                            </tr>
+                            {% endfor %}
+                            
+                            <!-- Summary Row -->
+                            <tr class="row-sum">
+                                <td colspan="2"><strong>Summe</strong></td>
+                                {% for val in year_data.month_sums_sem1 %}
+                                <td class="col-month">
+                                    {% if val is not None %}
+                                        {{ val|floatformat:2 }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                                <td class="col-subject-sep"></td>
+                                {% for val in year_data.month_sums_sem2 %}
+                                <td class="col-month">
+                                    {% if val is not None %}
+                                        {{ val|floatformat:2 }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                                <td class="col-total">{{ year_data.year_total|floatformat:2 }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Payment summary row: Bezahlt + Differenz -->
+            <div class="payment-summary d-flex flex-wrap align-items-center gap-3">
+                <div class="d-flex align-items-center gap-1">
+                    <span class="form-label">Summe:</span>
+                    <span class="fw-bold">{{ year_data.year_total|floatformat:2 }} €</span>
+                </div>
+                <div class="d-flex align-items-center gap-1">
+                    <label class="form-label" for="fragment-bezahlt-{{ year_data.year }}">Bezahlt:</label>
+                    <input type="number" 
+                           class="form-control form-control-sm bezahlt-input" 
+                           id="fragment-bezahlt-{{ year_data.year }}"
+                           data-year="{{ year_data.year }}"
+                           data-summe="{{ year_data.year_total }}"
+                           step="0.01"
+                           min="0"
+                           value="0.00"
+                           placeholder="0.00">
+                    <span>€</span>
+                </div>
+                <div class="d-flex align-items-center gap-1">
+                    <span class="form-label">Differenz:</span>
+                    <span class="differenz-value" id="fragment-differenz-{{ year_data.year }}">{{ year_data.year_total|floatformat:2 }} €</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+
+    <!-- No data message -->
+    {% if not years_data %}
+    <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle"></i>
+        Keine Datensätze für diese FamilyID gefunden.
+    </div>
+    {% endif %}
+    
+    <!-- Noch zu bezahlen total -->
+    {% if years_data %}
+    <div class="card noch-zu-bezahlen-card bg-light">
+        <div class="card-body d-flex justify-content-between align-items-center">
+            <span class="fw-bold">
+                <i class="bi bi-calculator"></i>
+                Noch zu bezahlen:
+            </span>
+            <span class="noch-zu-bezahlen-value text-danger" id="fragment-noch-zu-bezahlen">
+                0.00 €
+            </span>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+(function() {
+    'use strict';
+    
+    const container = document.querySelector('.kosten-report-fragment');
+    if (!container) return;
+    
+    const familyId = container.dataset.familyId;
+    
+    /**
+     * Get localStorage key for a specific year's Bezahlt value
+     */
+    function getStorageKey(year) {
+        return 'family_kosten_paid::' + familyId + '::' + year;
+    }
+    
+    /**
+     * Parse a numeric value safely (empty/invalid → 0)
+     */
+    function parseAmount(val) {
+        if (val === '' || val === null || val === undefined) {
+            return 0;
+        }
+        const num = parseFloat(val);
+        return isNaN(num) ? 0 : num;
+    }
+    
+    /**
+     * Format number to 2 decimal places
+     */
+    function formatAmount(num) {
+        return num.toFixed(2);
+    }
+    
+    /**
+     * Apply color class based on differenz value
+     */
+    function applyDifferenzColor(element, value) {
+        element.classList.remove('text-danger', 'text-success');
+        if (value > 0.005) {
+            element.classList.add('text-danger');
+        } else if (value < -0.005) {
+            element.classList.add('text-success');
+        }
+    }
+    
+    /**
+     * Recalculate Differenz for a single year and update display
+     */
+    function recalculateYear(bezahltInput) {
+        const year = bezahltInput.dataset.year;
+        const summe = parseAmount(bezahltInput.dataset.summe);
+        const bezahlt = parseAmount(bezahltInput.value);
+        
+        const differenz = summe - bezahlt;
+        
+        const differenzEl = container.querySelector('#fragment-differenz-' + year);
+        if (differenzEl) {
+            differenzEl.textContent = formatAmount(differenz) + ' €';
+            applyDifferenzColor(differenzEl, differenz);
+        }
+        
+        try {
+            localStorage.setItem(getStorageKey(year), bezahlt.toString());
+        } catch (e) {
+            // localStorage might be unavailable
+        }
+        
+        recalculateTotal();
+    }
+    
+    /**
+     * Recalculate "Noch zu bezahlen" total across all years
+     */
+    function recalculateTotal() {
+        let total = 0;
+        
+        container.querySelectorAll('.bezahlt-input').forEach(function(input) {
+            const summe = parseAmount(input.dataset.summe);
+            const bezahlt = parseAmount(input.value);
+            total += (summe - bezahlt);
+        });
+        
+        const totalEl = container.querySelector('#fragment-noch-zu-bezahlen');
+        if (totalEl) {
+            totalEl.textContent = formatAmount(total) + ' €';
+            applyDifferenzColor(totalEl, total);
+        }
+    }
+    
+    /**
+     * Load saved Bezahlt values from localStorage
+     */
+    function loadSavedValues() {
+        container.querySelectorAll('.bezahlt-input').forEach(function(input) {
+            const year = input.dataset.year;
+            try {
+                const saved = localStorage.getItem(getStorageKey(year));
+                if (saved !== null) {
+                    input.value = parseAmount(saved).toFixed(2);
+                    recalculateYear(input);
+                }
+            } catch (e) {
+                // localStorage might be unavailable
+            }
+        });
+    }
+    
+    // Attach event listeners
+    container.querySelectorAll('.bezahlt-input').forEach(function(input) {
+        input.addEventListener('input', function() {
+            recalculateYear(this);
+        });
+        
+        input.addEventListener('change', function() {
+            const val = parseAmount(this.value);
+            this.value = formatAmount(val);
+            recalculateYear(this);
+        });
+    });
+    
+    // Load saved values and calculate totals
+    loadSavedValues();
+    recalculateTotal();
+})();
+</script>

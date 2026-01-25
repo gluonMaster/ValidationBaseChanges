@@ -1,0 +1,513 @@
+{% extends "base.html" %}
+{% comment %}
+Template for Family Kosten (costs) report.
+Superadmin-only HTML report showing monthly costs for a family
+across the last 3 years available in the database.
+
+Structure per year:
+- One row per child/record
+- Columns: child_name | subject1 | Jan..Jun | subject2 | Jul..Dec | Total
+- Summary row with monthly totals
+{% endcomment %}
+
+{% block title %}Kosten-Bericht: {{ family_id }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Kosten report specific styles */
+    .kosten-report {
+        font-size: 0.9rem;
+    }
+    
+    .kosten-table {
+        margin-bottom: 0;
+    }
+    
+    .kosten-table th,
+    .kosten-table td {
+        padding: 0.4rem 0.5rem;
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+    
+    /* Month columns - fixed width */
+    .kosten-table .col-month {
+        width: 65px;
+        text-align: right;
+    }
+    
+    /* Subject columns */
+    .kosten-table .col-subject {
+        max-width: 120px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    /* Child name column */
+    .kosten-table .col-child {
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    /* Total column */
+    .kosten-table .col-total {
+        width: 80px;
+        text-align: right;
+        font-weight: 600;
+    }
+    
+    /* Summary row */
+    .kosten-table .row-sum {
+        background-color: #f8f9fa;
+        font-weight: 600;
+    }
+    
+    .kosten-table .row-sum td {
+        border-top: 2px solid #dee2e6;
+    }
+    
+    /* Semester separator */
+    .kosten-table .col-subject-sep {
+        border-left: 2px solid #dee2e6 !important;
+    }
+    
+    /* PENDING badge */
+    .badge-pending {
+        font-size: 0.65rem;
+        padding: 2px 5px;
+        vertical-align: middle;
+    }
+    
+    /* Year section card */
+    .year-section {
+        margin-bottom: 2rem;
+    }
+    
+    .year-section .card-header {
+        background-color: #495057;
+        color: white;
+    }
+    
+    /* Payment summary row */
+    .payment-summary {
+        background-color: #e9ecef;
+        padding: 0.75rem 1rem;
+        border-top: 1px solid #dee2e6;
+    }
+    
+    .payment-summary .form-label {
+        margin-bottom: 0;
+        font-weight: 500;
+    }
+    
+    .payment-summary .bezahlt-input {
+        width: 120px;
+        text-align: right;
+    }
+    
+    .payment-summary .differenz-value {
+        font-weight: 600;
+        min-width: 100px;
+        display: inline-block;
+        text-align: right;
+    }
+    
+    /* Noch zu bezahlen card */
+    .noch-zu-bezahlen-card {
+        margin-top: 1.5rem;
+    }
+    
+    .noch-zu-bezahlen-card .card-body {
+        padding: 1rem 1.5rem;
+    }
+    
+    .noch-zu-bezahlen-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+    }
+    
+    /* Print styles */
+    @media print {
+        .no-print {
+            display: none !important;
+        }
+        
+        .year-section {
+            page-break-inside: avoid;
+        }
+        
+        .kosten-table {
+            font-size: 0.8rem;
+        }
+        
+        .year-section .card-header {
+            background-color: #333 !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+        
+        .payment-summary .bezahlt-input {
+            border: none;
+            background: transparent;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4 kosten-report">
+    <!-- Header -->
+    <div class="row mb-4 no-print">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'karteien:record_list' %}">Kartei</a>
+                    </li>
+                    <li class="breadcrumb-item active">Kosten-Bericht</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-receipt"></i>
+                Kosten-Bericht
+            </h1>
+            <p class="text-muted mb-0">
+                <strong>FamilyID:</strong> {{ family_id }}
+                {% if parent_name %}<span class="ms-3"><strong>Eltern:</strong> {{ parent_name }}</span>{% endif %}
+            </p>
+        </div>
+        <div class="col-auto">
+            <button type="button" class="btn btn-outline-primary" onclick="window.print();">
+                <i class="bi bi-printer"></i>
+                Drucken
+            </button>
+            <a href="{% url 'karteien:record_list' %}?family_id={{ family_id }}" class="btn btn-outline-secondary ms-2">
+                <i class="bi bi-arrow-left"></i>
+                Zurück
+            </a>
+        </div>
+    </div>
+
+    <!-- Print header (only visible when printing) -->
+    <div class="d-none d-print-block mb-4">
+        <h2>Kosten-Bericht: {{ family_id }}</h2>
+        {% if parent_name %}<p>Eltern: {{ parent_name }}</p>{% endif %}
+    </div>
+
+    <!-- Year Sections -->
+    {% for year_data in years_data %}
+    <div class="year-section">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>
+                    <i class="bi bi-calendar3"></i>
+                    <strong>{{ year_data.year }}</strong>
+                </span>
+                <span class="badge bg-light text-dark">
+                    Summe: {{ year_data.year_total|floatformat:2 }} €
+                </span>
+            </div>
+            
+            <div class="card-body p-0">
+                {% if year_data.has_pending_records %}
+                <div class="alert alert-info m-3 mb-0">
+                    <i class="bi bi-info-circle"></i>
+                    <strong>Hinweis:</strong> Für einige Datensätze existieren wartende Änderungen (PENDING). 
+                    Die Beträge basieren auf dem aktuellen Stand (NORMAL) und können sich nach Genehmigung ändern.
+                </div>
+                {% endif %}
+                
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover table-bordered kosten-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="col-child">Kind</th>
+                                <th class="col-subject">Fach 1</th>
+                                {% for month_name in month_names_sem1 %}
+                                <th class="col-month">{{ month_name }}</th>
+                                {% endfor %}
+                                <th class="col-subject col-subject-sep">Fach 2</th>
+                                {% for month_name in month_names_sem2 %}
+                                <th class="col-month">{{ month_name }}</th>
+                                {% endfor %}
+                                <th class="col-total">Gesamt</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in year_data.rows %}
+                            <tr>
+                                <td class="col-child" title="{{ row.child_name }}">
+                                    {{ row.child_name }}
+                                    {% if row.is_pending %}
+                                    <span class="badge bg-primary badge-pending ms-1">PENDING</span>
+                                    {% endif %}
+                                </td>
+                                <td class="col-subject" title="{{ row.subject1 }}">{{ row.subject1 }}</td>
+                                {% for val in row.months_sem1 %}
+                                <td class="col-month">
+                                    {% if val is not None %}
+                                        {{ val|floatformat:2 }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                                <td class="col-subject col-subject-sep" title="{{ row.subject2 }}">{{ row.subject2 }}</td>
+                                {% for val in row.months_sem2 %}
+                                <td class="col-month">
+                                    {% if val is not None %}
+                                        {{ val|floatformat:2 }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                                <td class="col-total">{{ row.row_total|floatformat:2 }}</td>
+                            </tr>
+                            {% endfor %}
+                            
+                            <!-- Summary Row -->
+                            <tr class="row-sum">
+                                <td colspan="2"><strong>Summe</strong></td>
+                                {% for val in year_data.month_sums_sem1 %}
+                                <td class="col-month">
+                                    {% if val is not None %}
+                                        {{ val|floatformat:2 }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                                <td class="col-subject-sep"></td>
+                                {% for val in year_data.month_sums_sem2 %}
+                                <td class="col-month">
+                                    {% if val is not None %}
+                                        {{ val|floatformat:2 }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                                <td class="col-total">{{ year_data.year_total|floatformat:2 }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Payment summary row: Bezahlt + Differenz -->
+            <div class="payment-summary d-flex flex-wrap align-items-center gap-4">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="form-label">Summe gesamt:</span>
+                    <span class="fw-bold" data-year-total="{{ year_data.year }}">{{ year_data.year_total|floatformat:2 }} €</span>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <label class="form-label" for="bezahlt-{{ year_data.year }}">Bezahlt:</label>
+                    <input type="number" 
+                           class="form-control form-control-sm bezahlt-input" 
+                           id="bezahlt-{{ year_data.year }}"
+                           data-year="{{ year_data.year }}"
+                           data-summe="{{ year_data.year_total }}"
+                           step="0.01"
+                           min="0"
+                           value="0.00"
+                           placeholder="0.00">
+                    <span>€</span>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="form-label">Differenz:</span>
+                    <span class="differenz-value" id="differenz-{{ year_data.year }}">{{ year_data.year_total|floatformat:2 }} €</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+
+    <!-- No data message (should not appear due to redirect, but just in case) -->
+    {% if not years_data %}
+    <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle"></i>
+        Keine Datensätze für diese FamilyID gefunden.
+    </div>
+    {% endif %}
+    
+    <!-- Noch zu bezahlen total -->
+    {% if years_data %}
+    <div class="card noch-zu-bezahlen-card bg-light">
+        <div class="card-body d-flex justify-content-between align-items-center">
+            <span class="fs-5 fw-bold">
+                <i class="bi bi-calculator"></i>
+                Noch zu bezahlen (alle Jahre):
+            </span>
+            <span class="noch-zu-bezahlen-value text-danger" id="noch-zu-bezahlen">
+                <!-- Initial value will be calculated by JS -->
+                0.00 €
+            </span>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    'use strict';
+    
+    const familyId = '{{ family_id|escapejs }}';
+    
+    /**
+     * Get localStorage key for a specific year's Bezahlt value
+     */
+    function getStorageKey(year) {
+        return 'family_kosten_paid::' + familyId + '::' + year;
+    }
+    
+    /**
+     * Parse a numeric value safely (empty/invalid → 0)
+     */
+    function parseAmount(val) {
+        if (val === '' || val === null || val === undefined) {
+            return 0;
+        }
+        const num = parseFloat(val);
+        return isNaN(num) ? 0 : num;
+    }
+    
+    /**
+     * Format number to 2 decimal places
+     */
+    function formatAmount(num) {
+        return num.toFixed(2);
+    }
+    
+    /**
+     * Apply color class based on differenz value
+     * Positive differenz (still owe) → danger
+     * Negative differenz (overpaid) → success
+     * Zero → default
+     */
+    function applyDifferenzColor(element, value) {
+        element.classList.remove('text-danger', 'text-success');
+        if (value > 0.005) {
+            element.classList.add('text-danger');
+        } else if (value < -0.005) {
+            element.classList.add('text-success');
+        }
+    }
+    
+    /**
+     * Recalculate Differenz for a single year and update display
+     */
+    function recalculateYear(bezahltInput) {
+        const year = bezahltInput.dataset.year;
+        const summe = parseAmount(bezahltInput.dataset.summe);
+        const bezahlt = parseAmount(bezahltInput.value);
+        
+        // Differenz = Summe - Bezahlt
+        const differenz = summe - bezahlt;
+        
+        // Update Differenz display
+        const differenzEl = document.getElementById('differenz-' + year);
+        if (differenzEl) {
+            differenzEl.textContent = formatAmount(differenz) + ' €';
+            applyDifferenzColor(differenzEl, differenz);
+        }
+        
+        // Save to localStorage
+        try {
+            localStorage.setItem(getStorageKey(year), bezahlt.toString());
+        } catch (e) {
+            // localStorage might be unavailable (private mode, etc.)
+        }
+        
+        // Recalculate total
+        recalculateTotal();
+    }
+    
+    /**
+     * Recalculate "Noch zu bezahlen" total across all years
+     */
+    function recalculateTotal() {
+        let total = 0;
+        
+        document.querySelectorAll('.bezahlt-input').forEach(function(input) {
+            const summe = parseAmount(input.dataset.summe);
+            const bezahlt = parseAmount(input.value);
+            total += (summe - bezahlt);
+        });
+        
+        const totalEl = document.getElementById('noch-zu-bezahlen');
+        if (totalEl) {
+            totalEl.textContent = formatAmount(total) + ' €';
+            applyDifferenzColor(totalEl, total);
+        }
+    }
+    
+    /**
+     * Load saved Bezahlt values from localStorage
+     */
+    function loadSavedValues() {
+        document.querySelectorAll('.bezahlt-input').forEach(function(input) {
+            const year = input.dataset.year;
+            try {
+                const saved = localStorage.getItem(getStorageKey(year));
+                if (saved !== null) {
+                    input.value = parseAmount(saved).toFixed(2);
+                    recalculateYear(input);
+                }
+            } catch (e) {
+                // localStorage might be unavailable
+            }
+        });
+    }
+    
+    /**
+     * Initialize: attach event listeners and load saved values
+     */
+    function init() {
+        // Attach input listeners to all Bezahlt fields
+        document.querySelectorAll('.bezahlt-input').forEach(function(input) {
+            input.addEventListener('input', function() {
+                recalculateYear(this);
+            });
+            
+            // Also handle change event for better UX
+            input.addEventListener('change', function() {
+                // Normalize display to 2 decimals
+                const val = parseAmount(this.value);
+                this.value = formatAmount(val);
+                recalculateYear(this);
+            });
+        });
+        
+        // Load saved values from localStorage
+        loadSavedValues();
+        
+        // Initial calculation (in case no saved values)
+        recalculateTotal();
+    }
+    
+    // Run initialization when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+    
+    // Auto-resize for print
+    window.addEventListener('beforeprint', function() {
+        document.querySelectorAll('.table-responsive').forEach(function(el) {
+            el.style.overflow = 'visible';
+        });
+    });
+    
+    window.addEventListener('afterprint', function() {
+        document.querySelectorAll('.table-responsive').forEach(function(el) {
+            el.style.overflow = 'auto';
+        });
+    });
+})();
+</script>
+{% endblock %}

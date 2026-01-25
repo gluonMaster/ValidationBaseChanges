@@ -1306,3 +1306,134 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         'warnings': warnings,
         'record_months_mode': record.months_mode,
     })
+
+
+# =============================================================================
+# Family Search API (Superadmin only - for Kosten Report)
+# =============================================================================
+
+# Limit for family search results
+FAMILY_SEARCH_LIMIT = 20
+
+# Characters used to split query into tokens
+import re
+_TOKEN_SPLIT_PATTERN = re.compile(r'[\s,;.]+')
+
+
+def _check_superadmin(user) -> JsonResponse | None:
+    """Check if user is superadmin. Returns JsonResponse error or None if ok."""
+    if not user.is_superadmin:
+        return JsonResponse({
+            'error': 'Access denied',
+            'code': 'ACCESS_DENIED',
+        }, status=403)
+    return None
+
+
+@login_required
+@require_GET
+def family_search_api(request: HttpRequest) -> JsonResponse:
+    """
+    API endpoint for searching families by parent name.
+    
+    Superadmin-only endpoint for the Kosten-Report feature.
+    Searches across ALL years and returns unique family_id results.
+    
+    GET /api/karteien/family-search/?q=робинович
+    
+    Query tokenization:
+    - The query is split by whitespace and punctuation (spaces, commas, semicolons, dots)
+    - Each token must match (AND logic) via case-insensitive icontains
+    - Example: "Nikolay,Robinovich" is found by searching "robinovich"
+    
+    Returns JSON with:
+    - query: the original search query
+    - results: array of unique families:
+        - family_id: the unique family identifier
+        - parent_name: from the latest year record (preferring NORMAL over PENDING)
+        - latest_year: the most recent year with records for this family
+        - has_pending: true if any PENDING records exist for this family
+    """
+    user = request.user
+    
+    # Access control - superadmin only
+    error = _check_superadmin(user)
+    if error:
+        return error
+    
+    # Get query parameter
+    query = request.GET.get('q', '').strip()
+    
+    # Empty query - return empty results
+    if not query:
+        return JsonResponse({
+            'query': query,
+            'results': [],
+        })
+    
+    # Split query into tokens (by spaces and punctuation)
+    tokens = [t.strip() for t in _TOKEN_SPLIT_PATTERN.split(query) if t.strip()]
+    
+    # If no valid tokens, return empty
+    if not tokens:
+        return JsonResponse({
+            'query': query,
+            'results': [],
+        })
+    
+    # Build filter: all tokens must match parent_name (AND logic)
+    filter_q = Q()
+    for token in tokens:
+        filter_q &= Q(parent_name__icontains=token)
+    
+    # Query to get unique families with latest year record
+    # Filter criteria:
+    #   - Only NORMAL or PENDING status (exclude DECLINED for Kosten-Report)
+    #   - Exclude empty/NULL family_id (unusable for reports)
+    # Order by: family_id ASC, year DESC, status ASC ('' < 'PENDING')
+    # This ensures NORMAL (status='') comes before PENDING for the same year
+    # distinct("family_id") picks the first row per family_id
+    qs = (
+        KarteiRecord.objects
+        .filter(filter_q)
+        .filter(status__in=[RecordStatus.NORMAL, RecordStatus.PENDING])
+        .exclude(family_id__isnull=True)
+        .exclude(family_id='')
+        .order_by('family_id', '-year', 'status')
+        .distinct('family_id')
+        [:FAMILY_SEARCH_LIMIT]
+    )
+    
+    # Collect results
+    results = []
+    family_ids = []
+    for record in qs:
+        family_ids.append(record.family_id)
+        results.append({
+            'family_id': record.family_id,
+            'parent_name': record.parent_name,
+            'latest_year': record.year,
+            'has_pending': False,  # Will be updated below
+        })
+    
+    # If we have results, check which families have PENDING records
+    if family_ids:
+        pending_families = set(
+            KarteiRecord.objects
+            .filter(
+                family_id__in=family_ids,
+                status=RecordStatus.PENDING,
+            )
+            .values_list('family_id', flat=True)
+            .distinct()
+        )
+        
+        # Update has_pending flags
+        for result in results:
+            if result['family_id'] in pending_families:
+                result['has_pending'] = True
+    
+    return JsonResponse({
+        'query': query,
+        'results': results,
+    })

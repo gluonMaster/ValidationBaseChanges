@@ -21,6 +21,7 @@ from . import views
 from . import families
 from . import api
 from . import wizard
+from . import kosten_report
 
 app_name = 'karteien'
 
@@ -75,4 +76,13 @@ urlpatterns = [
     
     # Apply discounts to family records (admin-only)
     path('family/apply-discounts/', families.ApplyDiscountsView.as_view(), name='apply_discounts'),
+    
+    # API: Family search for Kosten report (superadmin-only)
+    path('family-search/', api.family_search_api, name='family_search_api'),
+    
+    # Family Kosten report (superadmin-only)
+    path('family-kosten/', kosten_report.FamilyKostenReportView.as_view(), name='family_kosten_report'),
+    
+    # API: Family Kosten report fragment for Offcanvas (superadmin-only)
+    path('family-kosten-fragment/', kosten_report.FamilyKostenFragmentView.as_view(), name='family_kosten_fragment'),
 ]
