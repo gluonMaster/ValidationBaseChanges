@@ -14,20 +14,21 @@ Supports live-search via AJAX for instant filtering.
         <div class="col">
             <h1>
                 <i class="bi bi-card-list"></i>
-                Kartei Übersicht
+                Kartei Übersicht Jahr: <span id="karteienYearDisplay">{% if current_year != system_year %}<span class="badge bg-warning text-dark">{{ current_year }}</span>{% else %}{{ current_year }}{% endif %}</span>
             </h1>
-            <p class="text-muted">Jahr: {{ current_year }}</p>
         </div>
         <div class="col-auto">
             {% if user.can_edit_kartei %}
             <a href="{% url 'karteien:record_create' %}?year={{ current_year }}" 
-               class="btn btn-success">
+               class="btn btn-success"
+               id="btn-new-record">
                 <i class="bi bi-plus-lg"></i>
                 Neuer Datensatz
             </a>
             {% if user.is_admin_role %}
             <a href="{% url 'karteien:new_family_wizard' %}?year={{ current_year }}" 
-               class="btn btn-outline-success ms-2">
+               class="btn btn-outline-success ms-2"
+               id="btn-new-family">
                 <i class="bi bi-people-fill"></i>
                 Neue Familie
             </a>
@@ -62,37 +63,37 @@ Supports live-search via AJAX for instant filtering.
             <i class="bi bi-chevron-{% if current_filters.family_id or current_filters.parent or current_filters.child or current_filters.status or current_filters.contract_type or current_filters.contract_status or current_filters.subject_query or current_filters.teacher_query %}up{% else %}down{% endif %}" id="filterCollapseIcon"></i>
         </div>
         <div class="collapse{% if current_filters.family_id or current_filters.parent or current_filters.child or current_filters.status or current_filters.contract_type or current_filters.contract_status or current_filters.subject_query or current_filters.teacher_query %} show{% endif %}" id="filterCollapse">
-        <div class="card-body">
-            <form method="get" id="filter-form" class="row g-3">
+        <div class="card-body py-3">
+            <form method="get" id="filter-form" class="row gx-3 gy-2">
                 <div class="col-md-2">
-                    <label for="year" class="form-label">Jahr</label>
-                    <select name="year" id="year" class="form-select filter-input">
+                    <label for="year" class="form-label mb-1">Jahr</label>
+                    <select name="year" id="year" class="form-select form-select-sm filter-input">
                         {% for y in available_years %}
                         <option value="{{ y }}" {% if y|stringformat:"s" == current_year|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="col-md-2">
-                    <label for="family_id" class="form-label">FamilyID</label>
+                    <label for="family_id" class="form-label mb-1">FamilyID</label>
                     <input type="text" name="family_id" id="family_id" 
-                           class="form-control filter-input" value="{{ current_filters.family_id }}"
+                           class="form-control form-control-sm filter-input" value="{{ current_filters.family_id }}"
                            placeholder="Suche...">
                 </div>
                 <div class="col-md-2">
-                    <label for="parent" class="form-label">Eltern</label>
+                    <label for="parent" class="form-label mb-1">Eltern</label>
                     <input type="text" name="parent" id="parent" 
-                           class="form-control filter-input" value="{{ current_filters.parent }}"
+                           class="form-control form-control-sm filter-input" value="{{ current_filters.parent }}"
                            placeholder="Suche...">
                 </div>
                 <div class="col-md-2">
-                    <label for="child" class="form-label">Kind</label>
+                    <label for="child" class="form-label mb-1">Kind</label>
                     <input type="text" name="child" id="child" 
-                           class="form-control filter-input" value="{{ current_filters.child }}"
+                           class="form-control form-control-sm filter-input" value="{{ current_filters.child }}"
                            placeholder="Suche...">
                 </div>
                 <div class="col-md-2">
-                    <label for="status" class="form-label">Status</label>
-                    <select name="status" id="status" class="form-select filter-input">
+                    <label for="status" class="form-label mb-1">Status</label>
+                    <select name="status" id="status" class="form-select form-select-sm filter-input">
                         <option value="">Alle</option>
                         <option value="NORMAL" {% if current_filters.status == "NORMAL" %}selected{% endif %}>Normal</option>
                         <option value="PENDING" {% if current_filters.status == "PENDING" %}selected{% endif %}>Wartend</option>
@@ -100,28 +101,28 @@ Supports live-search via AJAX for instant filtering.
                     </select>
                 </div>
                 <div class="col-md-2 d-flex align-items-end">
-                    <button type="submit" class="btn btn-primary me-2">
+                    <button type="submit" class="btn btn-primary btn-sm me-2">
                         <i class="bi bi-search"></i>
                         Suchen
                     </button>
-                    <a href="{% url 'karteien:record_list' %}?year={{ current_year }}" class="btn btn-outline-secondary" id="reset-filters">
+                    <a href="{% url 'karteien:record_list' %}?year={{ current_year }}" class="btn btn-outline-secondary btn-sm" id="reset-filters">
                         <i class="bi bi-x-lg"></i>
                     </a>
                 </div>
             </form>
             <!-- Contract type & status filters row -->
-            <div class="row g-3 mt-2 border-top pt-3">
+            <div class="row gx-3 gy-2 mt-1 border-top pt-2">
                 <div class="col-md-3">
-                    <label for="contract_type" class="form-label">Vertragstyp</label>
-                    <select name="contract_type" id="contract_type" class="form-select filter-input">
+                    <label for="contract_type" class="form-label mb-1">Vertragstyp</label>
+                    <select name="contract_type" id="contract_type" class="form-select form-select-sm filter-input">
                         <option value="">Alle</option>
                         <option value="monthly" {% if current_filters.contract_type == "monthly" %}selected{% endif %}>Monatlich</option>
                         <option value="yearly" {% if current_filters.contract_type == "yearly" %}selected{% endif %}>Jährlich</option>
                     </select>
                 </div>
                 <div class="col-md-3">
-                    <label for="contract_status" class="form-label">Vertragsstatus</label>
-                    <select name="contract_status" id="contract_status" class="form-select filter-input">
+                    <label for="contract_status" class="form-label mb-1">Vertragsstatus</label>
+                    <select name="contract_status" id="contract_status" class="form-select form-select-sm filter-input">
                         <option value="">Alle</option>
                         <option value="active" {% if current_filters.contract_status == "active" %}selected{% endif %}>Aktiv</option>
                         <option value="terminated" {% if current_filters.contract_status == "terminated" %}selected{% endif %}>Gekündigt</option>
@@ -146,10 +147,10 @@ Supports live-search via AJAX for instant filtering.
                 </div>
             </div>
             <!-- Subject & Teacher filters row -->
-            <div class="row g-3 mt-2 border-top pt-3">
+            <div class="row gx-3 gy-2 mt-1 border-top pt-2">
                 <!-- Unterricht (Subject) dropdown -->
                 <div class="col-md-4">
-                    <label class="form-label">Unterricht</label>
+                    <label class="form-label mb-1">Unterricht</label>
                     <div class="dropdown">
                         <button class="btn btn-outline-secondary w-100 dropdown-toggle d-flex justify-content-between align-items-center{% if current_filters.subject_query %} btn-primary text-white{% endif %}" 
                                 type="button" id="subjectDropdownBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
@@ -183,7 +184,7 @@ Supports live-search via AJAX for instant filtering.
                 </div>
                 <!-- Lehrer (Teacher) dropdown -->
                 <div class="col-md-4">
-                    <label class="form-label">Lehrer</label>
+                    <label class="form-label mb-1">Lehrer</label>
                     <div class="dropdown">
                         <button class="btn btn-outline-secondary w-100 dropdown-toggle d-flex justify-content-between align-items-center{% if current_filters.teacher_query %} btn-primary text-white{% endif %}" 
                                 type="button" id="teacherDropdownBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
@@ -343,6 +344,28 @@ Supports live-search via AJAX for instant filtering.
     </div>
 </div>
 {% endif %}
+
+<!-- Year Warning Modal for Creating Records in Non-Current Year -->
+<div class="modal fade" id="confirmYearCreateModal" tabindex="-1" aria-labelledby="confirmYearCreateModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="confirmYearCreateModalLabel">
+                    <i class="bi bi-exclamation-triangle text-warning"></i>
+                    Achtung
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+            </div>
+            <div class="modal-body" id="confirmYearCreateModalBody">
+                <!-- Message will be dynamically inserted -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+                <button type="button" class="btn btn-primary" id="confirmYearCreateBtn">Fortfahren</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -353,6 +376,7 @@ Supports live-search via AJAX for instant filtering.
     // Configuration
     const DEBOUNCE_MS = 300;
     const API_URL = '/api/karteien/live-search/';
+    const SYSTEM_YEAR = {{ system_year }};  // Current calendar year for badge highlighting
     
     // DOM Elements
     const filterForm = document.getElementById('filter-form');
@@ -420,6 +444,45 @@ Supports live-search via AJAX for instant filtering.
         const queryString = buildQueryString(filters);
         const newUrl = window.location.pathname + (queryString ? '?' + queryString : '');
         history.replaceState(null, '', newUrl);
+    }
+    
+    /**
+     * Update year display in header and action button links
+     */
+    function updateYearHeaderAndLinks() {
+        const selectedYear = parseInt(document.getElementById('year').value, 10);
+        const yearDisplay = document.getElementById('karteienYearDisplay');
+        
+        // Update year display with badge if not system year
+        if (selectedYear !== SYSTEM_YEAR) {
+            yearDisplay.innerHTML = '<span class="badge bg-warning text-dark">' + selectedYear + '</span>';
+        } else {
+            yearDisplay.textContent = selectedYear;
+        }
+        
+        // Update action button links to use selected year
+        const btnNewRecord = document.getElementById('btn-new-record');
+        if (btnNewRecord) {
+            const url = new URL(btnNewRecord.href, window.location.origin);
+            url.searchParams.set('year', selectedYear);
+            btnNewRecord.href = url.toString();
+        }
+        
+        const btnNewFamily = document.getElementById('btn-new-family');
+        if (btnNewFamily) {
+            const url = new URL(btnNewFamily.href, window.location.origin);
+            url.searchParams.set('year', selectedYear);
+            btnNewFamily.href = url.toString();
+        }
+        
+        // Update reset-filters link to use selected year
+        const resetFilters = document.getElementById('reset-filters');
+        if (resetFilters) {
+            const url = new URL(resetFilters.href, window.location.origin);
+            url.search = ''; // Clear all query params since this is a reset
+            url.searchParams.set('year', selectedYear);
+            resetFilters.href = url.toString();
+        }
     }
     
     /**
@@ -506,6 +569,66 @@ Supports live-search via AJAX for instant filtering.
     }
     
     /**
+     * Initialize year warning modal for create buttons
+     */
+    function initYearWarningModal() {
+        const confirmModal = new bootstrap.Modal(document.getElementById('confirmYearCreateModal'));
+        const confirmBtn = document.getElementById('confirmYearCreateBtn');
+        const modalBody = document.getElementById('confirmYearCreateModalBody');
+        let pendingHref = null;
+        
+        // Handle clicks on "Neuer Datensatz" button
+        const btnNewRecord = document.getElementById('btn-new-record');
+        if (btnNewRecord) {
+            btnNewRecord.addEventListener('click', function(e) {
+                const selectedYear = parseInt(document.getElementById('year').value, 10);
+                const currentYear = SYSTEM_YEAR;
+                
+                if (selectedYear !== currentYear) {
+                    e.preventDefault();
+                    // Ensure href has correct year parameter
+                    const url = new URL(this.href, window.location.origin);
+                    url.searchParams.set('year', selectedYear);
+                    pendingHref = url.toString();
+                    modalBody.innerHTML = `Sie erstellen einen Datensatz im Jahr <strong>${selectedYear}</strong> (nicht im aktuellen Jahr ${currentYear}). Möchten Sie fortfahren?`;
+                    confirmModal.show();
+                }
+            });
+        }
+        
+        // Handle clicks on "Neue Familie" button
+        const btnNewFamily = document.getElementById('btn-new-family');
+        if (btnNewFamily) {
+            btnNewFamily.addEventListener('click', function(e) {
+                const selectedYear = parseInt(document.getElementById('year').value, 10);
+                const currentYear = SYSTEM_YEAR;
+                
+                if (selectedYear !== currentYear) {
+                    e.preventDefault();
+                    // Ensure href has correct year parameter
+                    const url = new URL(this.href, window.location.origin);
+                    url.searchParams.set('year', selectedYear);
+                    pendingHref = url.toString();
+                    modalBody.innerHTML = `Sie erstellen eine Familie im Jahr <strong>${selectedYear}</strong> (nicht im aktuellen Jahr ${currentYear}). Möchten Sie fortfahren?`;
+                    confirmModal.show();
+                }
+            });
+        }
+        
+        // Handle "Fortfahren" button click
+        confirmBtn.addEventListener('click', function() {
+            if (pendingHref) {
+                window.location.href = pendingHref;
+            }
+        });
+        
+        // Clear pending href when modal is closed
+        document.getElementById('confirmYearCreateModal').addEventListener('hidden.bs.modal', function() {
+            pendingHref = null;
+        });
+    }
+    
+    /**
      * Initialize live search
      */
     function init() {
@@ -514,6 +637,17 @@ Supports live-search via AJAX for instant filtering.
             const eventType = input.tagName === 'SELECT' ? 'change' : 'input';
             input.addEventListener(eventType, debouncedSearch);
         });
+        
+        // Special handler for year select to update header/links immediately
+        const yearSelect = document.getElementById('year');
+        if (yearSelect) {
+            yearSelect.addEventListener('change', function() {
+                updateYearHeaderAndLinks();
+            });
+        }
+        
+        // Initialize year warning modal for create buttons
+        initYearWarningModal();
         
         // Prevent form submission (fallback for users without JS disabled)
         filterForm.addEventListener('submit', function(e) {
@@ -583,6 +717,9 @@ Supports live-search via AJAX for instant filtering.
         
         // Initialize filter collapse toggle icon/hint
         initFilterCollapse();
+        
+        // Update year header and links on initial load
+        updateYearHeaderAndLinks();
     }
     
     /**

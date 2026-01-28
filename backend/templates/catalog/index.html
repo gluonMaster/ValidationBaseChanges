@@ -264,10 +264,38 @@ Only accessible to Admin users.
         </div>
     </div>
 
-    <!-- Copy Year Sections -->
-    <div class="row mt-3">
-        <div class="col-md-6">
-            <div class="card border-warning h-100">
+    <!-- Tools Section -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <h4 class="mb-3">
+                <i class="bi bi-tools"></i>
+                Werkzeuge
+            </h4>
+        </div>
+        
+        <!-- FamilyID Reservations -->
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-success">
+                <div class="card-header bg-success text-white">
+                    <i class="bi bi-bookmark-star"></i>
+                    FamilyID-Reservierungen
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Reservieren Sie die nächste FamilyID vorab, um sie später bei der Familienerstellung zu verwenden.
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'catalog:familyid_reservation_list' %}" class="btn btn-outline-success">
+                        <i class="bi bi-list"></i> Reservierungen
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Copy Assignments Year -->
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-warning">
                 <div class="card-header bg-warning text-dark">
                     <i class="bi bi-copy"></i>
                     Zuweisungen kopieren
@@ -276,6 +304,8 @@ Only accessible to Admin users.
                     <p class="card-text">
                         Kopieren Sie alle Lehrer-Fach-Zuweisungen von einem Jahr in ein anderes.
                     </p>
+                </div>
+                <div class="card-footer bg-transparent">
                     <a href="{% url 'catalog:copy_year' %}" class="btn btn-warning">
                         <i class="bi bi-arrow-right-circle"></i>
                         Jahr kopieren
@@ -283,8 +313,10 @@ Only accessible to Admin users.
                 </div>
             </div>
         </div>
-        <div class="col-md-6">
-            <div class="card border-warning h-100">
+
+        <!-- Copy Prices Year -->
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-warning">
                 <div class="card-header bg-warning text-dark">
                     <i class="bi bi-copy"></i>
                     Preise kopieren
@@ -293,6 +325,8 @@ Only accessible to Admin users.
                     <p class="card-text">
                         Kopieren Sie alle Preise von einem Jahr in ein anderes.
                     </p>
+                </div>
+                <div class="card-footer bg-transparent">
                     <a href="{% url 'catalog:copy_prices_year' %}" class="btn btn-warning">
                         <i class="bi bi-arrow-right-circle"></i>
                         Jahr kopieren

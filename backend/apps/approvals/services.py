@@ -265,6 +265,57 @@ def build_snapshot(record: KarteiRecord) -> dict[str, Any]:
     return snapshot
 
 
+def _build_diff_string(old_snapshot: dict[str, Any], new_snapshot: dict[str, Any]) -> str:
+    """
+    Build a diff string in the format TAG(old->new);TAG(old->new);...
+    
+    Compares tracked fields between old and new snapshots and generates
+    history tags for changed fields.
+    
+    Args:
+        old_snapshot: Snapshot before changes (from build_snapshot).
+        new_snapshot: Snapshot after changes (from PendingChange.snapshot).
+    
+    Returns:
+        String of field changes in history format, e.g., "M01(0->48.30);PR1(0->46.00);"
+        Returns empty string if no changes detected.
+    """
+    from apps.karteien.models import HISTORY_FIELD_TAGS
+    
+    diff_parts = []
+    
+    for field_name in TRACKED_FIELDS:
+        old_val = old_snapshot.get(field_name)
+        new_val = new_snapshot.get(field_name)
+        
+        # Compare using normalized values
+        if not _values_equal(old_val, new_val):
+            # Get history tag for this field
+            tag = HISTORY_FIELD_TAGS.get(field_name)
+            if tag:
+                # Format values for display
+                # For empty/None values, use "0" for numeric fields, empty string for others
+                if old_val in (None, ""):
+                    old_display = "0" if field_name.startswith(("month_", "price")) else ""
+                else:
+                    old_display = str(old_val)
+                
+                if new_val in (None, ""):
+                    new_display = "0" if field_name.startswith(("month_", "price")) else ""
+                else:
+                    new_display = str(new_val)
+                
+                # Escape special characters in values (parentheses and semicolons)
+                # to prevent parsing issues
+                old_display = old_display.replace("(", "[").replace(")", "]").replace(";", ",")
+                new_display = new_display.replace("(", "[").replace(")", "]").replace(";", ",")
+                
+                # Add to diff string
+                diff_parts.append(f"{tag}({old_display}->{new_display})")
+    
+    return ";".join(diff_parts) + ";" if diff_parts else ""
+
+
 # =============================================================================
 # Pending/Declined Change Management
 # =============================================================================
@@ -581,8 +632,15 @@ def apply_decision(
 
     with transaction.atomic():
         if decision == "APPROVED":
+            # Build snapshot of current state BEFORE applying changes
+            old_snapshot = build_snapshot(record)
+            new_snapshot = pending.snapshot
+            
+            # Compute diff for history entry
+            diff_string = _build_diff_string(old_snapshot, new_snapshot)
+            
             # Apply changes from snapshot to record
-            record = _apply_snapshot_to_record(record, pending.snapshot)
+            record = _apply_snapshot_to_record(record, new_snapshot)
             
             # Update status to NORMAL
             record.status = RecordStatus.NORMAL
@@ -592,8 +650,8 @@ def apply_decision(
             pending.is_processed = True
             pending.save(update_fields=["is_processed", "updated_at"])
 
-            # Write APR entry to history (append to history_raw)
-            _write_history_entry(record, "APR", user, combined_comment)
+            # Write APR entry to history (append to history_raw) with diff
+            _write_history_entry(record, "APR", user, combined_comment, diff_string)
 
             # Create notifications for Admin
             try:
@@ -702,6 +760,7 @@ def _write_history_entry(
     entry_type: str,
     user: User | None,
     comment: str | None,
+    diff_string: str = "",
 ) -> None:
     """
     Append an entry to the record's history_raw field.
@@ -712,15 +771,16 @@ def _write_history_entry(
     - ADM: Admin comment on SAFE change
 
     Format matches VBA Export_HistoryBuilder:
-    - APR: APR/@<comment>@/<date>||
+    - APR: APR:<user>/[TAG(old->new);...]/@<comment>@/<date>||
     - DCL: DCL(<N>-><comment>)/@<date>@/||
-    - ADM: ADM:<user>/@<comment>@/<date>||
+    - ADM: ADM:<user>/[TAG(old->new);...]/@<comment>@/<date>||
 
     Args:
         record: The record to update history for.
         entry_type: "APR", "DCL", or "ADM".
         user: The user who made the decision.
         comment: Optional comment.
+        diff_string: Optional diff string with field changes (TAG(old->new);...).
     """
     from django.utils import timezone
 
@@ -730,20 +790,30 @@ def _write_history_entry(
     user_name = user.username if user else "System"
 
     if entry_type == "APR":
+        # Format: APR:user/[diff]/@comment@/date||
+        parts = [f"APR:{user_name}/"]
+        if diff_string:
+            parts.append(diff_string)
         if comment:
-            entry = f"APR:{user_name}/@{comment}@/{date_str}||"
-        else:
-            entry = f"APR:{user_name}/{date_str}||"
+            parts.append(f"/@{comment}@/")
+        parts.append(f"{date_str}||")
+        entry = "".join(parts)
     elif entry_type == "DCL":
         # Count existing declines for numbering
         dcl_count = record.declined_changes.count()
         entry = f"DCL({dcl_count}->{comment or 'Abgelehnt'})/@{user_name}@/{date_str}||"
     elif entry_type == "ADM":
         # Admin comment on SAFE change (direct save without approval)
-        if comment:
-            entry = f"ADM:{user_name}/@{comment}@/{date_str}||"
+        if comment or diff_string:
+            parts = [f"ADM:{user_name}/"]
+            if diff_string:
+                parts.append(diff_string)
+            if comment:
+                parts.append(f"/@{comment}@/")
+            parts.append(f"{date_str}||")
+            entry = "".join(parts)
         else:
-            # No comment, no entry needed
+            # No comment or diff, no entry needed
             return
     else:
         return
@@ -762,6 +832,7 @@ def write_history_entry(
     entry_type: str,
     user: User | None,
     comment: str | None,
+    diff_string: str = "",
 ) -> None:
     """
     Public wrapper to append an entry to the record's history_raw field.
@@ -772,17 +843,18 @@ def write_history_entry(
     - ADM: Admin comment on SAFE change
 
     Format uses /@...@/ markers for new-format recognition:
-    - APR: APR:<user>/@<comment>@/<date>||
+    - APR: APR:<user>/[TAG(old->new);...]/@<comment>@/<date>||
     - DCL: DCL(<N>-><comment>)/@<user>@/<date>||
-    - ADM: ADM:<user>/@<comment>@/<date>||
+    - ADM: ADM:<user>/[TAG(old->new);...]/@<comment>@/<date>||
 
     Args:
         record: The record to update history for.
         entry_type: "APR", "DCL", or "ADM".
         user: The user who made the decision.
         comment: Optional comment (for ADM, entry is skipped if empty).
+        diff_string: Optional diff string with field changes (TAG(old->new);...).
     """
-    _write_history_entry(record, entry_type, user, comment)
+    _write_history_entry(record, entry_type, user, comment, diff_string)
 
 
 # =============================================================================

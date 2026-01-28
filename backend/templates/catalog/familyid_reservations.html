@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% comment %}
+FamilyID Reservations list view.
+Allows Admin to see active reservations, reserve the next FamilyID,
+and cancel existing reservations.
+{% endcomment %}
+
+{% block title %}FamilyID-Reservierungen{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:index' %}">Katalog</a>
+                    </li>
+                    <li class="breadcrumb-item active">FamilyID-Reservierungen</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-bookmark-star"></i>
+                FamilyID-Reservierungen
+            </h1>
+            <p class="text-muted">
+                Reservieren Sie die nächste FamilyID, um sie später bei der Familienerstellung zu verwenden.
+            </p>
+        </div>
+        <div class="col-auto">
+            <form method="post" action="{% url 'catalog:familyid_reserve_next' %}" class="d-inline">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-success btn-lg">
+                    <i class="bi bi-plus-lg"></i>
+                    Nächste FamilyID reservieren
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Info Card: Next Preview -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card text-bg-info">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="card-title mb-0">{{ next_family_id_preview }}</h5>
+                            <p class="card-text mb-0 small">Nächste verfügbare FamilyID</p>
+                        </div>
+                        <i class="bi bi-arrow-right-circle fs-2 opacity-50"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-bg-primary">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="card-title mb-0">{{ reservations|length }}</h5>
+                            <p class="card-text mb-0 small">Aktive Reservierungen</p>
+                        </div>
+                        <i class="bi bi-bookmark-check fs-2 opacity-50"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reservations Table -->
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-table"></i>
+            Aktive Reservierungen
+        </div>
+        <div class="card-body p-0">
+            {% if reservations %}
+            <table class="table table-striped table-hover mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>FamilyID</th>
+                        <th>Reserviert am</th>
+                        <th>Reserviert von</th>
+                        <th class="text-center">Aktionen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for res in reservations %}
+                    <tr>
+                        <td>
+                            <strong class="text-primary fs-5">{{ res.family_id }}</strong>
+                        </td>
+                        <td>
+                            {{ res.reserved_at|date:"d.m.Y H:i" }}
+                        </td>
+                        <td>
+                            {% if res.reserved_by %}
+                                <i class="bi bi-person"></i>
+                                {{ res.reserved_by.username }}
+                            {% else %}
+                                <span class="text-muted">–</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <form method="post" 
+                                  action="{% url 'catalog:familyid_reservation_cancel' res.pk %}" 
+                                  class="d-inline"
+                                  onsubmit="return confirm('Möchten Sie die Reservierung \'{{ res.family_id }}\' wirklich stornieren?');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Stornieren">
+                                    <i class="bi bi-x-circle"></i>
+                                    Stornieren
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="text-center py-5 text-muted">
+                <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                <p class="mb-0">Keine aktiven Reservierungen vorhanden.</p>
+                <p class="small">Klicken Sie oben auf "Nächste FamilyID reservieren", um eine neue Reservierung anzulegen.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    {% if page_obj.has_other_pages %}
+    <nav class="mt-4" aria-label="Seitennavigation">
+        <ul class="pagination justify-content-center">
+            {% if page_obj.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.previous_page_number }}">
+                    <i class="bi bi-chevron-left"></i> Zurück
+                </a>
+            </li>
+            {% endif %}
+            
+            {% for num in page_obj.paginator.page_range %}
+                {% if page_obj.number == num %}
+                <li class="page-item active">
+                    <span class="page-link">{{ num }}</span>
+                </li>
+                {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ num }}">{{ num }}</a>
+                </li>
+                {% endif %}
+            {% endfor %}
+            
+            {% if page_obj.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page_obj.next_page_number }}">
+                    Weiter <i class="bi bi-chevron-right"></i>
+                </a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+
+    <!-- Help Text -->
+    <div class="card mt-4">
+        <div class="card-header">
+            <i class="bi bi-question-circle"></i>
+            Hinweise
+        </div>
+        <div class="card-body">
+            <ul class="mb-0">
+                <li>
+                    <strong>Reservierung:</strong> Reservieren Sie eine FamilyID, wenn Sie wissen, 
+                    dass eine neue Familie angelegt wird, aber Sie dies nicht sofort tun können.
+                </li>
+                <li>
+                    <strong>Verwendung:</strong> Reservierte IDs werden im Familien-Wizard als Option angezeigt 
+                    und können dort ausgewählt werden.
+                </li>
+                <li>
+                    <strong>Stornieren:</strong> Nicht verwendete Reservierungen können jederzeit storniert werden. 
+                    Die FamilyID wird dann wieder für die automatische Vergabe freigegeben.
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}

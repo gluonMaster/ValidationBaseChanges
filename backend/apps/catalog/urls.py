@@ -58,4 +58,9 @@ urlpatterns = [
     path("record-discounts/create/", views.RecordDiscountCreateView.as_view(), name="record_discount_create"),
     path("record-discounts/<int:pk>/edit/", views.RecordDiscountUpdateView.as_view(), name="record_discount_edit"),
     path("record-discounts/<int:pk>/delete/", views.RecordDiscountDeleteView.as_view(), name="record_discount_delete"),
+    
+    # FamilyID Reservations (Admin only)
+    path("familyid-reservations/", views.FamilyIdReservationListView.as_view(), name="familyid_reservation_list"),
+    path("familyid-reservations/reserve-next/", views.ReserveNextFamilyIdView.as_view(), name="familyid_reserve_next"),
+    path("familyid-reservations/<int:pk>/cancel/", views.CancelFamilyIdReservationView.as_view(), name="familyid_reservation_cancel"),
 ]

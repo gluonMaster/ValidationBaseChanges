@@ -71,6 +71,7 @@ INSTALLED_APPS = [
     'apps.legacy_import',
     'apps.reporting',
     'apps.catalog',
+    'apps.familyid_reservations',
 ]
 
 MIDDLEWARE = [

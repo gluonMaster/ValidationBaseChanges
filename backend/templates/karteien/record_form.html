@@ -2099,6 +2099,154 @@ Includes autocomplete for parent/child names when creating new records.
     updatePriceComment(price2Select, price2Comment);
   }
   
+  // ==========================================================================
+  // Live Refresh Dropdowns (reload data without page refresh)
+  // ==========================================================================
+  
+  const subjectsApiUrl = '/api/catalog/subjects/';
+  
+  // Debounce cache to prevent excessive API calls
+  const refreshCache = {
+    subjects: { timestamp: 0, debounceMs: 2000 },
+    teachers1: { timestamp: 0, debounceMs: 2000 },
+    prices1: { timestamp: 0, debounceMs: 2000 },
+    teachers2: { timestamp: 0, debounceMs: 2000 },
+    prices2: { timestamp: 0, debounceMs: 2000 },
+  };
+  
+  /**
+   * Check if enough time has passed since last refresh
+   */
+  function shouldRefresh(cacheKey) {
+    const cache = refreshCache[cacheKey];
+    const now = Date.now();
+    if (now - cache.timestamp < cache.debounceMs) {
+      return false;
+    }
+    cache.timestamp = now;
+    return true;
+  }
+  
+  /**
+   * Refresh subjects dropdown
+   */
+  async function refreshSubjects(subjectSelect) {
+    if (!subjectSelect) return;
+    
+    try {
+      const response = await fetch(subjectsApiUrl);
+      const data = await response.json();
+      
+      // Store current value
+      const currentValue = subjectSelect.value;
+      
+      // Clear and rebuild options
+      subjectSelect.innerHTML = '<option value="">---------</option>';
+      
+      data.subjects.forEach(subject => {
+        const option = document.createElement('option');
+        option.value = subject.id;
+        option.textContent = subject.name;
+        if (String(subject.id) === String(currentValue)) {
+          option.selected = true;
+        }
+        subjectSelect.appendChild(option);
+      });
+    } catch (error) {
+      console.error('Error refreshing subjects:', error);
+    }
+  }
+  
+  /**
+   * Refresh teachers dropdown (reloads based on current subject)
+   */
+  async function refreshTeachers(subjectSelect, teacherSelect) {
+    if (!subjectSelect || !teacherSelect) return;
+    
+    const subjectId = subjectSelect.value;
+    if (subjectId) {
+      // Use existing loadTeachers function but preserve current selection
+      const currentValue = teacherSelect.value;
+      await loadTeachers(subjectId, teacherSelect, currentValue);
+    }
+  }
+  
+  /**
+   * Refresh prices dropdown (reloads based on current subject)
+   */
+  async function refreshPrices(subjectSelect, priceSelect, priceComment) {
+    if (!subjectSelect || !priceSelect) return;
+    
+    const subjectId = subjectSelect.value;
+    if (subjectId) {
+      // Use existing loadPrices function but preserve current selection
+      const currentValue = priceSelect.value;
+      await loadPrices(subjectId, priceSelect, priceComment, currentValue);
+    }
+  }
+  
+  // Add focus/mousedown handlers for live refresh - Semester 1
+  if (subject1Select) {
+    const refreshSubject1 = () => {
+      if (shouldRefresh('subjects')) {
+        refreshSubjects(subject1Select);
+      }
+    };
+    subject1Select.addEventListener('focus', refreshSubject1);
+    subject1Select.addEventListener('mousedown', refreshSubject1);
+  }
+  
+  if (teacher1Select) {
+    const refreshTeacher1 = () => {
+      if (shouldRefresh('teachers1')) {
+        refreshTeachers(subject1Select, teacher1Select);
+      }
+    };
+    teacher1Select.addEventListener('focus', refreshTeacher1);
+    teacher1Select.addEventListener('mousedown', refreshTeacher1);
+  }
+  
+  if (price1Select) {
+    const refreshPrice1 = () => {
+      if (shouldRefresh('prices1')) {
+        refreshPrices(subject1Select, price1Select, price1Comment);
+      }
+    };
+    price1Select.addEventListener('focus', refreshPrice1);
+    price1Select.addEventListener('mousedown', refreshPrice1);
+  }
+  
+  // Add focus/mousedown handlers for live refresh - Semester 2
+  if (subject2Select) {
+    const refreshSubject2 = () => {
+      if (shouldRefresh('subjects')) {
+        refreshSubjects(subject2Select);
+      }
+    };
+    subject2Select.addEventListener('focus', refreshSubject2);
+    subject2Select.addEventListener('mousedown', refreshSubject2);
+  }
+  
+  if (teacher2Select) {
+    const refreshTeacher2 = () => {
+      if (shouldRefresh('teachers2')) {
+        refreshTeachers(subject2Select, teacher2Select);
+      }
+    };
+    teacher2Select.addEventListener('focus', refreshTeacher2);
+    teacher2Select.addEventListener('mousedown', refreshTeacher2);
+  }
+  
+  if (price2Select) {
+    const refreshPrice2 = () => {
+      if (shouldRefresh('prices2')) {
+        refreshPrices(subject2Select, price2Select, price2Comment);
+      }
+    };
+    price2Select.addEventListener('focus', refreshPrice2);
+    price2Select.addEventListener('mousedown', refreshPrice2);
+  }
+  
   {% if not is_create %}
   // ==========================================================================
   // Billing Preview (live preview in edit mode)

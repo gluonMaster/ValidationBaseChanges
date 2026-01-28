@@ -202,8 +202,8 @@ def parse_new_format_segment(segment: str) -> HistoryEventData:
     
     New format: [RUCK:]<TAG>(<OLD>-><NEW>);.../@<COMMENT>@/<DATE>
                 DCL(<N>-><comment>)/@<user>@/<date>
-                APR:<username>/.../@<comment>@/<date>
-                ADM:<username>/.../@<comment>@/<date>
+                APR:<username>/[TAG(old->new);...]/@<comment>@/<date>
+                ADM:<username>/[TAG(old->new);...]/@<comment>@/<date>
     
     Args:
         segment: A single history session segment
@@ -224,29 +224,24 @@ def parse_new_format_segment(segment: str) -> HistoryEventData:
     # Check for APR: approve entry
     if working.startswith("APR:"):
         event.event_type = "APPROVE"
-        # Parse date from the tail (e.g., APR:username/.../@comment@/20.01.2026)
-        event.event_time = parse_date(working)
-        # Extract comment if present
-        comment_pattern = re.compile(r"/@(.*)@/", re.DOTALL)
-        comment_match = comment_pattern.search(working)
-        if comment_match:
-            event.comment = comment_match.group(1).strip()
-        return event
+        # Remove "APR:<username>/" prefix to get the rest
+        # Format: APR:username/[TAG(old->new);...]/@comment@/date||
+        prefix_match = re.match(r"APR:([^/]+)/", working)
+        if prefix_match:
+            working = working[prefix_match.end():]
+        # Continue to parse comment, date, and field changes below
     
     # Check for ADM: admin comment entry
-    if working.startswith("ADM:"):
-        event.event_type = "CHANGE"  # Keep as CHANGE but don't lose the event
-        # Parse date from the tail
-        event.event_time = parse_date(working)
-        # Extract comment if present
-        comment_pattern = re.compile(r"/@(.*)@/", re.DOTALL)
-        comment_match = comment_pattern.search(working)
-        if comment_match:
-            event.comment = comment_match.group(1).strip()
-        return event
+    elif working.startswith("ADM:"):
+        event.event_type = "CHANGE"  # Keep as CHANGE but include field diffs
+        # Remove "ADM:<username>/" prefix
+        prefix_match = re.match(r"ADM:([^/]+)/", working)
+        if prefix_match:
+            working = working[prefix_match.end():]
+        # Continue to parse comment, date, and field changes below
     
     # Check for DCL( decline entry
-    if working.startswith("DCL("):
+    elif working.startswith("DCL("):
         event.event_type = "DECLINE"
         
         # Parse DCL(N->comment)
@@ -271,7 +266,7 @@ def parse_new_format_segment(segment: str) -> HistoryEventData:
     comment_match = comment_pattern.search(working)
     if comment_match:
         event.comment = comment_match.group(1).strip()
-        # Remove comment and date from working string for field parsing
+        # Remove comment from working string for field parsing
         working = comment_pattern.sub("", working)
     
     # Remove date from end if present

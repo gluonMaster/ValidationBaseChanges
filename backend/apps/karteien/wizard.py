@@ -47,64 +47,40 @@ from .billing import (
     ZERO,
 )
 from .models import KarteiRecord, RecordStatus, MonthsMode
-
-
-# =============================================================================
-# FamilyID Generation Helper
-# =============================================================================
-
-# Pattern for FamilyID format: "1. <number>"
-FAMILY_ID_PATTERN = re.compile(r'^1\.\s*(\d+)$')
+from apps.familyid_reservations.services import (
+    get_next_family_id,
+    is_family_id_available,
+    get_active_reservations,
+    mark_reservation_as_used,
+    FAMILY_ID_PATTERN,
+)
+from apps.familyid_reservations.models import FamilyIdReservation
 
 
 def generate_next_family_id() -> str:
     """
     Generate the next globally unique FamilyID.
     
-    Scans all existing family_id values across all years that match
-    the pattern "1. <number>" and returns "1. <max+1>".
-    
-    Only considers "valid" FamilyIDs with numbers < 10000 (4 digits max).
-    Values with 5+ digits (e.g., "1. 31431") are treated as erroneous
-    and are excluded from the maximum calculation.
+    This is a wrapper around the centralized service that considers
+    both existing KarteiRecords and active reservations.
     
     Returns:
         str: Next FamilyID in format "1. <number>".
     """
-    # Get all family_ids that match the pattern
-    all_family_ids = KarteiRecord.objects.values_list('family_id', flat=True).distinct()
-    
-    # Maximum valid number in the "correct" 4-digit range (1-9999)
-    MAX_VALID_FAMILY_NUMBER = 9999
-    
-    max_number = 0
-    for fid in all_family_ids:
-        if not fid:
-            continue
-        match = FAMILY_ID_PATTERN.match(str(fid).strip())
-        if match:
-            number = int(match.group(1))
-            # Only consider "valid" FamilyIDs (4 digits or less, i.e., < 10000)
-            # Skip erroneous 5-digit values like "1. 31431"
-            if number <= MAX_VALID_FAMILY_NUMBER and number > max_number:
-                max_number = number
-    
-    # Generate next FamilyID
-    next_number = max_number + 1
-    return f"1. {next_number}"
+    return get_next_family_id(prefix="1")
 
 
 def validate_family_id_globally_unique(family_id: str) -> bool:
     """
-    Check if a family_id is globally unique (across all years).
+    Check if a family_id is globally unique (across all years and reservations).
     
     Args:
         family_id: The FamilyID to check.
         
     Returns:
-        True if unique, False if already exists.
+        True if unique (not in records and not reserved), False otherwise.
     """
-    return not KarteiRecord.objects.filter(family_id=family_id).exists()
+    return is_family_id_available(family_id)
 
 
 # =============================================================================
@@ -148,6 +124,27 @@ class FamilyHeaderForm(forms.Form):
         widget=forms.Select(attrs={"class": "form-select"}),
         label="Jahr",
         help_text="Für welches Jahr sollen die Datensätze erstellt werden?",
+    )
+    
+    # Mode for FamilyID: 'auto' or 'reserved'
+    family_id_mode = forms.ChoiceField(
+        choices=[
+            ('auto', 'Automatisch generieren'),
+            ('reserved', 'Reservierte FamilyID verwenden'),
+        ],
+        initial='auto',
+        required=True,
+        widget=forms.RadioSelect(attrs={"class": "form-check-input"}),
+        label="FamilyID-Modus",
+    )
+    
+    # Reserved FamilyID selector (used when mode='reserved')
+    reserved_family_id = forms.ChoiceField(
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        label="Reservierte FamilyID",
+        help_text="Wählen Sie eine zuvor reservierte FamilyID.",
+        choices=[],  # Populated dynamically in __init__
     )
     
     family_id = forms.CharField(
@@ -254,6 +251,13 @@ class FamilyHeaderForm(forms.Form):
         # Generate initial FamilyID
         self.fields["family_id"].initial = generate_next_family_id()
         
+        # Build reserved FamilyID choices
+        reserved_choices = [("", "— Reservierung wählen —")]
+        active_reservations = get_active_reservations()
+        for res in active_reservations:
+            reserved_choices.append((res.family_id, res.family_id))
+        self.fields["reserved_family_id"].choices = reserved_choices
+        
         # Build SEPA-Marker choices from database + ensure "SEPA" is always present
         sepa_values = (
             KarteiRecord.objects
@@ -269,6 +273,35 @@ class FamilyHeaderForm(forms.Form):
         sepa_choices = [("", "— nicht gesetzt —")]
         sepa_choices += [(v, v) for v in sorted(sepa_set)]
         self.fields["sepa_marker"].choices = sepa_choices
+    
+    def clean(self) -> dict[str, Any]:
+        """Validate form data, including reserved FamilyID validation."""
+        cleaned_data = super().clean()
+        
+        family_id_mode = cleaned_data.get("family_id_mode")
+        reserved_family_id = cleaned_data.get("reserved_family_id")
+        
+        if family_id_mode == "reserved":
+            if not reserved_family_id:
+                self.add_error(
+                    "reserved_family_id",
+                    "Bitte wählen Sie eine reservierte FamilyID aus."
+                )
+            else:
+                # Validate that the reservation is still active
+                try:
+                    reservation = FamilyIdReservation.objects.get(
+                        family_id=reserved_family_id,
+                        is_used=False
+                    )
+                except FamilyIdReservation.DoesNotExist:
+                    self.add_error(
+                        "reserved_family_id",
+                        f"Die Reservierung für FamilyID '{reserved_family_id}' ist nicht mehr verfügbar. "
+                        "Bitte wählen Sie eine andere oder verwenden Sie die automatische Generierung."
+                    )
+        
+        return cleaned_data
 
 
 # =============================================================================
@@ -656,18 +689,28 @@ class NewFamilyWizardView(AdminOnlyMixin, View):
         header_data = header_form.cleaned_data
         year = header_data["year"]
         
-        # Generate FamilyID (re-generate to ensure uniqueness)
-        family_id = generate_next_family_id()
+        # Determine FamilyID based on mode
+        family_id_mode = header_data.get("family_id_mode", "auto")
+        reserved_family_id = header_data.get("reserved_family_id")
         
-        # Ensure it's unique
-        while not validate_family_id_globally_unique(family_id):
-            # Extract number and increment
-            match = FAMILY_ID_PATTERN.match(family_id)
-            if match:
-                next_num = int(match.group(1)) + 1
-                family_id = f"1. {next_num}"
-            else:
-                break
+        if family_id_mode == "reserved" and reserved_family_id:
+            # Use reserved FamilyID
+            family_id = reserved_family_id
+            # Mark reservation as used
+            mark_reservation_as_used(family_id)
+        else:
+            # Generate FamilyID (re-generate to ensure uniqueness)
+            family_id = generate_next_family_id()
+            
+            # Ensure it's unique
+            while not validate_family_id_globally_unique(family_id):
+                # Extract number and increment
+                match = FAMILY_ID_PATTERN.match(family_id)
+                if match:
+                    next_num = int(match.group(1)) + 1
+                    family_id = f"1. {next_num}"
+                else:
+                    break
         
         # Get max ID for this year
         max_id = KarteiRecord.objects.filter(year=year).order_by('-id').values_list('id', flat=True).first()

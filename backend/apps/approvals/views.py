@@ -632,13 +632,17 @@ class SuperadminPendingOverviewView(SuperadminMixin, ListView):
             is_processed=False
         ).select_related("record").order_by("-created_at")
         
-        # Year filter
+        # Year filter - "all" means no year filter
         year = self.request.GET.get("year")
-        if year:
+        if year == "all":
+            # No year filter - show all years
+            pass
+        elif year:
             try:
                 qs = qs.filter(record__year=int(year))
             except ValueError:
-                pass
+                # Default to current year on invalid value
+                qs = qs.filter(record__year=date.today().year)
         else:
             # Default to current year
             qs = qs.filter(record__year=date.today().year)
@@ -672,28 +676,50 @@ class SuperadminPendingOverviewView(SuperadminMixin, ListView):
             .order_by("-year")
         )
         context["available_years"] = list(years) or [date.today().year]
-        context["current_year"] = int(self.request.GET.get("year", date.today().year))
+        
+        # Current year can be "all" or an integer
+        year_param = self.request.GET.get("year", "")
+        if year_param == "all":
+            context["current_year"] = "all"
+        elif year_param:
+            try:
+                context["current_year"] = int(year_param)
+            except ValueError:
+                context["current_year"] = date.today().year
+        else:
+            context["current_year"] = date.today().year
         
         # Current filters
         context["filter_family_id"] = self.request.GET.get("family_id", "")
         context["filter_parent"] = self.request.GET.get("parent", "")
         context["filter_child"] = self.request.GET.get("child", "")
         
-        # Total counts
-        context["pending_count"] = PendingChange.objects.filter(
-            is_processed=False,
-            record__year=context["current_year"]
-        ).count()
-        context["declined_count"] = KarteiRecord.objects.filter(
-            status=RecordStatus.DECLINED,
-            year=context["current_year"]
-        ).count()
+        # Total counts - for "all" count without year filter
+        if context["current_year"] == "all":
+            context["pending_count"] = PendingChange.objects.filter(
+                is_processed=False
+            ).count()
+            context["declined_count"] = KarteiRecord.objects.filter(
+                status=RecordStatus.DECLINED
+            ).count()
+        else:
+            context["pending_count"] = PendingChange.objects.filter(
+                is_processed=False,
+                record__year=context["current_year"]
+            ).count()
+            context["declined_count"] = KarteiRecord.objects.filter(
+                status=RecordStatus.DECLINED,
+                year=context["current_year"]
+            ).count()
         
-        # New records count
+        # New records count - only for specific year
         try:
-            context["new_records_count"] = get_new_records_count(
-                self.request.user, context["current_year"]
-            )
+            if context["current_year"] != "all":
+                context["new_records_count"] = get_new_records_count(
+                    self.request.user, context["current_year"]
+                )
+            else:
+                context["new_records_count"] = 0
         except Exception:
             context["new_records_count"] = 0
         
@@ -873,11 +899,14 @@ class SuperadminApproveAllView(SuperadminMixin, View):
     
     def post(self, request: HttpRequest) -> HttpResponse:
         """Process bulk approve."""
-        year = request.POST.get("year")
-        try:
-            year = int(year) if year else date.today().year
-        except ValueError:
-            year = date.today().year
+        year_param = request.POST.get("year")
+        if year_param == "all":
+            year = None  # No year filter
+        else:
+            try:
+                year = int(year_param) if year_param else date.today().year
+            except ValueError:
+                year = date.today().year
         
         # Confirmation check
         confirm = request.POST.get("confirm")
@@ -917,11 +946,14 @@ class SuperadminDeclineAllView(SuperadminMixin, View):
     
     def post(self, request: HttpRequest) -> HttpResponse:
         """Process bulk decline."""
-        year = request.POST.get("year")
-        try:
-            year = int(year) if year else date.today().year
-        except ValueError:
-            year = date.today().year
+        year_param = request.POST.get("year")
+        if year_param == "all":
+            year = None  # No year filter
+        else:
+            try:
+                year = int(year_param) if year_param else date.today().year
+            except ValueError:
+                year = date.today().year
         
         comment = request.POST.get("comment", "").strip()
         if not comment:

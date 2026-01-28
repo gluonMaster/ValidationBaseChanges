@@ -1386,11 +1386,17 @@ class KarteiRecordForm(forms.ModelForm):
         # Check for price changes (edit mode only)
         # If force_recalc is set (LEGACY->AUTO forced conversion), skip price change validation
         # because forced recalculation recalculates all months from scratch anyway
+        # Also skip if _should_convert_to_auto is True (LEGACY->AUTO partial conversion),
+        # because touched_months are already determined by detect_meaningful_changes
         force_recalc = bool(cleaned_data.get("force_recalculate_months"))
         apply_from_1 = None
         apply_from_2 = None
         
-        if is_edit and not force_recalc:
+        # Check if we're converting LEGACY to AUTO (partial conversion with touched_months)
+        is_legacy_conversion = getattr(self, '_should_convert_to_auto', False)
+        
+        if is_edit and not force_recalc and not is_legacy_conversion:
+            # Standard AUTO mode edit: require apply_from_month when price changes
             # Check if price1 changed
             new_price1_ref = cleaned_data.get('price1_ref')
             new_price1_ref_id = new_price1_ref.id if new_price1_ref else None

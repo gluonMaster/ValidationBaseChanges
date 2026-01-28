@@ -2,6 +2,7 @@
 Simple JSON API views for catalog data.
 
 These endpoints provide dynamic data for the KarteiRecord form:
+- Subjects (all active subjects)
 - Teachers filtered by year and subject
 - Prices filtered by year and subject
 
@@ -16,7 +17,39 @@ from django.http import JsonResponse
 from django.views import View
 from django.contrib.auth.mixins import LoginRequiredMixin
 
-from .models import Teacher, PriceOption, TeachingAssignment
+from .models import Subject, Teacher, PriceOption, TeachingAssignment
+
+
+class SubjectsApiView(LoginRequiredMixin, View):
+    """
+    JSON API endpoint for all active subjects.
+    
+    GET /api/catalog/subjects/
+    
+    Returns:
+        {
+            "subjects": [
+                {"id": 1, "name": "11A Klasse Di"},
+                {"id": 2, "name": "Mathematik"},
+                ...
+            ]
+        }
+    """
+    
+    def get(self, request):
+        subjects = Subject.objects.filter(
+            is_active=True
+        ).order_by("name")
+        
+        subject_list = [
+            {
+                "id": s.id,
+                "name": s.name,
+            }
+            for s in subjects
+        ]
+        
+        return JsonResponse({"subjects": subject_list})
 
 
 class TeachersApiView(LoginRequiredMixin, View):

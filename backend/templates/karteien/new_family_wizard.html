@@ -79,6 +79,14 @@ Admin-only page for creating a new family with multiple children in one pass.
     .discount-checkboxes .discount-hidden-family {
         display: none !important;
     }
+    /* FamilyID mode radio styling */
+    .family-id-mode-container .form-check {
+        padding-left: 1.5rem;
+        margin-bottom: 0.25rem;
+    }
+    .family-id-mode-container .form-check-input {
+        margin-left: -1.5rem;
+    }
 </style>
 {% endblock %}
 
@@ -130,8 +138,38 @@ Admin-only page for creating a new family with multiple children in one pass.
                             {% endif %}
                         </div>
                         
-                        <!-- FamilyID (readonly) -->
+                        <!-- FamilyID Mode Selection -->
                         <div class="mb-3">
+                            <label class="form-label">{{ header_form.family_id_mode.label }}</label>
+                            <div class="border rounded p-3 bg-light">
+                                {% for radio in header_form.family_id_mode %}
+                                <div class="form-check">
+                                    {{ radio.tag }}
+                                    <label class="form-check-label" for="{{ radio.id_for_label }}">
+                                        {{ radio.choice_label }}
+                                    </label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        
+                        <!-- Reserved FamilyID Selector (shown when mode=reserved) -->
+                        <div class="mb-3" id="reserved-familyid-section" style="display: none;">
+                            <label for="id_reserved_family_id" class="form-label">
+                                <i class="bi bi-bookmark-star"></i>
+                                {{ header_form.reserved_family_id.label }}
+                            </label>
+                            {{ header_form.reserved_family_id }}
+                            {% if header_form.reserved_family_id.help_text %}
+                            <div class="form-text">{{ header_form.reserved_family_id.help_text }}</div>
+                            {% endif %}
+                            {% if header_form.reserved_family_id.errors %}
+                            <div class="invalid-feedback d-block">{{ header_form.reserved_family_id.errors.0 }}</div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- FamilyID Display (readonly, shown when mode=auto) -->
+                        <div class="mb-3" id="auto-familyid-section">
                             <label for="id_family_id" class="form-label">{{ header_form.family_id.label }}</label>
                             {{ header_form.family_id }}
                             {% if header_form.family_id.help_text %}
@@ -540,6 +578,54 @@ Admin-only page for creating a new family with multiple children in one pass.
 (function() {
     'use strict';
     
+    // =========================================================================
+    // FamilyID Mode Toggle (Auto vs Reserved)
+    // =========================================================================
+    
+    const familyIdModeRadios = document.querySelectorAll('input[name="family_id_mode"]');
+    const reservedSection = document.getElementById('reserved-familyid-section');
+    const autoSection = document.getElementById('auto-familyid-section');
+    const reservedSelect = document.getElementById('id_reserved_family_id');
+    const familyIdInput = document.getElementById('id_family_id');
+    
+    function updateFamilyIdSections() {
+        const selectedMode = document.querySelector('input[name="family_id_mode"]:checked');
+        if (!selectedMode) return;
+        
+        if (selectedMode.value === 'reserved') {
+            reservedSection.style.display = 'block';
+            autoSection.style.display = 'none';
+            // Update readonly family_id field with selected reservation
+            if (reservedSelect && reservedSelect.value) {
+                familyIdInput.value = reservedSelect.value;
+            }
+        } else {
+            reservedSection.style.display = 'none';
+            autoSection.style.display = 'block';
+        }
+    }
+    
+    // Attach change handlers to radio buttons
+    familyIdModeRadios.forEach(radio => {
+        radio.addEventListener('change', updateFamilyIdSections);
+    });
+    
+    // Update family_id field when reserved selection changes
+    if (reservedSelect) {
+        reservedSelect.addEventListener('change', function() {
+            if (this.value) {
+                familyIdInput.value = this.value;
+            }
+        });
+    }
+    
+    // Initialize on page load
+    updateFamilyIdSections();
+    
+    // =========================================================================
+    // Child Forms Management
+    // =========================================================================
+    
     const container = document.getElementById('childFormsContainer');
     const addBtn = document.getElementById('addChildBtn');
     const template = document.getElementById('childFormTemplate');
@@ -854,8 +940,119 @@ Admin-only page for creating a new family with multiple children in one pass.
         });
     }
     
+    // ==========================================================================
+    // Live Refresh Dropdowns (reload data without page refresh)
+    // ==========================================================================
+    
+    const subjectsApiUrl = '/api/catalog/subjects/';
+    
+    // Debounce cache to prevent excessive API calls
+    const refreshCache = {};
+    const REFRESH_DEBOUNCE_MS = 2000;
+    
+    /**
+     * Check if enough time has passed since last refresh for a given key
+     */
+    function shouldRefresh(cacheKey) {
+        const now = Date.now();
+        if (refreshCache[cacheKey] && now - refreshCache[cacheKey] < REFRESH_DEBOUNCE_MS) {
+            return false;
+        }
+        refreshCache[cacheKey] = now;
+        return true;
+    }
+    
+    /**
+     * Refresh subjects dropdown with latest data from API
+     */
+    async function refreshSubjects(subjectSelect) {
+        if (!subjectSelect) return;
+        
+        try {
+            const response = await fetch(subjectsApiUrl);
+            const data = await response.json();
+            
+            // Store current value
+            const currentValue = subjectSelect.value;
+            
+            // Clear and rebuild options
+            subjectSelect.innerHTML = '<option value="">---------</option>';
+            
+            data.subjects.forEach(subject => {
+                const option = document.createElement('option');
+                option.value = subject.id;
+                option.textContent = subject.name;
+                if (String(subject.id) === String(currentValue)) {
+                    option.selected = true;
+                }
+                subjectSelect.appendChild(option);
+            });
+        } catch (error) {
+            console.error('Error refreshing subjects:', error);
+        }
+    }
+    
+    /**
+     * Refresh teachers and prices for a specific subject dropdown
+     */
+    async function refreshDependents(subjectSelect, semester) {
+        const subjectId = subjectSelect.value;
+        const year = yearSelect ? yearSelect.value : '';
+        
+        if (subjectId && year) {
+            await updateDependentDropdowns(subjectSelect, semester);
+        }
+    }
+    
+    /**
+     * Attach live refresh handlers to a form
+     */
+    function attachLiveRefreshHandlers(form) {
+        ['1', '2'].forEach(semester => {
+            const subjectSelect = form.querySelector(`[name$="-subject${semester}_ref"]`);
+            const teacherSelect = form.querySelector(`[name$="-teacher${semester}_ref"]`);
+            const priceSelect = form.querySelector(`[name$="-price${semester}_ref"]`);
+            
+            if (subjectSelect) {
+                const cacheKey = `subject_${form.id || Math.random()}_${semester}`;
+                const refreshHandler = () => {
+                    if (shouldRefresh(cacheKey)) {
+                        refreshSubjects(subjectSelect);
+                    }
+                };
+                subjectSelect.addEventListener('focus', refreshHandler);
+                subjectSelect.addEventListener('mousedown', refreshHandler);
+            }
+            
+            if (teacherSelect) {
+                const cacheKey = `teacher_${form.id || Math.random()}_${semester}`;
+                const refreshHandler = () => {
+                    if (shouldRefresh(cacheKey)) {
+                        refreshDependents(subjectSelect, semester);
+                    }
+                };
+                teacherSelect.addEventListener('focus', refreshHandler);
+                teacherSelect.addEventListener('mousedown', refreshHandler);
+            }
+            
+            if (priceSelect) {
+                const cacheKey = `price_${form.id || Math.random()}_${semester}`;
+                const refreshHandler = () => {
+                    if (shouldRefresh(cacheKey)) {
+                        refreshDependents(subjectSelect, semester);
+                    }
+                };
+                priceSelect.addEventListener('focus', refreshHandler);
+                priceSelect.addEventListener('mousedown', refreshHandler);
+            }
+        });
+    }
+    
     // Attach handlers to existing forms
-    container.querySelectorAll('.child-form').forEach(attachSubjectChangeHandlers);
+    container.querySelectorAll('.child-form').forEach(form => {
+        attachSubjectChangeHandlers(form);
+        attachLiveRefreshHandlers(form);
+    });
     
     // Override addBtn click to also attach subject handlers to new forms
     const originalAddHandler = addBtn.onclick;
@@ -866,6 +1063,7 @@ Admin-only page for creating a new family with multiple children in one pass.
             const newForm = forms[forms.length - 1];
             if (newForm) {
                 attachSubjectChangeHandlers(newForm);
+                attachLiveRefreshHandlers(newForm);
             }
             // Also sync family discount exclusion for the new form
             syncFamilyDiscountExclusion();

@@ -1241,3 +1241,118 @@ class RecordDiscountDeleteView(CatalogAdminMixin, DeleteView):
         if next_url:
             return redirect(next_url)
         return redirect(f"{self.success_url}?record_pk={record_pk}")
+
+
+# =============================================================================
+# FamilyID Reservation Views (Admin only)
+# =============================================================================
+
+from django.db import transaction
+from django.views import View
+from apps.familyid_reservations.models import FamilyIdReservation
+from apps.familyid_reservations.services import get_next_family_id
+
+
+class FamilyIdReservationListView(CatalogAdminMixin, ListView):
+    """
+    List active (unused) FamilyID reservations.
+    
+    Shows all reserved FamilyIDs that haven't been used yet,
+    with options to reserve a new one or cancel existing.
+    """
+    
+    model = FamilyIdReservation
+    template_name = "catalog/familyid_reservations.html"
+    context_object_name = "reservations"
+    paginate_by = 50
+    
+    def get_queryset(self) -> QuerySet:
+        """Return active reservations, ordered by newest first."""
+        return FamilyIdReservation.objects.filter(
+            is_used=False
+        ).select_related('reserved_by').order_by('-reserved_at')
+    
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        context["next_family_id_preview"] = get_next_family_id()
+        return context
+
+
+class ReserveNextFamilyIdView(CatalogAdminMixin, View):
+    """
+    Reserve the next available FamilyID.
+    
+    Uses atomic transaction with retry logic to handle race conditions
+    when multiple admins try to reserve at the same time.
+    """
+    
+    MAX_RETRIES = 3
+    
+    def post(self, request):
+        """Handle POST request to reserve next FamilyID."""
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                with transaction.atomic():
+                    candidate = get_next_family_id()
+                    reservation = FamilyIdReservation.objects.create(
+                        family_id=candidate,
+                        reserved_by=request.user
+                    )
+                    messages.success(
+                        request,
+                        f"FamilyID '{reservation.family_id}' wurde erfolgreich reserviert."
+                    )
+                    return redirect("catalog:familyid_reservation_list")
+            except IntegrityError:
+                # Race condition: another admin reserved this ID
+                # Retry with new candidate
+                if attempt < self.MAX_RETRIES - 1:
+                    continue
+                messages.error(
+                    request,
+                    "Reservierung fehlgeschlagen: Bitte versuchen Sie es erneut."
+                )
+                return redirect("catalog:familyid_reservation_list")
+        
+        # Should not reach here, but safety fallback
+        messages.error(request, "Reservierung fehlgeschlagen nach mehreren Versuchen.")
+        return redirect("catalog:familyid_reservation_list")
+    
+    def get(self, request):
+        """GET not allowed, redirect to list."""
+        return redirect("catalog:familyid_reservation_list")
+
+
+class CancelFamilyIdReservationView(CatalogAdminMixin, View):
+    """
+    Cancel (delete) an existing FamilyID reservation.
+    
+    Only unused reservations can be cancelled.
+    """
+    
+    def post(self, request, pk):
+        """Handle POST request to cancel a reservation."""
+        from django.shortcuts import get_object_or_404
+        
+        reservation = get_object_or_404(FamilyIdReservation, pk=pk)
+        
+        if reservation.is_used:
+            messages.error(
+                request,
+                f"Reservierung '{reservation.family_id}' kann nicht storniert werden, "
+                "da sie bereits verwendet wurde."
+            )
+            return redirect("catalog:familyid_reservation_list")
+        
+        family_id = reservation.family_id
+        reservation.delete()
+        
+        messages.success(
+            request,
+            f"Reservierung '{family_id}' wurde erfolgreich storniert."
+        )
+        return redirect("catalog:familyid_reservation_list")
+    
+    def get(self, request, pk):
+        """GET not allowed, redirect to list."""
+        return redirect("catalog:familyid_reservation_list")

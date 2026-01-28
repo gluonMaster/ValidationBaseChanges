@@ -19,7 +19,7 @@ Shows all unprocessed pending changes with filters and links to War/Ist view.
                 Superadmin - Ausstehende Änderungen
             </h1>
             <p class="text-muted">
-                Jahr: {{ current_year }} |
+                Jahr: {% if current_year == "all" %}Alle{% else %}{{ current_year }}{% endif %} |
                 {{ pending_count }} Änderung(en) warten auf Ihre Entscheidung
             </p>
         </div>
@@ -52,6 +52,7 @@ Shows all unprocessed pending changes with filters and links to War/Ist view.
                 <div class="col-md-2">
                     <label for="year" class="form-label">Jahr:</label>
                     <select name="year" id="year" class="form-select">
+                        <option value="all" {% if current_year == "all" %}selected{% endif %}>Alle</option>
                         {% for y in available_years %}
                         <option value="{{ y }}" {% if y == current_year %}selected{% endif %}>{{ y }}</option>
                         {% endfor %}

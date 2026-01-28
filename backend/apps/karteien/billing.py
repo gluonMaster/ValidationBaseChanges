@@ -1068,77 +1068,45 @@ def detect_meaningful_changes(
     old_start_2 = original.start_month_2 or 7
     
     # Check price1_ref change - only touch months from apply_from_month_1
-    # Exception: linking ref to existing legacy value with same amount is NOT meaningful
+    # Any change to price1_ref (including linking to same legacy value) is meaningful
     new_price1_ref = cleaned_data.get('price1_ref')
     new_price1_ref_id = new_price1_ref.id if new_price1_ref else None
     if new_price1_ref_id != original.price1_ref_id:
-        # Check if this is just linking to matching legacy value
-        is_linking_to_same_price1 = (
-            original.price1_ref_id is None
-            and new_price1_ref is not None
-            and original.price1 is not None
-            and new_price1_ref.amount == original.price1
-        )
-        if not is_linking_to_same_price1:
-            has_changes = True
-            # Only touch months from apply_from_month_1 to 6
-            start_month = apply_from_1 if apply_from_1 else 1
-            touched_months.update(range(start_month, 7))
+        has_changes = True
+        # Only touch months from apply_from_month_1 to 6
+        start_month = apply_from_1 if apply_from_1 else 1
+        touched_months.update(range(start_month, 7))
     
     # Check price2_ref change - only touch months from apply_from_month_2
-    # Exception: linking ref to existing legacy value with same amount is NOT meaningful
+    # Any change to price2_ref (including linking to same legacy value) is meaningful
     new_price2_ref = cleaned_data.get('price2_ref')
     new_price2_ref_id = new_price2_ref.id if new_price2_ref else None
     if new_price2_ref_id != original.price2_ref_id:
-        # Check if this is just linking to matching legacy value
-        is_linking_to_same_price2 = (
-            original.price2_ref_id is None
-            and new_price2_ref is not None
-            and original.price2 is not None
-            and new_price2_ref.amount == original.price2
-        )
-        if not is_linking_to_same_price2:
-            has_changes = True
-            # Only touch months from apply_from_month_2 to 12
-            start_month = apply_from_2 if apply_from_2 else 7
-            touched_months.update(range(start_month, 13))
+        has_changes = True
+        # Only touch months from apply_from_month_2 to 12
+        start_month = apply_from_2 if apply_from_2 else 7
+        touched_months.update(range(start_month, 13))
     
     # Check subject1_ref change (may change pricing type - hourly vs monthly)
     # Touch months from current start_month onwards (subject change affects calculation type)
-    # Exception: linking ref to existing legacy value with same name is NOT meaningful
+    # Any change to subject1_ref (including linking to same legacy value) is meaningful
     new_subject1_ref = cleaned_data.get('subject1_ref')
     new_subject1_ref_id = new_subject1_ref.id if new_subject1_ref else None
     if new_subject1_ref_id != original.subject1_ref_id:
-        # Check if this is just linking to matching legacy value
-        is_linking_to_same_subject1 = (
-            original.subject1_ref_id is None
-            and new_subject1_ref is not None
-            and original.subject1
-            and _normalize_subject_name(new_subject1_ref.name) == _normalize_subject_name(original.subject1)
-        )
-        if not is_linking_to_same_subject1:
-            has_changes = True
-            # Touch months from start_month_1 to 6
-            effective_start = min(old_start_1, new_start_1)
-            touched_months.update(range(effective_start, 7))
+        has_changes = True
+        # Touch months from start_month_1 to 6
+        effective_start = min(old_start_1, new_start_1)
+        touched_months.update(range(effective_start, 7))
     
     # Check subject2_ref change
-    # Exception: linking ref to existing legacy value with same name is NOT meaningful
+    # Any change to subject2_ref (including linking to same legacy value) is meaningful
     new_subject2_ref = cleaned_data.get('subject2_ref')
     new_subject2_ref_id = new_subject2_ref.id if new_subject2_ref else None
     if new_subject2_ref_id != original.subject2_ref_id:
-        # Check if this is just linking to matching legacy value
-        is_linking_to_same_subject2 = (
-            original.subject2_ref_id is None
-            and new_subject2_ref is not None
-            and original.subject2
-            and _normalize_subject_name(new_subject2_ref.name) == _normalize_subject_name(original.subject2)
-        )
-        if not is_linking_to_same_subject2:
-            has_changes = True
-            # Touch months from start_month_2 to 12
-            effective_start = min(old_start_2, new_start_2)
-            touched_months.update(range(effective_start, 13))
+        has_changes = True
+        # Touch months from start_month_2 to 12
+        effective_start = min(old_start_2, new_start_2)
+        touched_months.update(range(effective_start, 13))
     
     # Check start_month_1 change - only touch months that changed status
     if new_start_1 != old_start_1:

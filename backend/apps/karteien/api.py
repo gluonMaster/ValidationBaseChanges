@@ -426,15 +426,25 @@ def live_search_api(request: HttpRequest) -> JsonResponse:
         ),
     )
     
-    # Default to current year if not specified
-    year = request.GET.get("year")
-    if year:
+    # Determine selected year with session persistence
+    # Priority: 1) GET param, 2) Session, 3) Current year
+    year_param = request.GET.get("year")
+    system_year = date.today().year
+    
+    if year_param:
         try:
-            qs = qs.filter(year=int(year))
+            selected_year = int(year_param)
+            # Save to session for persistence (AJAX calls update session)
+            request.session["karteien_selected_year"] = selected_year
         except ValueError:
-            pass
+            # Invalid year - fall back to session or system year
+            selected_year = request.session.get("karteien_selected_year", system_year)
     else:
-        qs = qs.filter(year=date.today().year)
+        # No year in GET - use session or default to system year
+        selected_year = request.session.get("karteien_selected_year", system_year)
+    
+    # Filter by selected year
+    qs = qs.filter(year=selected_year)
     
     # Filter by FamilyID
     family_id = request.GET.get("family_id")
@@ -546,11 +556,10 @@ def live_search_api(request: HttpRequest) -> JsonResponse:
         page_obj = paginator.page(paginator.num_pages)
     
     # Build context for templates
-    current_year = year if year else date.today().year
     context = {
         'records': page_obj.object_list,
         'page_obj': page_obj,
-        'current_year': current_year,
+        'current_year': selected_year,
         'user': user,
     }
     
@@ -886,76 +895,36 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         old_hours_amounts = record.hours_amounts or {}
         
         # Check price1_ref change - touch months from apply_from_month_1 (default=1) to 6
+        # Any change to price1_ref (including linking to same legacy value) is meaningful
         if price1_ref_id != old_price1_ref_id:
-            # Check if just linking to same legacy price (not meaningful)
-            is_linking_to_same_price1 = False
-            if old_price1_ref_id is None and price1_ref_id is not None and record.price1 is not None:
-                try:
-                    new_price1 = PriceOption.objects.get(pk=price1_ref_id)
-                    if new_price1.amount == record.price1:
-                        is_linking_to_same_price1 = True
-                except PriceOption.DoesNotExist:
-                    pass
-            
-            if not is_linking_to_same_price1:
-                # Use apply_from_month_1 if provided, else default to 1
-                effective_apply_from = apply_from_month_1 if apply_from_month_1 is not None else 1
-                # Also respect apply_to
-                for m in range(effective_apply_from, 7):
-                    if apply_to_month_1 is None or m <= apply_to_month_1:
-                        affected_months.add(m)
+            # Use apply_from_month_1 if provided, else default to 1
+            effective_apply_from = apply_from_month_1 if apply_from_month_1 is not None else 1
+            # Also respect apply_to
+            for m in range(effective_apply_from, 7):
+                if apply_to_month_1 is None or m <= apply_to_month_1:
+                    affected_months.add(m)
         
         # Check price2_ref change - touch months from apply_from_month_2 (default=7) to 12
+        # Any change to price2_ref (including linking to same legacy value) is meaningful
         if price2_ref_id != old_price2_ref_id:
-            # Check if just linking to same legacy price (not meaningful)
-            is_linking_to_same_price2 = False
-            if old_price2_ref_id is None and price2_ref_id is not None and record.price2 is not None:
-                try:
-                    new_price2 = PriceOption.objects.get(pk=price2_ref_id)
-                    if new_price2.amount == record.price2:
-                        is_linking_to_same_price2 = True
-                except PriceOption.DoesNotExist:
-                    pass
-            
-            if not is_linking_to_same_price2:
-                # Use apply_from_month_2 if provided, else default to 7
-                effective_apply_from = apply_from_month_2 if apply_from_month_2 is not None else 7
-                # Also respect apply_to
-                for m in range(effective_apply_from, 13):
-                    if apply_to_month_2 is None or m <= apply_to_month_2:
-                        affected_months.add(m)
+            # Use apply_from_month_2 if provided, else default to 7
+            effective_apply_from = apply_from_month_2 if apply_from_month_2 is not None else 7
+            # Also respect apply_to
+            for m in range(effective_apply_from, 13):
+                if apply_to_month_2 is None or m <= apply_to_month_2:
+                    affected_months.add(m)
         
         # Check subject1_ref change - touch months from min(old_start, new_start) to 6
+        # Any change to subject1_ref (including linking to same legacy value) is meaningful
         if subject1_ref_id != old_subject1_ref_id:
-            # Check if just linking to same legacy subject (not meaningful)
-            is_linking_to_same_subject1 = False
-            if old_subject1_ref_id is None and subject1_ref_id is not None and record.subject1:
-                try:
-                    new_subject1 = Subject.objects.get(pk=subject1_ref_id)
-                    if _normalize_subject_name(new_subject1.name) == _normalize_subject_name(record.subject1):
-                        is_linking_to_same_subject1 = True
-                except Subject.DoesNotExist:
-                    pass
-            
-            if not is_linking_to_same_subject1:
-                effective_start = min(old_start_1, start_month_1)
-                affected_months.update(range(effective_start, 7))
+            effective_start = min(old_start_1, start_month_1)
+            affected_months.update(range(effective_start, 7))
         
         # Check subject2_ref change - touch months from min(old_start, new_start) to 12
+        # Any change to subject2_ref (including linking to same legacy value) is meaningful
         if subject2_ref_id != old_subject2_ref_id:
-            # Check if just linking to same legacy subject (not meaningful)
-            is_linking_to_same_subject2 = False
-            if old_subject2_ref_id is None and subject2_ref_id is not None and record.subject2:
-                try:
-                    new_subject2 = Subject.objects.get(pk=subject2_ref_id)
-                    if _normalize_subject_name(new_subject2.name) == _normalize_subject_name(record.subject2):
-                        is_linking_to_same_subject2 = True
-                except Subject.DoesNotExist:
-                    pass
-            
-            if not is_linking_to_same_subject2:
-                effective_start = min(old_start_2, start_month_2)
-                affected_months.update(range(effective_start, 13))
+            effective_start = min(old_start_2, start_month_2)
+            affected_months.update(range(effective_start, 13))
         
         # Check start_month_1 change - only touch months between old and new
         if start_month_1 != old_start_1:
@@ -1290,7 +1259,7 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
     # Only show warning in LEGACY mode if there are no meaningful changes detected
     # (i.e., no months would be recalculated on save)
     if is_legacy_mode and not affected_months:
-        warnings.append("Legacy-Modus: Keine Änderungen erkannt. Wählen Sie Fach, Preis oder Startmonat, um Monate neu zu berechnen.")
+        warnings.append("Legacy-Modus: Keine abrechnungsrelevanten Änderungen erkannt. Wählen Sie Fach/Preis oder benutzen Sie 'Monate neu berechnen'.")
     
     # Add clamp warnings from calculation flags
     if calc_flags.clamped_to_zero_months:

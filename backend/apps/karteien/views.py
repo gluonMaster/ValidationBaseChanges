@@ -48,6 +48,7 @@ from .billing import recalculate_record_months, build_base_amounts, get_month_mi
 from .forms import KarteiRecordForm, KarteiRecordFilterForm, MonthsOverrideForm
 from .models import KarteiRecord, RecordStatus, MonthsMode
 from .validators import validate_kartei_record, apply_operator_filters
+from apps.familyid_reservations.services import get_next_family_id
 
 
 # =============================================================================
@@ -158,15 +159,31 @@ class KarteiRecordListView(KarteiViewerMixin, ListView):
             ),
         )
         
-        # Default to current year if not specified
-        year = self.request.GET.get("year")
-        if year:
+        # Determine selected year with session persistence
+        # Priority: 1) GET param, 2) Session, 3) Current year
+        year_param = self.request.GET.get("year")
+        system_year = date.today().year
+        
+        if year_param:
             try:
-                qs = qs.filter(year=int(year))
+                selected_year = int(year_param)
+                # Save to session for persistence
+                self.request.session["karteien_selected_year"] = selected_year
             except ValueError:
-                pass
+                # Invalid year - fall back to session or system year
+                selected_year = self.request.session.get("karteien_selected_year", system_year)
         else:
-            qs = qs.filter(year=date.today().year)
+            # No year in GET - use session or default to system year
+            selected_year = self.request.session.get("karteien_selected_year", system_year)
+            # Save system year as default if nothing in session yet
+            if "karteien_selected_year" not in self.request.session:
+                self.request.session["karteien_selected_year"] = selected_year
+        
+        # Store selected year for use in get_context_data
+        self._selected_year = selected_year
+        
+        # Filter by selected year
+        qs = qs.filter(year=selected_year)
         
         # Filter by FamilyID
         family_id = self.request.GET.get("family_id")
@@ -280,8 +297,9 @@ class KarteiRecordListView(KarteiViewerMixin, ListView):
         )
         context["available_years"] = list(years) or [date.today().year]
         
-        # Current filter values
-        context["current_year"] = self.request.GET.get("year", date.today().year)
+        # Current filter values - use selected year from get_queryset
+        context["current_year"] = getattr(self, "_selected_year", date.today().year)
+        context["system_year"] = date.today().year  # For badge highlighting
         context["current_filters"] = {
             "family_id": self.request.GET.get("family_id", ""),
             "parent": self.request.GET.get("parent", ""),
@@ -679,6 +697,9 @@ class KarteiRecordCreateView(KarteiEditorMixin, CreateView):
         """
         Compute max FamilyID in database and suggest next one.
         
+        Uses the centralized FamilyID service that considers both
+        existing KarteiRecords and active reservations.
+        
         FamilyID format: "N. NNNN" (prefix.number)
         Returns dict with family_id_max_display and family_id_next_suggestion.
         """
@@ -712,15 +733,18 @@ class KarteiRecordCreateView(KarteiEditorMixin, CreateView):
                     max_number = number
                     max_entry = fid.strip()
         
+        # Use centralized service for next suggestion (considers reservations)
+        next_suggestion = get_next_family_id(prefix="1")
+        
         if max_entry:
             return {
                 "family_id_max_display": max_entry,
-                "family_id_next_suggestion": f"{max_prefix}. {max_number + 1}",
+                "family_id_next_suggestion": next_suggestion,
             }
         else:
             return {
                 "family_id_max_display": "(unbekannt)",
-                "family_id_next_suggestion": "",
+                "family_id_next_suggestion": next_suggestion or "",
             }
     
     def form_valid(self, form) -> HttpResponse:
