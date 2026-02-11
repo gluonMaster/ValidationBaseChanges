@@ -334,6 +334,27 @@ Only accessible to Admin users.
                 </div>
             </div>
         </div>
+
+        <!-- Sync from Legacy -->
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-info">
+                <div class="card-header bg-info text-white">
+                    <i class="bi bi-database-add"></i>
+                    Aus Legacy ergänzen
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Fehlende Fächer, Lehrer und Zuweisungen aus Legacy-Daten eines Jahres importieren.
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'catalog:sync_from_legacy' %}?year={{ current_year }}" class="btn btn-info">
+                        <i class="bi bi-arrow-right-circle"></i>
+                        Legacy scannen
+                    </a>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}

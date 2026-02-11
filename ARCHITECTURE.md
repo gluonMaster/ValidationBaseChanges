@@ -7,11 +7,11 @@
 ## 1. Overview
 
 - Исходники legacy VBA-модулей для справки лежат в `legacy_VBA/`:
-
   - `legacy_VBA/*.bas` и `legacy_VBA/*.cls` — модули из `KindElternDaten_XX_Admin.xlsm`
   - `legacy_VBA/admin_forms/` — VBA-код форм из `KindElternDaten_XX_Admin.xlsm`
   - `legacy_VBA/Superadmin/` — модули из `KindElternDaten_XX_Suprime.xlsm`
   - `legacy_VBA/alt/` — модули из `KindElternDaten_XX_Data.xlsm`
+  - `legacy_VBA/Buch/` — модули из основного бухгалтерского файла `KindElternDaten23-26.xlsm`
 
 - Цель системы: единый веб‑интерфейс для:
   - **Admin**: ведение картотеки семей/детей, синхронизация, работа с отклонёнными изменениями.
@@ -61,19 +61,16 @@
 Реализован веб-интерфейс для роли User (read-only):
 
 - **User Dashboard** (`/user/`):
-
   - Стартовая страница после логина для роли User.
   - Форма поиска записей.
   - Информация о правах доступа.
 
 - **User Search** (`/user/search/`):
-
   - Поиск записей по FamilyID, Parent, Child, Year.
   - Таблица результатов с ссылками на детали и историю.
   - Лимит: 50 записей.
 
 - **User Record Detail** (`/user/record/<id>/`):
-
   - Read-only просмотр записи KarteiRecord.
   - Отображение: основные данные, предметы, месяцы, статус.
   - Индикатор pending/declined изменений.
@@ -218,21 +215,18 @@
 Реализован веб-интерфейс для роли Superadmin:
 
 - **Pending Overview** (`/approvals/superadmin/pending/`):
-
   - Список всех неподтверждённых pending-записей.
   - Фильтры: по году, FamilyID, Parent, Child.
   - Массовые действия: "Approve All", "Decline All" с общим комментарием.
   - Ссылки на War/Ist для каждой записи.
 
 - **War/Ist View** (`/approvals/superadmin/pending/<id>/`):
-
   - Сравнение оригинальных данных (KarteiRecord) и pending-снимка.
   - Подсветка изменённых полей.
   - Форма решения: Approved/Declined с комментарием.
   - Ссылка на историю записи.
 
 - **NeuList** (`/approvals/superadmin/neu/`):
-
   - Список новых записей **по выбранному году**: `id > last_seen_by_year[year]` (доменный ключ `(year, id)`).
   - Кнопка "Mark as Seen" обновляет `last_seen_by_year[year]`.
   - Аналог VBA valid_NeuList.
@@ -245,7 +239,6 @@
 **Ключевые сервисы для Superadmin** (`apps/approvals/services.py`):
 
 - `apply_decision(pending, decision, comment, user) -> KarteiRecord`:
-
   - Применяет решение Superadmin к pending-записи.
   - APPROVED: применяет snapshot к записи, статус → NORMAL.
   - DECLINED: создаёт DeclinedChange, статус → DECLINED.
@@ -253,15 +246,12 @@
   - Создаёт уведомления для Admin.
 
 - `approve_all_pending(user, year) -> (count, errors)`:
-
   - Массовое одобрение всех pending-записей.
 
 - `decline_all_pending(comment, user, year) -> (count, errors)`:
-
   - Массовое отклонение с общим комментарием.
 
 - `get_new_records(user, year) -> list[KarteiRecord]`:
-
   - Возвращает записи `KarteiRecord(year=year, id__gt=last_seen_by_year[year])`.
 
 - `update_last_seen_id(user, year, max_id=None)`:
@@ -281,8 +271,10 @@
 - **Kartei List View** (`/karteien/`):
   - Список записей с фильтрами по году, FamilyID, Parent, Child, статусу, типу/статусу договора (в т.ч. SEPA-варианты), а также динамическими фильтрами Unterricht/Lehrer по семестру.
   - Быстрые ссылки на PENDING/DECLINED обзоры.
+  - Выбранный год синхронизируется с заголовком и сохраняется в пределах сессии (по умолчанию — текущий системный год).
+  - При создании записи/семьи в году, отличном от текущего системного, показывается предупреждение (создание выполняется в выбранный год).
+  - SUPERADMIN: доступен «Kostenbericht (Familie)» (поиск семьи через `/api/karteien/family-search/` → отчёт `/karteien/family-kosten/`, опционально фрагмент `/karteien/family-kosten-fragment/` для offcanvas).
 - **Kartei Create/Edit** (`/karteien/create/`, `/karteien/<id>/edit/`):
-
   - Формы с валидациями: уникальность FamilyID+Parent, пустой FamilyID при непустом Parent.
   - Ограничения для Operator: SEPA-строки, прошлые месяцы.
   - Классификация изменений: safe → прямое обновление, risky → создание PendingChange.
@@ -290,7 +282,6 @@
   - Create: UX-подсказка по FamilyID (max + рекомендация) и предупреждение для Freitext; entry-point создания записи из Family Dashboard с prefill данных семьи.
 
 - **Declined Overview** (`/approvals/declined/`):
-
   - Список всех DECLINED-записей (аналог VBA DeclinedOverview).
   - Возможность применить исправления (переместить в PENDING).
   - Кнопка "Применить все" для массовой обработки.
@@ -330,6 +321,7 @@
 - Хранение истории изменений по каждой записи:
   - Исторические события (кто, когда, какие поля, старое/новое значения).
   - Поддержка текущего текстового формата истории (для плавной миграции), но с возможностью нормализованного хранения.
+  - Для событий approve/изменений сохраняются diffs по полям (исходное → новое) и комментарии, чтобы UI мог корректно отображать «что именно изменилось».
 - Построение представлений “истории одной записи”:
   - Аналог листа `Geschichte` (интерактивная лента изменений).
 - Построение агрегированных отчётов:
@@ -457,23 +449,22 @@
 - Связи "кто вёл что в каком году".
 - Будущих форм выбора с автодополнением.
 - Отчётности и аналитики.
+- Дополнительно: резервации FamilyID (в отдельном приложении `apps/familyid_reservations`) — админ может резервировать/отменять номера и использовать их в мастере «Neue Familie».
+- Формы, зависящие от каталогов (Fach/Lehrer/Preis), получают данные динамически через API каталога и могут обновлять списки без перезагрузки страницы.
 
 **Ключевые модели:**
 
 - `Teacher` (`apps/catalog/models.py`):
-
   - `last_name` — CharField, фамилия преподавателя.
   - `first_name` — CharField, имя преподавателя.
   - `is_active` — BooleanField, активность.
   - UniqueConstraint на `(last_name, first_name)`.
 
 - `Subject` (`apps/catalog/models.py`):
-
   - `name` — CharField, уникальное название предмета.
   - `is_active` — BooleanField, активность.
 
 - `TeachingAssignment` (`apps/catalog/models.py`):
-
   - `year` — PositiveSmallIntegerField, учебный год.
   - `subject` — FK на `Subject`.
   - `teacher` — FK на `Teacher`.
@@ -482,7 +473,6 @@
   - Индексы: `(year, subject)`, `(year, teacher)`.
 
 - `PriceOption` (`apps/catalog/models.py`):
-
   - `year` — PositiveSmallIntegerField, учебный год.
   - `subject` — FK на `Subject`.
   - `amount` — DecimalField (max_digits=10, decimal_places=2), сумма в €.
@@ -498,7 +488,6 @@
   - Метод `is_per_hour()` проверяет тип расчёта.
 
 - `Discount` (`apps/catalog/models.py`):
-
   - `kind` — CharField (choices: PERCENT, FIXED), тип скидки.
   - `value` — DecimalField, значение скидки:
     - Для PERCENT: 0.00-0.99 (например 0.25 = 25%).
@@ -508,7 +497,6 @@
   - Валидация: PERCENT 0..0.99, FIXED ≥ 0.
 
 - `FamilyDiscount` (`apps/catalog/models.py`):
-
   - `year` — PositiveSmallIntegerField, учебный год.
   - `family_id` — CharField, идентификатор семьи (как в KarteiRecord).
   - `discount` — FK на `Discount`.
@@ -585,7 +573,6 @@ Create-формы справочников поддерживают предза
 **Ключевые модули:**
 
 - `access_client.py` — подключение к Access, чтение таблиц.
-
   - `open_access_connection(file_path)` — context manager для соединения.
   - `load_tbl_kartei(conn, year)` → Iterable[RowDict].
   - `load_pre_tbl_kartei(conn, year)` → Iterable[RowDict].

@@ -474,3 +474,32 @@ class RecordDiscountForm(BaseDiscountAssignmentForm):
         if commit:
             instance.save()
         return instance
+
+
+# =============================================================================
+# Legacy Sync Form
+# =============================================================================
+
+class SyncFromLegacyForm(forms.Form):
+    """
+    Form for syncing catalog data from legacy KarteiRecord fields.
+    
+    Allows selecting a year to scan for unique subjects, teachers,
+    and teaching assignments from legacy text fields.
+    """
+    
+    year = forms.IntegerField(
+        label="Jahr",
+        min_value=2000,
+        max_value=2100,
+        widget=forms.NumberInput(attrs={
+            "class": "form-control",
+        }),
+        help_text="Jahr, für das Legacy-Daten gescannt werden sollen.",
+    )
+
+    def __init__(self, *args, available_years=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        current_year = date.today().year
+        self.fields["year"].initial = current_year
+        self.available_years = available_years or []

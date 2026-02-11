@@ -63,4 +63,7 @@ urlpatterns = [
     path("familyid-reservations/", views.FamilyIdReservationListView.as_view(), name="familyid_reservation_list"),
     path("familyid-reservations/reserve-next/", views.ReserveNextFamilyIdView.as_view(), name="familyid_reserve_next"),
     path("familyid-reservations/<int:pk>/cancel/", views.CancelFamilyIdReservationView.as_view(), name="familyid_reservation_cancel"),
+    
+    # Sync from Legacy tool (Admin only)
+    path("sync-from-legacy/", views.SyncFromLegacyView.as_view(), name="sync_from_legacy"),
 ]

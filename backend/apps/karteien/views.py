@@ -44,7 +44,7 @@ from apps.approvals.services import (
 from apps.approvals.models import DeclinedChange, PendingChange
 from apps.catalog.models import FamilyDiscount, RecordDiscount
 
-from .billing import recalculate_record_months, build_base_amounts, get_month_mismatches
+from .billing import recalculate_record_months, build_base_amounts, get_month_mismatches, detect_meaningful_changes
 from .forms import KarteiRecordForm, KarteiRecordFilterForm, MonthsOverrideForm
 from .models import KarteiRecord, RecordStatus, MonthsMode
 from .validators import validate_kartei_record, apply_operator_filters
@@ -1211,23 +1211,37 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
             # else: no meaningful changes, keep LEGACY mode and original month values
             
         elif record.months_mode == MonthsMode.AUTO:
-            # AUTO mode: full recalculation
-            flags = recalculate_record_months(
-                record,
-                apply_from_month_1=billing_data['apply_from_month_1'],
-                apply_from_month_2=billing_data['apply_from_month_2'],
-                apply_to_month_1=billing_data.get('apply_to_month_1'),
-                apply_to_month_2=billing_data.get('apply_to_month_2'),
-                hours_amounts=billing_data['hours_amounts'],
+            # AUTO mode: check for meaningful billing changes before recalculating
+            has_billing_changes, _touched = detect_meaningful_changes(
+                original,
+                form.cleaned_data,
+                billing_data['hours_amounts'],
             )
             
-            # Show warning if percent discount was clamped
-            if flags.percent_discount_exceeded:
-                messages.warning(
-                    self.request,
-                    f"Warnung: Die Summe der Prozentrabatte ({flags.original_percent_sum * 100:.0f}%) "
-                    f"wurde auf 99% begrenzt."
+            if has_billing_changes:
+                # Meaningful changes detected: recalculate months
+                flags = recalculate_record_months(
+                    record,
+                    apply_from_month_1=billing_data['apply_from_month_1'],
+                    apply_from_month_2=billing_data['apply_from_month_2'],
+                    apply_to_month_1=billing_data.get('apply_to_month_1'),
+                    apply_to_month_2=billing_data.get('apply_to_month_2'),
+                    hours_amounts=billing_data['hours_amounts'],
                 )
+                
+                # Show warning if percent discount was clamped
+                if flags.percent_discount_exceeded:
+                    messages.warning(
+                        self.request,
+                        f"Warnung: Die Summe der Prozentrabatte ({flags.original_percent_sum * 100:.0f}%) "
+                        f"wurde auf 99% begrenzt."
+                    )
+            else:
+                # No billing changes: preserve existing price history (base_amounts and month values)
+                record.base_amounts = original.base_amounts
+                for month_num in range(1, 13):
+                    field_name = f"month_{month_num}"
+                    setattr(record, field_name, getattr(original, field_name))
         
         # Apply termination zeroing if contract status becomes terminated
         if billing_data.get('needs_termination_zeroing'):

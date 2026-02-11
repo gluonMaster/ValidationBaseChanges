@@ -37,10 +37,12 @@ from .forms import (
     CopyPricesYearForm,
     PriceOptionForm,
     SubjectForm,
+    SyncFromLegacyForm,
     TeacherForm,
     TeachingAssignmentForm,
 )
 from .models import Subject, Teacher, TeachingAssignment, PriceOption, Discount, FamilyDiscount, RecordDiscount
+
 
 
 # =============================================================================
@@ -1356,3 +1358,470 @@ class CancelFamilyIdReservationView(CatalogAdminMixin, View):
     def get(self, request, pk):
         """GET not allowed, redirect to list."""
         return redirect("catalog:familyid_reservation_list")
+
+
+# =============================================================================
+# Sync From Legacy View
+# =============================================================================
+
+class SyncFromLegacyView(CatalogAdminMixin, FormView):
+    """
+    Sync catalog entries from legacy KarteiRecord text fields.
+    
+    Scans legacy fields (subject1, subject2, extra1-3, teacher1/2_legacy_name)
+    for a given year and adds missing entries to the catalog.
+    
+    Features:
+    - Preview of missing subjects, teachers, and assignments
+    - Idempotent: repeated runs on the same year don't create duplicates
+    - Handles unparseable teacher names gracefully
+    """
+    
+    template_name = "catalog/sync_from_legacy.html"
+    form_class = SyncFromLegacyForm
+    success_url = reverse_lazy("catalog:sync_from_legacy")
+    
+    def _normalize_name(self, name: str) -> str:
+        """
+        Normalize a subject/teacher name for matching.
+        
+        - Strips leading/trailing whitespace
+        - Collapses multiple whitespace to single space
+        - Returns casefolded version for comparison
+        """
+        import re
+        if not name:
+            return ""
+        # Strip and collapse whitespace
+        name = name.strip()
+        name = re.sub(r"\s+", " ", name)
+        return name.casefold()
+    
+    def _clean_name(self, name: str) -> str:
+        """
+        Clean a name for storage (preserves original case).
+        
+        - Strips leading/trailing whitespace
+        - Collapses multiple whitespace to single space
+        """
+        import re
+        if not name:
+            return ""
+        name = name.strip()
+        name = re.sub(r"\s+", " ", name)
+        return name
+    
+    def _parse_teacher_name(self, full_name: str) -> tuple[str, str] | None:
+        """
+        Parse a legacy teacher name into (last_name, first_name).
+        
+        Supports two formats:
+        - "Nachname Vorname" -> last_name = all but last token, first_name = last token
+        - "Nachname, Vorname" -> split by first comma
+        
+        Returns None if unparseable (single word or empty).
+        """
+        if not full_name:
+            return None
+        
+        # Clean and normalize whitespace
+        cleaned = self._clean_name(full_name)
+        if not cleaned:
+            return None
+        
+        # Check for comma format: "Nachname, Vorname"
+        if "," in cleaned:
+            parts = cleaned.split(",", 1)
+            if len(parts) == 2:
+                last_name = parts[0].strip()
+                first_name = parts[1].strip()
+                if last_name and first_name:
+                    return (last_name, first_name)
+        
+        # Space format: "Nachname Vorname" (last token is first_name)
+        parts = cleaned.split()
+        if len(parts) >= 2:
+            first_name = parts[-1]
+            last_name = " ".join(parts[:-1])
+            return (last_name, first_name)
+        
+        # Single word or empty - cannot parse
+        return None
+    
+    def _get_legacy_data(self, year: int) -> dict:
+        """
+        Extract unique subjects, teachers, and assignments from legacy data for a year.
+        
+        Returns a dict with:
+        - legacy_subjects: set of unique cleaned subject names
+        - legacy_teachers: dict mapping (last_name, first_name) -> set of original full names
+        - legacy_assignments: set of (subject_normalized, last_name, first_name) tuples
+        - unparsed_teachers: set of teacher names that couldn't be parsed
+        """
+        from apps.karteien.models import KarteiRecord
+        
+        records = KarteiRecord.objects.filter(year=year).values(
+            "subject1", "subject2", "extra1", "extra2", "extra3",
+            "teacher1_legacy_name", "teacher2_legacy_name"
+        )
+        
+        legacy_subjects = set()
+        legacy_teachers = {}  # (last_name, first_name) -> set of original names
+        legacy_assignments = set()  # (subject_norm, last_name, first_name)
+        unparsed_teachers = set()
+        # Map normalized subject name to human-readable cleaned name (for preview display)
+        subject_display_by_norm = {}
+        
+        for rec in records:
+            # Collect all subjects (including extras)
+            for field in ["subject1", "subject2", "extra1", "extra2", "extra3"]:
+                val = rec.get(field, "") or ""
+                cleaned = self._clean_name(val)
+                if cleaned:
+                    legacy_subjects.add(cleaned)
+                    # Store display name mapping (first occurrence wins)
+                    norm = self._normalize_name(cleaned)
+                    if norm and norm not in subject_display_by_norm:
+                        subject_display_by_norm[norm] = cleaned
+            
+            # Process semester 1: subject1 + teacher1
+            subj1 = self._clean_name(rec.get("subject1", "") or "")
+            teacher1_raw = (rec.get("teacher1_legacy_name", "") or "").strip()
+            if teacher1_raw:
+                parsed = self._parse_teacher_name(teacher1_raw)
+                if parsed:
+                    last_name, first_name = parsed
+                    key = (last_name, first_name)
+                    if key not in legacy_teachers:
+                        legacy_teachers[key] = set()
+                    legacy_teachers[key].add(teacher1_raw)
+                    # Assignment: only if subject is also non-empty
+                    if subj1:
+                        legacy_assignments.add((self._normalize_name(subj1), last_name, first_name))
+                else:
+                    unparsed_teachers.add(teacher1_raw)
+            
+            # Process semester 2: subject2 + teacher2
+            subj2 = self._clean_name(rec.get("subject2", "") or "")
+            teacher2_raw = (rec.get("teacher2_legacy_name", "") or "").strip()
+            if teacher2_raw:
+                parsed = self._parse_teacher_name(teacher2_raw)
+                if parsed:
+                    last_name, first_name = parsed
+                    key = (last_name, first_name)
+                    if key not in legacy_teachers:
+                        legacy_teachers[key] = set()
+                    legacy_teachers[key].add(teacher2_raw)
+                    # Assignment: only if subject is also non-empty
+                    if subj2:
+                        legacy_assignments.add((self._normalize_name(subj2), last_name, first_name))
+                else:
+                    unparsed_teachers.add(teacher2_raw)
+        
+        return {
+            "legacy_subjects": legacy_subjects,
+            "legacy_teachers": legacy_teachers,
+            "legacy_assignments": legacy_assignments,
+            "unparsed_teachers": unparsed_teachers,
+            "subject_display_by_norm": subject_display_by_norm,
+        }
+    
+    def _find_missing_entries(self, year: int, legacy_data: dict) -> dict:
+        """
+        Compare legacy data against catalog and find missing entries.
+        
+        Returns dict with:
+        - missing_subjects: list of cleaned subject names not in catalog
+        - missing_teachers: list of (last_name, first_name) tuples not in catalog
+        - missing_assignments: list of (subject_name, last_name, first_name) tuples
+        - existing_subjects_map: dict of normalized_name -> Subject
+        - existing_teachers_map: dict of (last_name, first_name) -> Teacher
+        """
+        legacy_subjects = legacy_data["legacy_subjects"]
+        legacy_teachers = legacy_data["legacy_teachers"]
+        legacy_assignments = legacy_data["legacy_assignments"]
+        
+        # Build map of existing subjects by normalized name
+        existing_subjects = Subject.objects.all()
+        existing_subjects_map = {}
+        for subj in existing_subjects:
+            norm = self._normalize_name(subj.name)
+            existing_subjects_map[norm] = subj
+        
+        # Find missing subjects
+        missing_subjects = []
+        for subj_name in sorted(legacy_subjects):
+            norm = self._normalize_name(subj_name)
+            if norm and norm not in existing_subjects_map:
+                missing_subjects.append(subj_name)
+        
+        # Build map of existing teachers by (last_name, first_name)
+        existing_teachers = Teacher.objects.all()
+        existing_teachers_map = {}
+        for teacher in existing_teachers:
+            key = (teacher.last_name, teacher.first_name)
+            existing_teachers_map[key] = teacher
+        
+        # Find missing teachers
+        missing_teachers = []
+        for key in sorted(legacy_teachers.keys()):
+            if key not in existing_teachers_map:
+                missing_teachers.append(key)
+        
+        # Find missing assignments
+        existing_assignments = TeachingAssignment.objects.filter(year=year).select_related(
+            "subject", "teacher"
+        )
+        existing_assignment_set = set()
+        for assign in existing_assignments:
+            subj_norm = self._normalize_name(assign.subject.name)
+            key = (subj_norm, assign.teacher.last_name, assign.teacher.first_name)
+            existing_assignment_set.add(key)
+        
+        missing_assignments = []
+        for assign_key in sorted(legacy_assignments):
+            if assign_key not in existing_assignment_set:
+                # Only add if we can find/create both subject and teacher
+                subj_norm, last_name, first_name = assign_key
+                missing_assignments.append((subj_norm, last_name, first_name))
+        
+        return {
+            "missing_subjects": missing_subjects,
+            "missing_teachers": missing_teachers,
+            "missing_assignments": missing_assignments,
+            "existing_subjects_map": existing_subjects_map,
+            "existing_teachers_map": existing_teachers_map,
+        }
+    
+    def _sync_entries(self, year: int, legacy_data: dict, missing_data: dict) -> dict:
+        """
+        Create missing catalog entries.
+        
+        Order: Subjects first, then Teachers, then Assignments.
+        
+        Returns stats dict with counts and any errors.
+        """
+        subjects_created = 0
+        teachers_created = 0
+        assignments_created = 0
+        errors = []
+        
+        # Get mutable copies of existing maps
+        subjects_map = dict(missing_data["existing_subjects_map"])
+        teachers_map = dict(missing_data["existing_teachers_map"])
+        
+        # 1. Create missing subjects
+        for subj_name in missing_data["missing_subjects"]:
+            norm = self._normalize_name(subj_name)
+            if norm in subjects_map:
+                continue  # Already exists or was just created
+            try:
+                subj = Subject.objects.create(name=subj_name, is_active=True)
+                subjects_map[norm] = subj
+                subjects_created += 1
+            except IntegrityError:
+                # Race condition or duplicate - reload from DB
+                try:
+                    subj = Subject.objects.get(name__iexact=subj_name)
+                    subjects_map[norm] = subj
+                except Subject.DoesNotExist:
+                    errors.append(f"Fach konnte nicht erstellt werden: {subj_name}")
+        
+        # 2. Create missing teachers
+        for (last_name, first_name) in missing_data["missing_teachers"]:
+            key = (last_name, first_name)
+            if key in teachers_map:
+                continue
+            try:
+                teacher = Teacher.objects.create(
+                    last_name=last_name,
+                    first_name=first_name,
+                    is_active=True
+                )
+                teachers_map[key] = teacher
+                teachers_created += 1
+            except IntegrityError:
+                # Race condition or duplicate - reload from DB
+                try:
+                    teacher = Teacher.objects.get(last_name=last_name, first_name=first_name)
+                    teachers_map[key] = teacher
+                except Teacher.DoesNotExist:
+                    errors.append(f"Lehrer konnte nicht erstellt werden: {last_name}, {first_name}")
+        
+        # 3. Create missing assignments
+        for (subj_norm, last_name, first_name) in missing_data["missing_assignments"]:
+            # Find subject
+            subj = subjects_map.get(subj_norm)
+            if not subj:
+                # Try to find by normalized name again (in case subject exists with different casing)
+                for norm, s in subjects_map.items():
+                    if norm == subj_norm:
+                        subj = s
+                        break
+            if not subj:
+                # Subject not found - skip
+                continue
+            
+            # Find teacher
+            teacher_key = (last_name, first_name)
+            teacher = teachers_map.get(teacher_key)
+            if not teacher:
+                # Teacher not found - skip
+                continue
+            
+            # Check if assignment already exists
+            exists = TeachingAssignment.objects.filter(
+                year=year, subject=subj, teacher=teacher
+            ).exists()
+            if exists:
+                continue
+            
+            try:
+                TeachingAssignment.objects.create(
+                    year=year,
+                    subject=subj,
+                    teacher=teacher,
+                    is_active=True
+                )
+                assignments_created += 1
+            except IntegrityError:
+                # Already exists (race condition)
+                pass
+        
+        return {
+            "subjects_created": subjects_created,
+            "teachers_created": teachers_created,
+            "assignments_created": assignments_created,
+            "errors": errors,
+        }
+    
+    def get_form_kwargs(self):
+        """Add available years to form kwargs."""
+        from apps.karteien.models import KarteiRecord
+        
+        kwargs = super().get_form_kwargs()
+        available_years = list(
+            KarteiRecord.objects.values_list("year", flat=True)
+            .distinct()
+            .order_by("-year")
+        )
+        kwargs["available_years"] = available_years
+        return kwargs
+    
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        from apps.karteien.models import KarteiRecord
+        
+        # Get available years from KarteiRecord
+        available_years = list(
+            KarteiRecord.objects.values_list("year", flat=True)
+            .distinct()
+            .order_by("-year")
+        )
+        context["available_years"] = available_years
+        context["current_year"] = date.today().year
+        
+        # If year is in GET params, show preview
+        year_param = self.request.GET.get("year")
+        if year_param:
+            try:
+                year = int(year_param)
+                legacy_data = self._get_legacy_data(year)
+                missing_data = self._find_missing_entries(year, legacy_data)
+                
+                context["preview_year"] = year
+                context["preview"] = {
+                    "legacy_subjects_count": len(legacy_data["legacy_subjects"]),
+                    "legacy_teachers_count": len(legacy_data["legacy_teachers"]),
+                    "legacy_assignments_count": len(legacy_data["legacy_assignments"]),
+                    "missing_subjects": missing_data["missing_subjects"],
+                    "missing_subjects_count": len(missing_data["missing_subjects"]),
+                    "missing_teachers": [
+                        {"last_name": ln, "first_name": fn}
+                        for ln, fn in missing_data["missing_teachers"]
+                    ],
+                    "missing_teachers_count": len(missing_data["missing_teachers"]),
+                    "missing_assignments": [
+                        {
+                            "subject_norm": sn,
+                            "subject_name": legacy_data["subject_display_by_norm"].get(sn, sn),
+                            "last_name": ln,
+                            "first_name": fn,
+                        }
+                        for sn, ln, fn in missing_data["missing_assignments"]
+                    ],
+                    "missing_assignments_count": len(missing_data["missing_assignments"]),
+                    "unparsed_teachers": sorted(legacy_data["unparsed_teachers"]),
+                    "unparsed_teachers_count": len(legacy_data["unparsed_teachers"]),
+                }
+                
+                # Set year in form initial
+                context["form"].initial["year"] = year
+            except (ValueError, TypeError):
+                pass
+        
+        return context
+    
+    def form_valid(self, form):
+        """Handle POST - create missing entries."""
+        year = form.cleaned_data["year"]
+        
+        # Get legacy data and find missing entries
+        legacy_data = self._get_legacy_data(year)
+        missing_data = self._find_missing_entries(year, legacy_data)
+        
+        # Check if there's anything to sync
+        total_missing = (
+            len(missing_data["missing_subjects"]) +
+            len(missing_data["missing_teachers"]) +
+            len(missing_data["missing_assignments"])
+        )
+        
+        if total_missing == 0:
+            messages.info(
+                self.request,
+                f"Keine fehlenden Einträge für Jahr {year} gefunden. Der Katalog ist vollständig."
+            )
+            return redirect(f"{self.success_url}?year={year}")
+        
+        # Sync entries
+        stats = self._sync_entries(year, legacy_data, missing_data)
+        
+        # Build success message
+        msg_parts = []
+        if stats["subjects_created"] > 0:
+            msg_parts.append(f"{stats['subjects_created']} Fächer hinzugefügt")
+        if stats["teachers_created"] > 0:
+            msg_parts.append(f"{stats['teachers_created']} Lehrer hinzugefügt")
+        if stats["assignments_created"] > 0:
+            msg_parts.append(f"{stats['assignments_created']} Zuweisungen hinzugefügt")
+        
+        if msg_parts:
+            messages.success(
+                self.request,
+                f"Synchronisation für Jahr {year} abgeschlossen: " + ", ".join(msg_parts) + "."
+            )
+        else:
+            messages.info(
+                self.request,
+                f"Keine neuen Einträge für Jahr {year} erstellt (alle bereits vorhanden)."
+            )
+        
+        # Warning for unparsed teachers
+        if legacy_data["unparsed_teachers"]:
+            unparsed_list = ", ".join(sorted(legacy_data["unparsed_teachers"])[:5])
+            more = len(legacy_data["unparsed_teachers"]) - 5
+            if more > 0:
+                unparsed_list += f" und {more} weitere"
+            messages.warning(
+                self.request,
+                f"Einige Lehrernamen konnten nicht geparst werden: {unparsed_list}. "
+                "Diese müssen manuell hinzugefügt werden."
+            )
+        
+        # Show any errors
+        for error in stats.get("errors", []):
+            messages.error(self.request, error)
+        
+        return redirect(f"{self.success_url}?year={year}")
+
