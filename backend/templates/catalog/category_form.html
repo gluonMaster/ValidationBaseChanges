@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% comment %}
+Subject category create/edit form.
+{% endcomment %}
+
+{% block title %}Katalog - {{ page_title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:index' %}">Katalog</a>
+                    </li>
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:category_list' year=year %}">Kategorien {{ year }}</a>
+                    </li>
+                    <li class="breadcrumb-item active">
+                        {% if is_create %}Neu{% else %}Bearbeiten{% endif %}
+                    </li>
+                </ol>
+            </nav>
+            <h1>
+                {% if is_create %}
+                <i class="bi bi-plus-circle"></i>
+                {% else %}
+                <i class="bi bi-pencil"></i>
+                {% endif %}
+                {{ page_title }}
+            </h1>
+        </div>
+    </div>
+
+    <!-- Form -->
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-tags"></i>
+                    Kategoriedaten ({{ year }})
+                </div>
+                <div class="card-body">
+                    <form method="post" novalidate>
+                        {% csrf_token %}
+
+                        <!-- Non-field errors -->
+                        {% if form.non_field_errors %}
+                        <div class="alert alert-danger" role="alert">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>Fehler:</strong>
+                            <ul class="mb-0">
+                                {% for error in form.non_field_errors %}
+                                <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+
+                        <!-- Name -->
+                        <div class="mb-3">
+                            <label for="{{ form.name.id_for_label }}" class="form-label">
+                                Name <span class="text-danger">*</span>
+                            </label>
+                            {{ form.name }}
+                            {% if form.name.errors %}
+                            <div class="invalid-feedback d-block">
+                                {{ form.name.errors.0 }}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Kind -->
+                        <div class="mb-3">
+                            <label for="{{ form.kind.id_for_label }}" class="form-label">
+                                Art <span class="text-danger">*</span>
+                            </label>
+                            {{ form.kind }}
+                            {% if form.kind.help_text %}
+                            <div class="form-text">{{ form.kind.help_text }}</div>
+                            {% endif %}
+                            {% if form.kind.errors %}
+                            <div class="invalid-feedback d-block">
+                                {{ form.kind.errors.0 }}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Rates -->
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="{{ form.yearly_rate.id_for_label }}" class="form-label">
+                                        Jahresvertrag €/UE <span class="text-danger">*</span>
+                                    </label>
+                                    <div class="input-group">
+                                        {{ form.yearly_rate }}
+                                        <span class="input-group-text">€</span>
+                                    </div>
+                                    {% if form.yearly_rate.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {{ form.yearly_rate.errors.0 }}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="{{ form.monthly_rate.id_for_label }}" class="form-label">
+                                        Monatsvertrag €/UE <span class="text-danger">*</span>
+                                    </label>
+                                    <div class="input-group">
+                                        {{ form.monthly_rate }}
+                                        <span class="input-group-text">€</span>
+                                    </div>
+                                    {% if form.monthly_rate.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {{ form.monthly_rate.errors.0 }}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Group threshold -->
+                        <div class="mb-3">
+                            <label for="{{ form.group_threshold.id_for_label }}" class="form-label">
+                                Schwellenwert Kleingruppe
+                            </label>
+                            {{ form.group_threshold }}
+                            {% if form.group_threshold.errors %}
+                            <div class="invalid-feedback d-block">
+                                {{ form.group_threshold.errors.0 }}
+                            </div>
+                            {% endif %}
+                            <div class="form-text">
+                                Nur relevant für Gruppenunterricht.
+                            </div>
+                        </div>
+
+                        <!-- Active -->
+                        <div class="mb-3 form-check">
+                            {{ form.is_active }}
+                            <label class="form-check-label" for="{{ form.is_active.id_for_label }}">
+                                Aktiv
+                            </label>
+                        </div>
+
+                        <!-- Buttons -->
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'catalog:category_list' year=year %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left"></i>
+                                Abbrechen
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-lg"></i>
+                                {% if is_create %}Erstellen{% else %}Speichern{% endif %}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

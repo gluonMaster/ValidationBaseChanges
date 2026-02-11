@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% comment %}
+Subject categories list view — shows categories for a given year.
+{% endcomment %}
+
+{% block title %}Katalog - Kategorien {{ year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:index' %}">Katalog</a>
+                    </li>
+                    <li class="breadcrumb-item active">Kategorien {{ year }}</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-tags"></i>
+                Kategorien {{ year }}
+            </h1>
+        </div>
+        <div class="col-auto d-flex align-items-start">
+            <a href="{% url 'catalog:category_create' year=year %}" class="btn btn-success">
+                <i class="bi bi-plus-lg"></i>
+                Neue Kategorie
+            </a>
+        </div>
+    </div>
+
+    <!-- Kind Filter -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-funnel"></i>
+            Filter
+        </div>
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label for="kind" class="form-label">Art</label>
+                    <select name="kind" id="kind" class="form-select">
+                        <option value="">Alle</option>
+                        {% for value, label in kind_choices %}
+                        <option value="{{ value }}" {% if selected_kind == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary me-2">
+                        <i class="bi bi-search"></i>
+                        Filtern
+                    </button>
+                    <a href="{% url 'catalog:category_list' year=year %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-x-lg"></i>
+                        Zurücksetzen
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Results Table -->
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-table"></i>
+            Kategorien ({{ page_obj.paginator.count }} Einträge)
+        </div>
+        <div class="card-body">
+            {% if categories %}
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Art</th>
+                        <th class="text-end">Jahresvertrag €/UE</th>
+                        <th class="text-end">Monatsvertrag €/UE</th>
+                        <th class="text-center">Schwellenwert</th>
+                        <th class="text-center">Status</th>
+                        <th class="text-center">Fächer</th>
+                        <th>Aktionen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for cat in categories %}
+                    <tr {% if not cat.is_active %}class="table-secondary" style="text-decoration: line-through; opacity: 0.65;"{% endif %}>
+                        <td><strong>{{ cat.name }}</strong></td>
+                        <td>
+                            {% if cat.kind == 'GROUP' %}
+                            <span class="badge bg-primary">Gruppenunterricht</span>
+                            {% else %}
+                            <span class="badge bg-info">Einzelunterricht</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">{{ cat.yearly_rate|floatformat:2 }} €</td>
+                        <td class="text-end">{{ cat.monthly_rate|floatformat:2 }} €</td>
+                        <td class="text-center">
+                            {% if cat.kind == 'GROUP' %}
+                            {{ cat.group_threshold }}
+                            {% else %}
+                            <span class="text-muted">–</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if cat.is_active %}
+                            <span class="badge bg-success">Aktiv</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Inaktiv</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <span class="badge bg-light text-dark">{{ cat.links_count }}</span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="{% url 'catalog:category_subjects' year=year pk=cat.pk %}"
+                                   class="btn btn-outline-secondary"
+                                   title="Fächer verwalten">
+                                    <i class="bi bi-link-45deg"></i>
+                                </a>
+                                {% if cat.kind == 'GROUP' %}
+                                <a href="{% url 'catalog:group_list' year=year %}?category={{ cat.pk }}"
+                                   class="btn btn-outline-success"
+                                   title="Gruppen anzeigen">
+                                    <i class="bi bi-collection"></i>
+                                </a>
+                                {% endif %}
+                                <a href="{% url 'catalog:category_edit' year=year pk=cat.pk %}"
+                                   class="btn btn-outline-primary"
+                                   title="Bearbeiten">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                {% if cat.is_active %}
+                                <a href="{% url 'catalog:category_delete' year=year pk=cat.pk %}"
+                                   class="btn btn-outline-danger"
+                                   title="Deaktivieren">
+                                    <i class="bi bi-trash"></i>
+                                </a>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <!-- Pagination -->
+            {% if page_obj.has_other_pages %}
+            <nav aria-label="Seitennavigation">
+                <ul class="pagination justify-content-center">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if selected_kind %}&kind={{ selected_kind }}{% endif %}">
+                            &laquo; Zurück
+                        </a>
+                    </li>
+                    {% endif %}
+                    <li class="page-item disabled">
+                        <span class="page-link">
+                            Seite {{ page_obj.number }} von {{ page_obj.paginator.num_pages }}
+                        </span>
+                    </li>
+                    {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if selected_kind %}&kind={{ selected_kind }}{% endif %}">
+                            Weiter &raquo;
+                        </a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-tags fs-1 text-muted"></i>
+                <p class="text-muted mt-3">Keine Kategorien gefunden.</p>
+                <a href="{% url 'catalog:category_create' year=year %}" class="btn btn-success">
+                    <i class="bi bi-plus-lg"></i>
+                    Neue Kategorie erstellen
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

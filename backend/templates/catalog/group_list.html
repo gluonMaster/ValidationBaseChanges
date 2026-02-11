@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% comment %}
+DisciplineGroup list view — shows groups for a given year.
+{% endcomment %}
+
+{% block title %}Katalog - Gruppen {{ year }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:index' %}">Katalog</a>
+                    </li>
+                    <li class="breadcrumb-item active">Gruppen {{ year }}</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-collection"></i>
+                Gruppen {{ year }}
+            </h1>
+        </div>
+    </div>
+
+    <!-- Filter -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-funnel"></i>
+            Filter
+        </div>
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label for="category" class="form-label">Kategorie</label>
+                    <select name="category" id="category" class="form-select">
+                        <option value="">Alle</option>
+                        {% for cat in categories %}
+                        <option value="{{ cat.pk }}" {% if selected_category == cat.pk|stringformat:"d" %}selected{% endif %}>{{ cat.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary me-2">
+                        <i class="bi bi-search"></i>
+                        Filtern
+                    </button>
+                    <a href="{% url 'catalog:group_list' year=year %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-x-lg"></i>
+                        Zurücksetzen
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Results Table -->
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-table"></i>
+            Gruppen ({{ groups|length }} Einträge)
+        </div>
+        <div class="card-body">
+            {% if groups %}
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>Fach</th>
+                        <th>Kategorie</th>
+                        <th class="text-center">Auto-Scaling</th>
+                        <th class="text-center">Aktionen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for group in groups %}
+                    <tr>
+                        <td>
+                            <a href="{% url 'catalog:group_detail' year=year pk=group.pk %}">
+                                <strong>{{ group.subject.name }}</strong>
+                            </a>
+                        </td>
+                        <td>{{ group.category.name }}</td>
+                        <td class="text-center">
+                            {% if group.auto_scaling_enabled %}
+                            <span class="badge bg-success">Ein</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Aus</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <div class="btn-group btn-group-sm">
+                                <a href="{% url 'catalog:group_detail' year=year pk=group.pk %}"
+                                   class="btn btn-outline-primary"
+                                   title="Details anzeigen">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                <form method="post" action="{% url 'catalog:group_toggle_scaling' year=year pk=group.pk %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit"
+                                            class="btn btn-outline-{% if group.auto_scaling_enabled %}warning{% else %}success{% endif %}"
+                                            title="Auto-Scaling {% if group.auto_scaling_enabled %}deaktivieren{% else %}aktivieren{% endif %}">
+                                        <i class="bi bi-{% if group.auto_scaling_enabled %}toggle-on{% else %}toggle-off{% endif %}"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-collection fs-1 text-muted"></i>
+                <p class="text-muted mt-3">Keine Gruppen gefunden.</p>
+                <p class="text-muted small">
+                    Gruppen werden automatisch erstellt, wenn ein Fach einer GROUP-Kategorie zugeordnet wird.
+                </p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -487,6 +487,35 @@
   - Метод `get_price_unit()` возвращает единицу ("€/Monat" или "€/UE").
   - Метод `is_per_hour()` проверяет тип расчёта.
 
+- `SemesterConfig` (`apps/catalog/models.py`):
+  - Конфигурация границы семестра по календарному году.
+  - `year` (unique) + `last_month_sem1` (1-11; по умолчанию 6).
+  - Используется в `apps/karteien/billing.py` (и в расчёте авторазмера групп) для определения "полугодий".
+
+- `SubjectCategory` (`apps/catalog/models.py`):
+  - Категория дисциплин на год с тарифами €/UE для годового/месячного контракта.
+  - `year`, `name`, `kind` (GROUP/INDIVIDUAL), `yearly_rate`, `monthly_rate`, `group_threshold`, `is_active`.
+  - UniqueConstraint: `(year, name)`.
+
+- `SubjectCategoryLink` (`apps/catalog/models.py`):
+  - Привязка `Subject` к `SubjectCategory` на год (1 предмет → не более 1 категории в год).
+  - UniqueConstraint: `(subject, year)`.
+
+- `DisciplineGroup` (`apps/catalog/models.py`):
+  - Группа по `Subject` на год (создается/активируется при привязке предмета к GROUP-категории).
+  - `subject`, `year`, `category`, `auto_scaling_enabled`, `is_active`.
+  - UniqueConstraint: `(subject, year)`.
+
+- `DurationEntry` (`apps/catalog/models.py`):
+  - История длительности занятия по месяцам для группы.
+  - `group`, `effective_from_month`, `duration_minutes`, `changed_by`, `changed_at`, `comment`.
+  - UniqueConstraint: `(group, effective_from_month)`.
+
+- `GroupSizeEntry` (`apps/catalog/models.py`):
+  - Ручная поправка размера группы по месяцам (не "перетекает" между семестрами).
+  - `group`, `effective_from_month`, `manual_size`, `changed_by`, `changed_at`, `comment`.
+  - UniqueConstraint: `(group, effective_from_month)`.
+
 - `Discount` (`apps/catalog/models.py`):
   - `kind` — CharField (choices: PERCENT, FIXED), тип скидки.
   - `value` — DecimalField, значение скидки:
@@ -536,6 +565,11 @@
 - `/catalog/discounts/` - управление справочником скидок (процентные/фиксированные).
 - `/catalog/family-discounts/` - назначение скидок на семью+год.
 - `/catalog/record-discounts/` - назначение скидок на конкретные записи.
+- `/catalog/categories/<year>/` - категории дисциплин на год (GROUP/INDIVIDUAL) + тарифы.
+- `/catalog/categories/<year>/<pk>/subjects/` - привязка/отвязка предметов к категории.
+- `/catalog/groups/<year>/` - список групп на год.
+- `/catalog/groups/<year>/<pk>/` - детали группы (длительности, auto/manual size, scaling).
+- `/catalog/api/groups/<year>/<pk>/size/?month=N` - JSON для размера группы на месяц.
 
 Create-формы справочников поддерживают предзаполнение через query-params и `next` (для сценариев быстрого добавления из `/karteien/<pkid>/edit/`).
 

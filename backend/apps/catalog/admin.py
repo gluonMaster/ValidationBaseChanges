@@ -2,7 +2,10 @@ from django.contrib import admin
 
 from .models import (
     Teacher, Subject, TeachingAssignment, PriceOption,
-    Discount, FamilyDiscount, RecordDiscount
+    Discount, FamilyDiscount, RecordDiscount,
+    SemesterConfig,
+    SubjectCategory, SubjectCategoryLink,
+    DisciplineGroup, DurationEntry, GroupSizeEntry,
 )
 
 
@@ -149,3 +152,111 @@ class RecordDiscountAdmin(admin.ModelAdmin):
     @admin.display(description='Monate')
     def months_display(self, obj):
         return obj.months_display()
+
+
+# =============================================================================
+# Semester Configuration Admin
+# =============================================================================
+
+@admin.register(SemesterConfig)
+class SemesterConfigAdmin(admin.ModelAdmin):
+    """Admin interface for SemesterConfig model.
+
+    For years that already have KarteiRecords the boundary field is shown
+    as read-only and the row is highlighted.
+    """
+    list_display = ['year', 'last_month_sem1', 'has_records_display', 'updated_at']
+    list_filter = ['last_month_sem1']
+    ordering = ['-year']
+    readonly_fields = ['created_at', 'updated_at']
+
+    fieldsets = (
+        (None, {
+            'fields': ('year', 'last_month_sem1'),
+        }),
+        ('Metadaten', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+    @admin.display(description='Einträge vorhanden', boolean=True)
+    def has_records_display(self, obj):
+        """Show whether KarteiRecords exist for this year."""
+        from apps.karteien.models import KarteiRecord
+        return KarteiRecord.objects.filter(year=obj.year).exists()
+
+    def get_readonly_fields(self, request, obj=None):
+        """Make last_month_sem1 read-only when the year already has records."""
+        readonly = list(super().get_readonly_fields(request, obj))
+        if obj and obj.pk:
+            from apps.karteien.models import KarteiRecord
+            if KarteiRecord.objects.filter(year=obj.year).exists():
+                readonly.append('last_month_sem1')
+                readonly.append('year')
+        return readonly
+
+
+# =============================================================================
+# Subject Category Admin
+# =============================================================================
+
+class SubjectCategoryLinkInline(admin.TabularInline):
+    """Inline for linking subjects to a category."""
+    model = SubjectCategoryLink
+    extra = 1
+    autocomplete_fields = ['subject']
+    readonly_fields = ['year']
+
+
+@admin.register(SubjectCategory)
+class SubjectCategoryAdmin(admin.ModelAdmin):
+    """Admin interface for SubjectCategory model."""
+    list_display = ['year', 'name', 'kind', 'yearly_rate', 'monthly_rate',
+                    'group_threshold', 'is_active']
+    list_filter = ['year', 'kind', 'is_active']
+    search_fields = ['name']
+    ordering = ['-year', 'name']
+    list_per_page = 50
+    inlines = [SubjectCategoryLinkInline]
+
+
+@admin.register(SubjectCategoryLink)
+class SubjectCategoryLinkAdmin(admin.ModelAdmin):
+    """Admin interface for SubjectCategoryLink (debugging)."""
+    list_display = ['year', 'subject', 'category']
+    list_filter = ['year', 'category__kind']
+    search_fields = ['subject__name', 'category__name']
+    autocomplete_fields = ['subject', 'category']
+    ordering = ['-year', 'subject__name']
+    readonly_fields = ['year']
+
+
+# =============================================================================
+# Discipline Group Admin
+# =============================================================================
+
+class DurationEntryInline(admin.TabularInline):
+    """Inline for duration entries within a DisciplineGroup."""
+    model = DurationEntry
+    extra = 1
+    readonly_fields = ['changed_at']
+
+
+class GroupSizeEntryInline(admin.TabularInline):
+    """Inline for manual group-size overrides within a DisciplineGroup."""
+    model = GroupSizeEntry
+    extra = 1
+    readonly_fields = ['changed_at']
+
+
+@admin.register(DisciplineGroup)
+class DisciplineGroupAdmin(admin.ModelAdmin):
+    """Admin interface for DisciplineGroup model."""
+    list_display = ['year', 'subject', 'category', 'auto_scaling_enabled', 'is_active']
+    list_filter = ['year', 'category', 'is_active', 'auto_scaling_enabled']
+    search_fields = ['subject__name', 'category__name']
+    ordering = ['-year', 'subject__name']
+    autocomplete_fields = ['subject', 'category']
+    list_per_page = 50
+    inlines = [DurationEntryInline, GroupSizeEntryInline]

@@ -34,9 +34,8 @@ if TYPE_CHECKING:
 # Constants and Patterns
 # =============================================================================
 
-# Default semester boundaries (can be customized per year in future)
-DEFAULT_SEMESTER_1_MONTHS = list(range(1, 7))   # [1, 2, 3, 4, 5, 6]
-DEFAULT_SEMESTER_2_MONTHS = list(range(7, 13))  # [7, 8, 9, 10, 11, 12]
+# Default semester boundary: last month of semester 1
+DEFAULT_LAST_MONTH_SEM1 = 6
 
 # Patterns for detecting subject types
 # Individual: contains "ind." or starts with "vspe_" (case-insensitive)
@@ -102,12 +101,9 @@ def get_semester_month_ranges(year: int) -> tuple[list[int], list[int]]:
     """
     Get the month ranges for each semester of a given year.
     
-    Currently returns default boundaries:
-    - 1st semester: months 1-6
-    - 2nd semester: months 7-12
-    
-    In the future, this function can be extended to read from a configuration
-    table to support different boundaries per year (e.g., 1-7 and 8-12).
+    Uses SemesterConfig to look up the per-year boundary.
+    If no config exists for the year, defaults to boundary = 6
+    (semester 1 = months 1-6, semester 2 = months 7-12).
     
     Args:
         year: The year to get semester ranges for.
@@ -115,9 +111,12 @@ def get_semester_month_ranges(year: int) -> tuple[list[int], list[int]]:
     Returns:
         Tuple of (semester_1_months, semester_2_months) as lists of integers.
     """
-    # Future: query YearConfig table for custom boundaries
-    # For now, use defaults
-    return (DEFAULT_SEMESTER_1_MONTHS.copy(), DEFAULT_SEMESTER_2_MONTHS.copy())
+    from apps.catalog.models import SemesterConfig
+
+    boundary = SemesterConfig.get_boundary(year)
+    sem1 = list(range(1, boundary + 1))
+    sem2 = list(range(boundary + 1, 13))
+    return (sem1, sem2)
 
 
 def get_semester_for_month(month: int, year: int) -> int:

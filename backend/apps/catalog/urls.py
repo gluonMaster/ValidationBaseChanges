@@ -66,4 +66,24 @@ urlpatterns = [
     
     # Sync from Legacy tool (Admin only)
     path("sync-from-legacy/", views.SyncFromLegacyView.as_view(), name="sync_from_legacy"),
+    
+    # Subject Categories CRUD (per year)
+    path("categories/<int:year>/", views.SubjectCategoryListView.as_view(), name="category_list"),
+    path("categories/<int:year>/create/", views.SubjectCategoryCreateView.as_view(), name="category_create"),
+    path("categories/<int:year>/<int:pk>/edit/", views.SubjectCategoryUpdateView.as_view(), name="category_edit"),
+    path("categories/<int:year>/<int:pk>/delete/", views.SubjectCategoryDeleteView.as_view(), name="category_delete"),
+    
+    # Subject ↔ Category link management
+    path("categories/<int:year>/<int:pk>/subjects/", views.SubjectCategoryLinksView.as_view(), name="category_subjects"),
+    path("categories/<int:year>/<int:pk>/subjects/<int:link_pk>/remove/", views.SubjectCategoryUnlinkView.as_view(), name="category_unlink_subject"),
+    
+    # DisciplineGroup management
+    path("groups/<int:year>/", views.DisciplineGroupListView.as_view(), name="group_list"),
+    path("groups/<int:year>/<int:pk>/", views.DisciplineGroupDetailView.as_view(), name="group_detail"),
+    path("groups/<int:year>/<int:pk>/duration/add/", views.DurationEntryCreateView.as_view(), name="group_duration_add"),
+    path("groups/<int:year>/<int:pk>/size/add/", views.GroupSizeEntryCreateView.as_view(), name="group_size_add"),
+    path("groups/<int:year>/<int:pk>/toggle-scaling/", views.DisciplineGroupToggleScalingView.as_view(), name="group_toggle_scaling"),
+
+    # API endpoints
+    path("api/groups/<int:year>/<int:pk>/size/", views.GroupSizeApiView.as_view(), name="group_size_api"),
 ]

@@ -185,6 +185,59 @@ Only accessible to Admin users.
         </div>
     </div>
 
+    <!-- Categories Section -->
+    <div class="row mt-2">
+        <div class="col-12">
+            <h4 class="mb-3">
+                <i class="bi bi-tags"></i>
+                Preiskategorien
+            </h4>
+        </div>
+
+        <!-- Subject Categories -->
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-primary">
+                <div class="card-header bg-primary text-white">
+                    <i class="bi bi-tags"></i>
+                    Kategorien
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Verwalten Sie Fachkategorien (Gruppen- und Einzelunterricht) mit Preisraten pro Jahr.
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'catalog:category_list' year=current_year %}" class="btn btn-outline-primary">
+                        <i class="bi bi-list"></i> Alle anzeigen
+                    </a>
+                    <a href="{% url 'catalog:category_create' year=current_year %}" class="btn btn-primary">
+                        <i class="bi bi-plus-lg"></i> Neu
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Discipline Groups -->
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-success">
+                <div class="card-header bg-success text-white">
+                    <i class="bi bi-collection"></i>
+                    Gruppen
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Verwalten Sie Gruppen (Dauer, Größe, Scaling) pro Fach und Jahr.
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'catalog:group_list' year=current_year %}" class="btn btn-outline-success">
+                        <i class="bi bi-list"></i> Alle anzeigen
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Discount Section -->
     <div class="row mt-2">
         <div class="col-12">

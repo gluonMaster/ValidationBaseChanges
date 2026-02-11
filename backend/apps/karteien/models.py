@@ -20,6 +20,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import ClassVar
 
+from django.conf import settings
 from django.db import models
 
 
@@ -130,6 +131,16 @@ class UserRole(models.TextChoices):
     ADMIN = "Admin", "Admin"
     OPERATOR = "Operator", "Operator"
     SUPERADMIN = "Superadmin", "Superadmin"
+
+
+class ContractStatusKind(models.TextChoices):
+    """
+    Contract status for a given month.
+    Used by ContractStatusEntry to track per-month status history.
+    """
+    ACTIVE = "ACTIVE", "Aktiv"
+    PAUSED = "PAUSED", "Pausiert"
+    TERMINATED = "TERMINATED", "Gekündigt"
 
 
 # =============================================================================
@@ -769,3 +780,235 @@ class KarteiRecord(models.Model):
     def is_sepa(self) -> bool:
         """Check if record has SEPA marker (restricts Operator edits)."""
         return self.sepa_marker.upper() == "SEPA"
+
+
+# =============================================================================
+# ContractTypeEntry Model
+# =============================================================================
+
+class ContractTypeEntry(models.Model):
+    """
+    Per-month contract type history for a KarteiRecord.
+
+    Tracks when a record switches between yearly (Jahresvertrag) and
+    monthly (Monatsvertrag / O/V) billing. Each entry marks the start
+    of a new contract type from the given month onward.
+    """
+
+    record = models.ForeignKey(
+        KarteiRecord,
+        on_delete=models.CASCADE,
+        related_name="contract_type_entries",
+        verbose_name="Kartei Record",
+    )
+    effective_from_month = models.PositiveSmallIntegerField(
+        verbose_name="Gültig ab Monat",
+        help_text="Month (1-12) from which this contract type takes effect.",
+    )
+    is_monthly = models.BooleanField(
+        verbose_name="Monatsvertrag",
+        help_text="True = monthly contract (O/V), False = yearly contract.",
+    )
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        verbose_name="Geändert von",
+    )
+    changed_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Geändert am",
+    )
+    comment = models.TextField(
+        blank=True,
+        default="",
+        verbose_name="Kommentar",
+    )
+
+    class Meta:
+        db_table = "karteien_contract_type_entry"
+        ordering = ["effective_from_month"]
+        verbose_name = "Contract Type Entry"
+        verbose_name_plural = "Contract Type Entries"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["record", "effective_from_month"],
+                name="unique_contract_type_record_month",
+            ),
+            models.CheckConstraint(
+                check=models.Q(effective_from_month__gte=1, effective_from_month__lte=12),
+                name="contract_type_month_1_12",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        kind = "Monatsvertrag" if self.is_monthly else "Jahresvertrag"
+        return f"{self.record_id} – ab Monat {self.effective_from_month}: {kind}"
+
+
+# =============================================================================
+# ContractStatusEntry Model
+# =============================================================================
+
+class ContractStatusEntry(models.Model):
+    """
+    Per-month contract status history for a KarteiRecord.
+
+    Tracks when a record's contract status changes between ACTIVE,
+    PAUSED, and TERMINATED. Each entry marks the start of a new
+    status from the given month onward.
+    """
+
+    record = models.ForeignKey(
+        KarteiRecord,
+        on_delete=models.CASCADE,
+        related_name="contract_status_entries",
+        verbose_name="Kartei Record",
+    )
+    effective_from_month = models.PositiveSmallIntegerField(
+        verbose_name="Gültig ab Monat",
+        help_text="Month (1-12) from which this contract status takes effect.",
+    )
+    kind = models.CharField(
+        max_length=20,
+        choices=ContractStatusKind.choices,
+        verbose_name="Status",
+        help_text="Contract status: ACTIVE, PAUSED, or TERMINATED.",
+    )
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        verbose_name="Geändert von",
+    )
+    changed_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Geändert am",
+    )
+    comment = models.TextField(
+        blank=True,
+        default="",
+        verbose_name="Kommentar",
+    )
+
+    class Meta:
+        db_table = "karteien_contract_status_entry"
+        ordering = ["effective_from_month"]
+        verbose_name = "Contract Status Entry"
+        verbose_name_plural = "Contract Status Entries"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["record", "effective_from_month"],
+                name="unique_contract_status_record_month",
+            ),
+            models.CheckConstraint(
+                check=models.Q(effective_from_month__gte=1, effective_from_month__lte=12),
+                name="contract_status_month_1_12",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.record_id} – ab Monat {self.effective_from_month}: "
+            f"{self.get_kind_display()}"
+        )
+
+
+# =============================================================================
+# Contract Entry Helper Functions
+# =============================================================================
+
+def get_contract_type_for_month(
+    record: KarteiRecord,
+    month: int,
+    *,
+    entries: list[ContractTypeEntry] | None = None,
+) -> bool:
+    """
+    Return True if the record has a monthly contract in the given month,
+    False if yearly.
+
+    Logic:
+      1. If ContractTypeEntry rows exist for this record, find the last
+         entry with ``effective_from_month <= month``.
+      2. Fallback: ``record.is_monthly_contract``.
+
+    Args:
+        record: The KarteiRecord to check.
+        month:  Month number (1-12).
+        entries: Optional pre-fetched list of ContractTypeEntry objects
+                 for the record (avoids extra DB queries in bulk ops).
+    """
+    if entries is None:
+        entries = list(record.contract_type_entries.all())
+    applicable = [e for e in entries if e.effective_from_month <= month]
+    if applicable:
+        return max(applicable, key=lambda e: e.effective_from_month).is_monthly
+    # No entry covers this month – fall back to legacy field
+    return record.is_monthly_contract
+
+
+def get_contract_status_for_month(
+    record: KarteiRecord,
+    month: int,
+    *,
+    entries: list[ContractStatusEntry] | None = None,
+) -> str:
+    """
+    Return the contract status kind for the given month.
+
+    Returns one of ``'ACTIVE'``, ``'PAUSED'``, or ``'TERMINATED'``.
+
+    Logic:
+      1. If ContractStatusEntry rows exist for this record, find the
+         last entry with ``effective_from_month <= month``.
+      2. Fallback:
+         - If ``record.contract_terminated_from_month`` is set and
+           ``month >= record.contract_terminated_from_month`` → ``'TERMINATED'``
+         - Otherwise → ``'ACTIVE'``
+
+    Args:
+        record: The KarteiRecord to check.
+        month:  Month number (1-12).
+        entries: Optional pre-fetched list of ContractStatusEntry objects
+                 for the record (avoids extra DB queries in bulk ops).
+    """
+    if entries is None:
+        entries = list(record.contract_status_entries.all())
+    applicable = [e for e in entries if e.effective_from_month <= month]
+    if applicable:
+        return max(applicable, key=lambda e: e.effective_from_month).kind
+    # No entry covers this month – fall back to legacy fields
+    if (
+        record.contract_terminated_from_month is not None
+        and month >= record.contract_terminated_from_month
+    ):
+        return ContractStatusKind.TERMINATED
+    return ContractStatusKind.ACTIVE
+
+
+def is_billable_in_month(
+    record: KarteiRecord,
+    month: int,
+    *,
+    entries: list[ContractStatusEntry] | None = None,
+) -> bool:
+    """Return True if the record should be billed in this month (ACTIVE)."""
+    return get_contract_status_for_month(record, month, entries=entries) == ContractStatusKind.ACTIVE
+
+
+def counts_in_group_size(
+    record: KarteiRecord,
+    month: int,
+    *,
+    entries: list[ContractStatusEntry] | None = None,
+) -> bool:
+    """Return True if the record counts in group size (ACTIVE or PAUSED)."""
+    return get_contract_status_for_month(record, month, entries=entries) in (
+        ContractStatusKind.ACTIVE,
+        ContractStatusKind.PAUSED,
+    )

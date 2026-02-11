@@ -19,10 +19,10 @@ from typing import Any
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.db import IntegrityError
-from django.db.models import OuterRef, QuerySet, Subquery
-from django.http import HttpResponse
-from django.shortcuts import redirect
-from django.urls import reverse_lazy
+from django.db.models import Count, OuterRef, QuerySet, Subquery
+from django.http import HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, redirect
+from django.urls import reverse, reverse_lazy
 from django.views.generic import (
     CreateView,
     DeleteView,
@@ -30,18 +30,40 @@ from django.views.generic import (
     ListView,
     TemplateView,
     UpdateView,
+    View,
 )
 
 from .forms import (
     CopyYearForm,
     CopyPricesYearForm,
+    DurationEntryForm,
+    GroupSizeEntryForm,
     PriceOptionForm,
+    SubjectCategoryForm,
     SubjectForm,
     SyncFromLegacyForm,
     TeacherForm,
     TeachingAssignmentForm,
 )
-from .models import Subject, Teacher, TeachingAssignment, PriceOption, Discount, FamilyDiscount, RecordDiscount
+from .models import (
+    CategoryKind,
+    Discount,
+    DisciplineGroup,
+    DurationEntry,
+    FamilyDiscount,
+    GroupSizeEntry,
+    PriceOption,
+    RecordDiscount,
+    Subject,
+    SubjectCategory,
+    SubjectCategoryLink,
+    Teacher,
+    TeachingAssignment,
+    get_duration_for_month,
+    get_manual_size_for_month,
+)
+from .group_size_service import get_group_size_for_month
+from .services import ensure_default_categories
 
 
 
@@ -1824,4 +1846,497 @@ class SyncFromLegacyView(CatalogAdminMixin, FormView):
             messages.error(self.request, error)
         
         return redirect(f"{self.success_url}?year={year}")
+
+
+# =============================================================================
+# Subject Category Views
+# =============================================================================
+
+class SubjectCategoryListView(CatalogAdminMixin, ListView):
+    """List subject categories for a given year."""
+
+    model = SubjectCategory
+    template_name = "catalog/category_list.html"
+    context_object_name = "categories"
+    paginate_by = 50
+
+    def get_year(self) -> int:
+        return int(self.kwargs["year"])
+
+    def get_queryset(self) -> QuerySet[SubjectCategory]:
+        year = self.get_year()
+        # Bootstrap default categories on first access
+        ensure_default_categories(year)
+
+        qs = (
+            SubjectCategory.objects
+            .filter(year=year)
+            .annotate(links_count=Count("links"))
+            .order_by("kind", "name")
+        )
+
+        # Optional kind filter
+        kind = self.request.GET.get("kind", "").strip()
+        if kind in (CategoryKind.GROUP, CategoryKind.INDIVIDUAL):
+            qs = qs.filter(kind=kind)
+
+        return qs
+
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        context["year"] = self.get_year()
+        context["selected_kind"] = self.request.GET.get("kind", "")
+        context["kind_choices"] = CategoryKind.choices
+        return context
+
+
+class SubjectCategoryCreateView(CatalogAdminMixin, CreateView):
+    """Create a new subject category for a given year."""
+
+    model = SubjectCategory
+    form_class = SubjectCategoryForm
+    template_name = "catalog/category_form.html"
+
+    def get_year(self) -> int:
+        return int(self.kwargs["year"])
+
+    def get_success_url(self) -> str:
+        return reverse("catalog:category_list", kwargs={"year": self.get_year()})
+
+    def form_valid(self, form):
+        form.instance.year = self.get_year()
+        messages.success(self.request, "Kategorie wurde erfolgreich erstellt.")
+        return super().form_valid(form)
+
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        context["year"] = self.get_year()
+        context["is_create"] = True
+        context["page_title"] = "Neue Kategorie"
+        return context
+
+
+class SubjectCategoryUpdateView(CatalogAdminMixin, UpdateView):
+    """Edit an existing subject category."""
+
+    model = SubjectCategory
+    form_class = SubjectCategoryForm
+    template_name = "catalog/category_form.html"
+
+    def get_year(self) -> int:
+        return int(self.kwargs["year"])
+
+    def get_queryset(self) -> QuerySet[SubjectCategory]:
+        return SubjectCategory.objects.filter(year=self.get_year())
+
+    def get_success_url(self) -> str:
+        return reverse("catalog:category_list", kwargs={"year": self.get_year()})
+
+    def get_form(self, form_class=None):
+        form = super().get_form(form_class)
+        # Disallow changing kind when links exist
+        if self.object.links.exists():
+            form.fields["kind"].disabled = True
+            form.fields["kind"].help_text = (
+                "Art kann nicht geändert werden, solange Fächer zugeordnet sind."
+            )
+        return form
+
+    def form_valid(self, form):
+        messages.success(self.request, "Kategorie wurde erfolgreich aktualisiert.")
+        return super().form_valid(form)
+
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        context["year"] = self.get_year()
+        context["is_create"] = False
+        context["page_title"] = f"Kategorie bearbeiten: {self.object.name}"
+        return context
+
+
+class SubjectCategoryDeleteView(CatalogAdminMixin, DeleteView):
+    """Soft-delete a subject category (set is_active=False) and remove links."""
+
+    model = SubjectCategory
+    template_name = "catalog/category_confirm_delete.html"
+    context_object_name = "category"
+
+    def get_year(self) -> int:
+        return int(self.kwargs["year"])
+
+    def get_queryset(self) -> QuerySet[SubjectCategory]:
+        return SubjectCategory.objects.filter(year=self.get_year())
+
+    def get_success_url(self) -> str:
+        return reverse("catalog:category_list", kwargs={"year": self.get_year()})
+
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        context["year"] = self.get_year()
+        context["linked_subjects"] = (
+            SubjectCategoryLink.objects
+            .filter(category=self.object)
+            .select_related("subject")
+        )
+        return context
+
+    def form_valid(self, form=None):
+        category = self.get_object()
+        # Remove all links for this category
+        deleted_count, _ = SubjectCategoryLink.objects.filter(category=category).delete()
+        # Soft-delete: deactivate instead of removing
+        category.is_active = False
+        category.save(update_fields=["is_active"])
+        if deleted_count:
+            messages.success(
+                self.request,
+                f"Kategorie «{category.name}» deaktiviert. "
+                f"{deleted_count} Fachzuordnung(en) entfernt.",
+            )
+        else:
+            messages.success(
+                self.request,
+                f"Kategorie «{category.name}» wurde deaktiviert.",
+            )
+        return redirect(self.get_success_url())
+
+
+# =============================================================================
+# Subject ↔ Category Link Management Views
+# =============================================================================
+
+class SubjectCategoryLinksView(CatalogAdminMixin, TemplateView):
+    """
+    Manage subject links for a category.
+
+    GET – display current links and a form to add new subjects.
+    POST – create a new SubjectCategoryLink (+ DisciplineGroup / DurationEntry
+    for GROUP categories).
+    """
+
+    template_name = "catalog/category_subjects.html"
+
+    def get_year(self) -> int:
+        return int(self.kwargs["year"])
+
+    def get_category(self) -> SubjectCategory:
+        return get_object_or_404(
+            SubjectCategory,
+            pk=self.kwargs["pk"],
+            year=self.get_year(),
+        )
+
+    # ---- helpers ----
+
+    def _available_subjects(self, year: int) -> QuerySet[Subject]:
+        """Subjects not yet linked to any category in this year."""
+        linked_ids = (
+            SubjectCategoryLink.objects
+            .filter(year=year)
+            .values_list("subject_id", flat=True)
+        )
+        return (
+            Subject.objects
+            .filter(is_active=True)
+            .exclude(pk__in=linked_ids)
+            .order_by("name")
+        )
+
+    # ---- GET ----
+
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        category = self.get_category()
+        year = self.get_year()
+
+        context["category"] = category
+        context["year"] = year
+        context["links"] = (
+            SubjectCategoryLink.objects
+            .filter(category=category)
+            .select_related("subject")
+            .order_by("subject__name")
+        )
+        context["available_subjects"] = self._available_subjects(year)
+        context["is_group"] = category.kind == CategoryKind.GROUP
+        context["month_choices"] = list(range(1, 13))
+        return context
+
+    # ---- POST ----
+
+    def post(self, request, *args, **kwargs):
+        category = self.get_category()
+        year = self.get_year()
+
+        subject_id = request.POST.get("subject")
+        if not subject_id:
+            messages.error(request, "Bitte ein Fach auswählen.")
+            return redirect(
+                reverse(
+                    "catalog:category_subjects",
+                    kwargs={"year": year, "pk": category.pk},
+                )
+            )
+
+        subject = get_object_or_404(Subject, pk=subject_id)
+
+        # Duplicate check
+        if SubjectCategoryLink.objects.filter(subject=subject, year=year).exists():
+            messages.warning(
+                request,
+                f"Dieses Fach ist bereits einer Kategorie im Jahr {year} zugeordnet.",
+            )
+            return redirect(
+                reverse(
+                    "catalog:category_subjects",
+                    kwargs={"year": year, "pk": category.pk},
+                )
+            )
+
+        # Create link
+        SubjectCategoryLink.objects.create(subject=subject, category=category)
+
+        # GROUP-specific: ensure DisciplineGroup + initial DurationEntry
+        if category.kind == CategoryKind.GROUP:
+            activation_month = int(request.POST.get("activation_month", 1))
+            initial_duration = int(request.POST.get("initial_duration", 45))
+
+            group, created = DisciplineGroup.objects.get_or_create(
+                subject=subject,
+                year=year,
+                defaults={"category": category},
+            )
+            if not created:
+                group.category = category
+                group.is_active = True
+                group.save(update_fields=["category", "is_active"])
+
+            # Create DurationEntry only if not already present for this month
+            if not DurationEntry.objects.filter(
+                group=group,
+                effective_from_month=activation_month,
+            ).exists():
+                DurationEntry.objects.create(
+                    group=group,
+                    effective_from_month=activation_month,
+                    duration_minutes=initial_duration,
+                )
+
+        messages.success(
+            request,
+            f"Fach «{subject.name}» wurde der Kategorie «{category.name}» zugeordnet.",
+        )
+        return redirect(
+            reverse(
+                "catalog:category_subjects",
+                kwargs={"year": year, "pk": category.pk},
+            )
+        )
+
+
+class SubjectCategoryUnlinkView(CatalogAdminMixin, View):
+    """
+    Remove a Subject ↔ Category link.
+
+    POST-only. If the category is GROUP, deactivates the corresponding
+    DisciplineGroup instead of deleting it.
+    """
+
+    def post(self, request, year: int, pk: int, link_pk: int):
+        link = get_object_or_404(
+            SubjectCategoryLink,
+            pk=link_pk,
+            category__pk=pk,
+            category__year=year,
+        )
+        category = link.category
+        subject = link.subject
+
+        # Remove link
+        link.delete()
+
+        # Deactivate DisciplineGroup if GROUP category
+        if category.kind == CategoryKind.GROUP:
+            DisciplineGroup.objects.filter(
+                subject=subject,
+                year=year,
+            ).update(is_active=False)
+
+        messages.success(
+            request,
+            f"Fach «{subject.name}» wurde aus der Kategorie «{category.name}» entfernt.",
+        )
+        return redirect(
+            reverse(
+                "catalog:category_subjects",
+                kwargs={"year": year, "pk": category.pk},
+            )
+        )
+
+
+# =============================================================================
+# DisciplineGroup Views (PROMPT_141.2)
+# =============================================================================
+
+class DisciplineGroupListView(CatalogAdminMixin, ListView):
+    """List active DisciplineGroups for a given year."""
+
+    template_name = "catalog/group_list.html"
+    context_object_name = "groups"
+
+    def get_queryset(self) -> QuerySet:
+        year = self.kwargs["year"]
+        qs = DisciplineGroup.objects.filter(year=year, is_active=True).select_related(
+            "subject", "category",
+        )
+        category_id = self.request.GET.get("category")
+        if category_id:
+            qs = qs.filter(category_id=category_id)
+        return qs.order_by("subject__name")
+
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        ctx = super().get_context_data(**kwargs)
+        year = self.kwargs["year"]
+        ctx["year"] = year
+        ctx["categories"] = SubjectCategory.objects.filter(
+            year=year, is_active=True,
+        ).order_by("name")
+        ctx["selected_category"] = self.request.GET.get("category", "")
+        return ctx
+
+
+class DisciplineGroupDetailView(CatalogAdminMixin, TemplateView):
+    """Detail view for a single DisciplineGroup with duration/size entries."""
+
+    template_name = "catalog/group_detail.html"
+
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        ctx = super().get_context_data(**kwargs)
+        year = self.kwargs["year"]
+        pk = self.kwargs["pk"]
+        group = get_object_or_404(
+            DisciplineGroup.objects.select_related("subject", "category"),
+            pk=pk,
+            year=year,
+        )
+
+        duration_entries = list(group.duration_entries.order_by("effective_from_month"))
+        size_entries = list(group.size_entries.order_by("effective_from_month"))
+
+        monthly_summary = []
+        for m in range(1, 13):
+            size_info = get_group_size_for_month(group, m)
+            monthly_summary.append({
+                "month": m,
+                "duration": get_duration_for_month(group, m, entries=duration_entries),
+                "manual_size": size_info["manual_size"],
+                "auto_size": size_info["auto_size"],
+                "effective_size": size_info["size"],
+                "billable_count": size_info["billable_count"],
+                "is_manual": size_info["is_manual"],
+            })
+
+        ctx["year"] = year
+        ctx["group"] = group
+        ctx["duration_entries"] = duration_entries
+        ctx["size_entries"] = size_entries
+        ctx["monthly_summary"] = monthly_summary
+        ctx["duration_form"] = DurationEntryForm()
+        ctx["size_form"] = GroupSizeEntryForm()
+        return ctx
+
+
+class DurationEntryCreateView(CatalogAdminMixin, View):
+    """POST-only: create a DurationEntry for a group."""
+
+    def post(self, request, year: int, pk: int):
+        group = get_object_or_404(DisciplineGroup, pk=pk, year=year)
+        form = DurationEntryForm(request.POST)
+        if form.is_valid():
+            entry = form.save(commit=False)
+            entry.group = group
+            entry.changed_by = request.user
+            try:
+                entry.save()
+                messages.success(
+                    request,
+                    f"Dauer-Eintrag für Monat {entry.effective_from_month} wurde erstellt.",
+                )
+            except IntegrityError:
+                messages.error(
+                    request,
+                    f"Für Monat {form.cleaned_data['effective_from_month']} existiert bereits ein Dauer-Eintrag.",
+                )
+        else:
+            for field, errors in form.errors.items():
+                for error in errors:
+                    messages.error(request, f"{field}: {error}")
+        return redirect(
+            reverse("catalog:group_detail", kwargs={"year": year, "pk": pk})
+        )
+
+
+class GroupSizeEntryCreateView(CatalogAdminMixin, View):
+    """POST-only: create a GroupSizeEntry for a group."""
+
+    def post(self, request, year: int, pk: int):
+        group = get_object_or_404(DisciplineGroup, pk=pk, year=year)
+        form = GroupSizeEntryForm(request.POST)
+        if form.is_valid():
+            entry = form.save(commit=False)
+            entry.group = group
+            entry.changed_by = request.user
+            try:
+                entry.save()
+                messages.success(
+                    request,
+                    f"Größen-Eintrag für Monat {entry.effective_from_month} wurde erstellt.",
+                )
+            except IntegrityError:
+                messages.error(
+                    request,
+                    f"Für Monat {form.cleaned_data['effective_from_month']} existiert bereits ein Größen-Eintrag.",
+                )
+        else:
+            for field, errors in form.errors.items():
+                for error in errors:
+                    messages.error(request, f"{field}: {error}")
+        return redirect(
+            reverse("catalog:group_detail", kwargs={"year": year, "pk": pk})
+        )
+
+
+class DisciplineGroupToggleScalingView(CatalogAdminMixin, View):
+    """POST-only: toggle auto_scaling_enabled on a group."""
+
+    def post(self, request, year: int, pk: int):
+        group = get_object_or_404(DisciplineGroup, pk=pk, year=year)
+        group.auto_scaling_enabled = not group.auto_scaling_enabled
+        group.save(update_fields=["auto_scaling_enabled"])
+        state = "aktiviert" if group.auto_scaling_enabled else "deaktiviert"
+        messages.success(
+            request,
+            f"Auto-Scaling für «{group}» wurde {state}.",
+        )
+        return redirect(
+            reverse("catalog:group_detail", kwargs={"year": year, "pk": pk})
+        )
+
+
+class GroupSizeApiView(CatalogAdminMixin, View):
+    """GET JSON: group size info for a single month."""
+
+    def get(self, request, year: int, pk: int):
+        group = get_object_or_404(DisciplineGroup, pk=pk, year=year)
+
+        try:
+            month = int(request.GET.get("month", 0))
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "Invalid month parameter."}, status=400)
+
+        if not 1 <= month <= 12:
+            return JsonResponse({"error": "month must be 1-12."}, status=400)
+
+        data = get_group_size_for_month(group, month)
+        return JsonResponse(data)
 

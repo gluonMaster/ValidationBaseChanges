@@ -12,7 +12,8 @@ from django import forms
 
 from .models import (
     Teacher, Subject, TeachingAssignment, PriceOption,
-    Discount, DiscountKind, FamilyDiscount, RecordDiscount
+    Discount, DiscountKind, FamilyDiscount, RecordDiscount,
+    SubjectCategory, DurationEntry, GroupSizeEntry,
 )
 
 
@@ -503,3 +504,86 @@ class SyncFromLegacyForm(forms.Form):
         current_year = date.today().year
         self.fields["year"].initial = current_year
         self.available_years = available_years or []
+
+
+class SubjectCategoryForm(forms.ModelForm):
+    """Form for creating and editing SubjectCategory.
+
+    The `year` field is NOT included — it is set by the view from the URL.
+    """
+
+    class Meta:
+        model = SubjectCategory
+        fields = ["name", "kind", "yearly_rate", "monthly_rate", "group_threshold", "is_active"]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "form-control"}),
+            "kind": forms.Select(attrs={"class": "form-select"}),
+            "yearly_rate": forms.NumberInput(attrs={"step": "0.01", "min": "0", "class": "form-control"}),
+            "monthly_rate": forms.NumberInput(attrs={"step": "0.01", "min": "0", "class": "form-control"}),
+            "group_threshold": forms.NumberInput(attrs={"min": "1", "class": "form-control"}),
+            "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+        }
+
+
+# =============================================================================
+# DurationEntry / GroupSizeEntry Forms (PROMPT_141.1)
+# =============================================================================
+
+MONTH_CHOICES = [(m, f"Monat {m}") for m in range(1, 13)]
+
+
+class DurationEntryForm(forms.ModelForm):
+    """Form for creating and editing DurationEntry records.
+
+    ``changed_by`` / ``changed_at`` are excluded — they are set in the view.
+    """
+
+    class Meta:
+        model = DurationEntry
+        fields = ["effective_from_month", "duration_minutes", "comment"]
+        widgets = {
+            "effective_from_month": forms.Select(
+                choices=MONTH_CHOICES,
+                attrs={"class": "form-select"},
+            ),
+            "duration_minutes": forms.NumberInput(attrs={
+                "class": "form-control",
+                "min": "1",
+            }),
+            "comment": forms.Textarea(attrs={
+                "class": "form-control",
+                "rows": 2,
+                "placeholder": "Kommentar (optional)",
+            }),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.instance.pk:
+            self.fields["duration_minutes"].initial = 45
+
+
+class GroupSizeEntryForm(forms.ModelForm):
+    """Form for creating and editing GroupSizeEntry records.
+
+    ``changed_by`` / ``changed_at`` are excluded — they are set in the view.
+    """
+
+    class Meta:
+        model = GroupSizeEntry
+        fields = ["effective_from_month", "manual_size", "comment"]
+        widgets = {
+            "effective_from_month": forms.Select(
+                choices=MONTH_CHOICES,
+                attrs={"class": "form-select"},
+            ),
+            "manual_size": forms.NumberInput(attrs={
+                "class": "form-control",
+                "min": "1",
+            }),
+            "comment": forms.Textarea(attrs={
+                "class": "form-control",
+                "rows": 2,
+                "placeholder": "Kommentar (optional)",
+            }),
+        }
