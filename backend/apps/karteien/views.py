@@ -38,15 +38,24 @@ from apps.approvals.services import (
     build_snapshot,
     classify_change,
     create_or_update_pending_change,
+    create_or_update_pending_change_from_snapshot,
     get_changed_tracked_fields,
     write_history_entry,
 )
 from apps.approvals.models import DeclinedChange, PendingChange
 from apps.catalog.models import FamilyDiscount, RecordDiscount
 
-from .billing import recalculate_record_months, build_base_amounts, get_month_mismatches, detect_meaningful_changes
+from .billing import recalculate_record_months, build_base_amounts, get_month_mismatches, detect_meaningful_changes, get_semester_month_ranges, calculate_month_values
+from apps.catalog.pricing import determine_pricing_source, get_suggested_prices_for_record
+from apps.catalog.warnings import (
+    get_record_price_mismatches,
+    get_record_pricing_warnings,
+)
 from .forms import KarteiRecordForm, KarteiRecordFilterForm, MonthsOverrideForm
-from .models import KarteiRecord, RecordStatus, MonthsMode
+from .models import (
+    KarteiRecord, RecordStatus, MonthsMode, ContractStatusKind, ContractStatusEntry,
+    get_contract_type_for_month, get_contract_status_for_month,
+)
 from .validators import validate_kartei_record, apply_operator_filters
 from apps.familyid_reservations.services import get_next_family_id
 
@@ -285,7 +294,7 @@ class KarteiRecordListView(KarteiViewerMixin, ListView):
     def get_context_data(self, **kwargs) -> dict[str, Any]:
         """Add filter form and year list to context."""
         context = super().get_context_data(**kwargs)
-        
+
         # Filter form with current values
         context["filter_form"] = KarteiRecordFilterForm(self.request.GET)
         
@@ -402,7 +411,6 @@ class KarteiRecordDetailView(KarteiViewerMixin, DetailView):
                             pass
                 
                 # Apply snapshot values to preview record
-                from decimal import Decimal
                 from apps.karteien.models import TRACKED_FIELDS
                 
                 changed_fields = set()
@@ -486,7 +494,97 @@ class KarteiRecordDetailView(KarteiViewerMixin, DetailView):
         context["history_entries"] = history_entries
         context["raw_history"] = raw_history_fallback
         context["has_history"] = bool(history_entries or record.history_raw)
-        
+
+        # -----------------------------------------------------------------
+        # Pricing info & price mismatches  (PROMPT 147.1)
+        # -----------------------------------------------------------------
+        display_rec = context.get("display_record", record)
+        sem1_months, sem2_months = get_semester_month_ranges(record.year)
+        all_suggested = get_suggested_prices_for_record(display_rec)
+
+        pricing_info = {}
+        for _sem, _sem_months in ((1, sem1_months), (2, sem2_months)):
+            _source = determine_pricing_source(display_rec, _sem)
+            _suggested = {m: all_suggested[m] for m in _sem_months}
+            _cat_name = None
+            _formula = None
+            for _m in sorted(_suggested):
+                if _suggested[_m] is not None:
+                    _cat_name = _suggested[_m].get("category_name")
+                    _formula = _suggested[_m]
+                    break
+            pricing_info[_sem] = {
+                "source_value": _source.value,
+                "suggested_prices": _suggested,
+                "category_name": _cat_name,
+                "formula_example": _formula,
+            }
+        context["pricing_info"] = pricing_info
+
+        raw_mismatches = get_record_price_mismatches(display_rec)
+        price_mismatches: dict[int, dict] = {}
+        for month, mismatch in raw_mismatches.items():
+            current_base = mismatch["stored"]
+            if current_base is None:
+                current_base = Decimal("0")
+            price_mismatches[month] = {
+                "current": current_base,
+                "suggested": mismatch["suggested"],
+            }
+        context["price_mismatches"] = price_mismatches
+        context["price_mismatch_count"] = len(price_mismatches)
+
+        # -----------------------------------------------------------------
+        # Contract Type / Status Timeline  (PROMPT 148.1)
+        # -----------------------------------------------------------------
+        contract_type_entries = list(
+            record.contract_type_entries.all().select_related("changed_by")
+        )
+        contract_status_entries = list(
+            record.contract_status_entries.all().select_related("changed_by")
+        )
+
+        STATUS_DISPLAY = {
+            ContractStatusKind.ACTIVE: ("✓", "success", "Aktiv"),
+            ContractStatusKind.PAUSED: ("⏸", "warning", "Pausiert"),
+            ContractStatusKind.TERMINATED: ("✗", "danger", "Gekündigt"),
+        }
+
+        contract_timeline = []
+        for m in range(1, 13):
+            is_monthly = get_contract_type_for_month(
+                record, m, entries=contract_type_entries,
+            )
+            status_kind = get_contract_status_for_month(
+                record, m, entries=contract_status_entries,
+            )
+            symbol, color, label = STATUS_DISPLAY.get(
+                status_kind, ("?", "secondary", status_kind),
+            )
+            contract_timeline.append({
+                "month": m,
+                "type_label": "M" if is_monthly else "J",
+                "type_long": "Monatsvertrag" if is_monthly else "Jahresvertrag",
+                "status_kind": status_kind,
+                "status_symbol": symbol,
+                "status_color": color,
+                "status_label": label,
+            })
+
+        context["contract_timeline"] = contract_timeline
+        context["contract_type_entries"] = contract_type_entries
+        context["contract_status_entries"] = contract_status_entries
+
+        # -----------------------------------------------------------------
+        # Pricing warnings  (PROMPT 149.2)
+        # -----------------------------------------------------------------
+        context["pricing_warnings"] = get_record_pricing_warnings(display_rec)
+
+        # -----------------------------------------------------------------
+        # Quick-set subject_ref candidates  (PROMPT 149.3)
+        # -----------------------------------------------------------------
+        context["subject_ref_candidates"] = _find_subject_ref_candidates(record)
+
         return context
     
     def _values_equal(self, val1: Any, val2: Any) -> bool:
@@ -597,6 +695,11 @@ class KarteiRecordCreateView(KarteiEditorMixin, CreateView):
         context = super().get_context_data(**kwargs)
         context["is_create"] = True
         context["year"] = int(self.request.GET.get("year", date.today().year))
+        sem1, sem2 = get_semester_month_ranges(context["year"])
+        context["sem1_first"] = min(sem1)
+        context["sem1_last"] = max(sem1)
+        context["sem2_first"] = min(sem2)
+        context["sem2_last"] = max(sem2)
         
         # Prefill from family info
         context["prefill_from_family"] = self._prefill_from_family
@@ -1013,6 +1116,11 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
         context = super().get_context_data(**kwargs)
         context["is_create"] = False
         context["year"] = self.object.year
+        sem1, sem2 = get_semester_month_ranges(context["year"])
+        context["sem1_first"] = min(sem1)
+        context["sem1_last"] = max(sem1)
+        context["sem2_first"] = min(sem2)
+        context["sem2_last"] = max(sem2)
         
         # For PENDING/DECLINED: use snapshot-applied instance as context["record"]
         original_status = getattr(self, "_original_status", self.object.status)
@@ -1102,7 +1210,56 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
                 context["disabled_months_display"] = f"Monate {', '.join(map(str, months))}"
         else:
             context["disabled_months_display"] = None
-        
+
+        # -----------------------------------------------------------------
+        # Pricing info & price mismatches  (PROMPT 147.1)
+        # -----------------------------------------------------------------
+        ctx_record = context.get("record", record)
+        sem1_months, sem2_months = get_semester_month_ranges(record.year)
+        all_suggested = get_suggested_prices_for_record(ctx_record)
+
+        pricing_info = {}
+        for _sem, _sem_months in ((1, sem1_months), (2, sem2_months)):
+            _source = determine_pricing_source(ctx_record, _sem)
+            _suggested = {m: all_suggested[m] for m in _sem_months}
+            _cat_name = None
+            _formula = None
+            for _m in sorted(_suggested):
+                if _suggested[_m] is not None:
+                    _cat_name = _suggested[_m].get("category_name")
+                    _formula = _suggested[_m]
+                    break
+            pricing_info[_sem] = {
+                "source_value": _source.value,
+                "suggested_prices": _suggested,
+                "category_name": _cat_name,
+                "formula_example": _formula,
+            }
+        context["pricing_info"] = pricing_info
+
+        raw_mismatches = get_record_price_mismatches(ctx_record)
+        price_mismatches: dict[int, dict] = {}
+        for month, mismatch in raw_mismatches.items():
+            current_base = mismatch["stored"]
+            if current_base is None:
+                current_base = Decimal("0")
+            price_mismatches[month] = {
+                "current": current_base,
+                "suggested": mismatch["suggested"],
+            }
+        context["price_mismatches"] = price_mismatches
+        context["price_mismatch_count"] = len(price_mismatches)
+
+        # -----------------------------------------------------------------
+        # Pricing warnings  (PROMPT 149.2)
+        # -----------------------------------------------------------------
+        context["pricing_warnings"] = get_record_pricing_warnings(ctx_record)
+
+        # -----------------------------------------------------------------
+        # Quick-set subject_ref candidates  (PROMPT 149.3)
+        # -----------------------------------------------------------------
+        context["subject_ref_candidates"] = _find_subject_ref_candidates(record)
+
         return context
     
     def _get_legacy_teacher_candidates(self) -> dict[str, Any]:
@@ -1513,30 +1670,76 @@ class MonthsOverrideView(KarteiEditorMixin, View):
         user = self.request.user
         return user.is_authenticated and user.is_admin_role
     
+    def _get_blocked_months(self, record: KarteiRecord) -> dict[int, str]:
+        """Return {month_num: status_kind} for PAUSED/TERMINATED months."""
+        from .models import get_contract_status_for_month
+
+        if record.pk and hasattr(record, 'contract_status_entries'):
+            entries: list | None = list(record.contract_status_entries.all())
+        else:
+            entries = None
+
+        blocked: dict[int, str] = {}
+        for m in range(1, 13):
+            kind = get_contract_status_for_month(record, m, entries=entries)
+            if kind in ('PAUSED', 'TERMINATED'):
+                blocked[m] = kind
+        return blocked
+
+    def _build_month_infos(
+        self, blocked_months: dict[int, str],
+    ) -> list[dict[str, object]]:
+        """Build a list of per-month metadata dicts for the template."""
+        infos = []
+        STATUS_LABELS = {
+            'PAUSED': 'pausiert',
+            'TERMINATED': 'gekündigt',
+        }
+        for m in range(1, 13):
+            status = blocked_months.get(m)
+            infos.append({
+                'num': m,
+                'field_name': f'month_{m}',
+                'blocked': status is not None,
+                'status': status,
+                'status_label': STATUS_LABELS.get(status, ''),
+            })
+        return infos
+
     def get(self, request: HttpRequest, pk: int) -> HttpResponse:
         """Show override form."""
         record = get_object_or_404(KarteiRecord, pk=pk)
         form = MonthsOverrideForm(record=record)
+        blocked_months = self._get_blocked_months(record)
         
         return render(request, self.template_name, {
             "record": record,
             "form": form,
+            "blocked_months": blocked_months,
+            "month_infos": self._build_month_infos(blocked_months),
         })
     
     def post(self, request: HttpRequest, pk: int) -> HttpResponse:
         """Process override form."""
         record = get_object_or_404(KarteiRecord, pk=pk)
         form = MonthsOverrideForm(request.POST, record=record)
+        blocked_months = self._get_blocked_months(record)
         
         if not form.is_valid():
             return render(request, self.template_name, {
                 "record": record,
                 "form": form,
+                "blocked_months": blocked_months,
+                "month_infos": self._build_month_infos(blocked_months),
             })
         
         # Get month changes
         month_changes = form.get_month_changes()
         reason = form.cleaned_data['reason']
+        
+        # Enforce 0.00 for PAUSED/TERMINATED months (ignore user input)
+        for m in blocked_months:
+            month_changes[f'month_{m}'] = Decimal('0.00')
         
         # Apply changes to record
         for field_name, value in month_changes.items():
@@ -1562,3 +1765,545 @@ class MonthsOverrideView(KarteiEditorMixin, View):
         )
         
         return redirect("karteien:record_detail", pk=record.pk)
+
+
+# =============================================================================
+# Apply Category Price View
+# =============================================================================
+
+class ApplyCategoryPriceView(KarteiEditorMixin, View):
+    """
+    POST-only endpoint that applies category-based suggested prices to a
+    KarteiRecord and creates a PendingChange for approval.
+
+    Saves ``base_amounts`` and (optionally) ``months_mode`` as safe fields
+    via ``KarteiRecord.objects.filter(...).update(...)`` — the risky
+    ``month_*`` values are stored *only* in the PendingChange snapshot and
+    require Superadmin approval before hitting the DB.
+    """
+
+    http_method_names = ["post"]
+
+    def post(self, request: HttpRequest, pk: int) -> HttpResponse:
+        record = get_object_or_404(KarteiRecord, pk=pk)
+        detail_url = reverse("karteien:record_detail", kwargs={"pk": pk})
+
+        # ------------------------------------------------------------------
+        # Guard: status must be NORMAL
+        # ------------------------------------------------------------------
+        if record.status != RecordStatus.NORMAL:
+            messages.error(
+                request,
+                "Kategoriepreis kann nur auf Datensätze im Status NORMAL "
+                "angewendet werden.",
+            )
+            return redirect(detail_url)
+
+        # ------------------------------------------------------------------
+        # Guard: months_mode must not be LEGACY
+        # ------------------------------------------------------------------
+        if record.months_mode == MonthsMode.LEGACY:
+            messages.error(
+                request,
+                "Bitte zuerst auf AUTO umstellen (Monate neu berechnen).",
+            )
+            return redirect(detail_url)
+
+        # ------------------------------------------------------------------
+        # Parse payload
+        # ------------------------------------------------------------------
+        try:
+            semester = int(request.POST.get("semester", 0))
+            from_month = int(request.POST.get("from_month", 0))
+        except (ValueError, TypeError):
+            messages.error(request, "Ungültige Parameter.")
+            return redirect(detail_url)
+
+        if semester not in (1, 2) or not 1 <= from_month <= 12:
+            messages.error(request, "Ungültige Semester-/Monatsangabe.")
+            return redirect(detail_url)
+
+        comment = (request.POST.get("comment") or "").strip()
+        if not comment:
+            messages.error(
+                request,
+                "Ein Kommentar ist erforderlich.",
+            )
+            return redirect(detail_url)
+
+        # ------------------------------------------------------------------
+        # Apply service (in-memory) to know months_updated early
+        # ------------------------------------------------------------------
+        from .category_price import apply_category_price_to_record
+
+        # Preserve current base_amounts so DECLINE can roll back immediate DB update.
+        old_base_amounts = dict(record.base_amounts or {})
+
+        try:
+            diff = apply_category_price_to_record(
+                record, semester=semester, from_month=from_month,
+            )
+        except ValueError as exc:
+            messages.error(request, str(exc))
+            return redirect(detail_url)
+
+        months_updated: list[int] = diff["months_updated"]
+
+        # ------------------------------------------------------------------
+        # Operator past-month restrictions
+        # ------------------------------------------------------------------
+        user = request.user
+        if user.has_past_months_restrictions:
+            from .validators import get_allowed_months
+
+            allowed_fields, _reason = get_allowed_months(record.year)
+            blocked = [
+                m for m in months_updated if f"month_{m}" not in allowed_fields
+            ]
+            if blocked:
+                months_str = ", ".join(str(m) for m in blocked)
+                messages.error(
+                    request,
+                    f"Sie dürfen vergangene Monate nicht ändern "
+                    f"(Monat(e) {months_str}).",
+                )
+                return redirect(detail_url)
+
+        # ------------------------------------------------------------------
+        # If OVERRIDE → switch to AUTO (in safe_updates)
+        # ------------------------------------------------------------------
+        new_months_mode = record.months_mode
+        if record.months_mode == MonthsMode.OVERRIDE:
+            record.months_mode = MonthsMode.AUTO
+            new_months_mode = MonthsMode.AUTO
+
+        # ------------------------------------------------------------------
+        # Create PendingChange (snapshot contains the mutated month_*)
+        # ------------------------------------------------------------------
+        pending = create_or_update_pending_change(
+            record, admin_comment=comment,
+        )
+        pending_snapshot = dict(pending.snapshot or {})
+        pending_snapshot["_old_base_amounts"] = old_base_amounts
+        pending.snapshot = pending_snapshot
+        pending.save(update_fields=["snapshot"])
+
+        # ------------------------------------------------------------------
+        # Persist safe fields + status via .update() (no record.save())
+        # ------------------------------------------------------------------
+        KarteiRecord.objects.filter(pk=record.pk).update(
+            status=RecordStatus.PENDING,
+            base_amounts=record.base_amounts,
+            months_mode=new_months_mode,
+        )
+
+        messages.info(
+            request,
+            "Änderungen wurden zur Genehmigung eingereicht. "
+            "Ein Superadmin muss die Änderungen prüfen.",
+        )
+        return redirect(detail_url)
+
+
+# =============================================================================
+# Apply Category Price — Preview (JSON, no side-effects)
+# =============================================================================
+
+from copy import copy as _shallow_copy
+from django.http import JsonResponse
+from django.views.decorators.http import require_GET
+from django.contrib.auth.decorators import login_required
+
+
+@login_required
+@require_GET
+def apply_price_preview(request: HttpRequest, pk: int) -> JsonResponse:
+    """
+    Return a JSON preview of what ``apply_category_price_to_record`` would
+    change — without persisting anything.
+
+    Query params:
+        semester   – 1 or 2
+        from_month – 1-12
+    """
+    user = request.user
+    if not user.can_edit_kartei:
+        return JsonResponse({"error": "Keine Berechtigung."}, status=403)
+
+    record = get_object_or_404(KarteiRecord, pk=pk)
+
+    # --- parse params ---
+    try:
+        semester = int(request.GET.get("semester", 0))
+        from_month = int(request.GET.get("from_month", 0))
+    except (ValueError, TypeError):
+        return JsonResponse({"error": "Ungültige Parameter."}, status=400)
+
+    if semester not in (1, 2) or not 1 <= from_month <= 12:
+        return JsonResponse({"error": "Ungültige Semester-/Monatsangabe."}, status=400)
+
+    # --- status / mode guards ---
+    if record.status != RecordStatus.NORMAL:
+        return JsonResponse(
+            {"error": "Aktion nicht verfügbar (Status: " + record.get_status_display() + ")."},
+            status=409,
+        )
+    if record.months_mode == MonthsMode.LEGACY:
+        return JsonResponse(
+            {"error": "Bitte zuerst auf AUTO umstellen (Monate neu berechnen)."},
+            status=409,
+        )
+
+    # --- shallow copy so the real record stays untouched ---
+    rec_copy = _shallow_copy(record)
+    # Deep-copy mutable fields that the service mutates
+    rec_copy.base_amounts = dict(record.base_amounts or {})
+
+    from .category_price import apply_category_price_to_record
+
+    try:
+        diff = apply_category_price_to_record(
+            rec_copy, semester=semester, from_month=from_month,
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    # --- serialise Decimals → strings ---
+    def _dec_dict(d: dict) -> dict:
+        return {k: str(v) if v is not None else None for k, v in d.items()}
+
+    return JsonResponse({
+        "months_updated": diff["months_updated"],
+        "old_bases": _dec_dict(diff["old_bases"]),
+        "new_bases": _dec_dict(diff["new_bases"]),
+        "old_months": _dec_dict(diff["old_months"]),
+        "new_months": _dec_dict(diff["new_months"]),
+    })
+
+
+# =============================================================================
+# Contract Type / Status Change Views  (PROMPT 148.2)
+# =============================================================================
+
+class ContractTypeChangeView(KarteiEditorMixin, View):
+    """
+    POST-only view to propose a ContractType change via PendingChange.
+
+    The actual ContractTypeEntry is NOT created here — it will be created
+    only upon APPROVE in PROMPT_148.3.
+    """
+
+    http_method_names = ["post"]
+
+    def post(self, request: HttpRequest, pk: int) -> HttpResponse:
+        record = get_object_or_404(KarteiRecord, pk=pk)
+
+        # --- status guard ---
+        if record.status != RecordStatus.NORMAL:
+            messages.error(
+                request,
+                "Aktion nicht verfügbar \u2013 der Datensatz hat den Status "
+                f'\u201e{record.get_status_display()}\u201c.',
+            )
+            return redirect("karteien:record_detail", pk=pk)
+
+        # --- parse & validate form data ---
+        try:
+            effective_from_month = int(request.POST.get("effective_from_month", 0))
+        except (ValueError, TypeError):
+            effective_from_month = 0
+        if not 1 <= effective_from_month <= 12:
+            messages.error(request, "Ung\u00fcltiger Monat (1\u201312).")
+            return redirect("karteien:record_detail", pk=pk)
+
+        is_monthly_raw = request.POST.get("is_monthly", "")
+        if is_monthly_raw not in ("0", "1"):
+            messages.error(request, "Bitte Vertragstyp auswählen.")
+            return redirect("karteien:record_detail", pk=pk)
+        is_monthly = is_monthly_raw == "1"
+
+        comment = (request.POST.get("comment") or "").strip()
+        if not comment:
+            messages.error(request, "Bitte einen Kommentar eingeben.")
+            return redirect("karteien:record_detail", pk=pk)
+
+        # --- operator past-month restriction ---
+        user = request.user
+        if user.has_past_months_restrictions:
+            from .validators import get_allowed_months
+            allowed, _reason = get_allowed_months(record.year)
+            if f"month_{effective_from_month}" not in allowed:
+                messages.error(
+                    request,
+                    f"Sie dürfen Monat {effective_from_month} nicht mehr ändern "
+                    "(vergangener Monat).",
+                )
+                return redirect("karteien:record_detail", pk=pk)
+
+        # --- build snapshot with pending contract-type metadata ---
+        snapshot = build_snapshot(record)
+        snapshot["_pending_contract_type_entry"] = {
+            "effective_from_month": effective_from_month,
+            "is_monthly": is_monthly,
+            "comment": comment,
+            "changed_by_id": user.id,
+        }
+
+        create_or_update_pending_change_from_snapshot(
+            record, snapshot=snapshot, admin_comment=comment,
+        )
+
+        # Set status = PENDING (safe DB update)
+        KarteiRecord.objects.filter(pk=pk).update(status=RecordStatus.PENDING)
+
+        type_label = "Monatsvertrag" if is_monthly else "Jahresvertrag"
+        messages.info(
+            request,
+            f'Vertragstyp-\u00c4nderung \u201e{type_label} ab Monat {effective_from_month}\u201c '
+            "wurde zur Genehmigung eingereicht.",
+        )
+        return redirect("karteien:record_detail", pk=pk)
+
+
+class ContractStatusChangeView(KarteiEditorMixin, View):
+    """
+    POST-only view to propose a ContractStatus change via PendingChange.
+
+    If the new status is PAUSED or TERMINATED the affected months are zeroed
+    in the snapshot. If ACTIVE and months_mode == AUTO the months are
+    restored from base_amounts via calculate_month_values.
+
+    The actual ContractStatusEntry is NOT created here — PROMPT_148.3.
+    """
+
+    http_method_names = ["post"]
+
+    def post(self, request: HttpRequest, pk: int) -> HttpResponse:
+        record = get_object_or_404(KarteiRecord, pk=pk)
+
+        # --- status guard ---
+        if record.status != RecordStatus.NORMAL:
+            status_display = record.get_status_display()
+            messages.error(
+                request,
+                f"Aktion nicht verfügbar \u2013 der Datensatz hat den Status {status_display}.",
+            )
+            return redirect("karteien:record_detail", pk=pk)
+
+        # --- parse & validate ---
+        try:
+            effective_from_month = int(request.POST.get("effective_from_month", 0))
+        except (ValueError, TypeError):
+            effective_from_month = 0
+        if not 1 <= effective_from_month <= 12:
+            messages.error(request, "Ungültiger Monat (1–12).")
+            return redirect("karteien:record_detail", pk=pk)
+
+        kind = (request.POST.get("kind") or "").strip()
+        if kind not in (
+            ContractStatusKind.ACTIVE,
+            ContractStatusKind.PAUSED,
+            ContractStatusKind.TERMINATED,
+        ):
+            messages.error(request, "Bitte einen gültigen Status auswählen.")
+            return redirect("karteien:record_detail", pk=pk)
+
+        comment = (request.POST.get("comment") or "").strip()
+        if not comment:
+            messages.error(request, "Bitte einen Kommentar eingeben.")
+            return redirect("karteien:record_detail", pk=pk)
+
+        # --- operator past-month restriction ---
+        user = request.user
+        if user.has_past_months_restrictions:
+            from .validators import get_allowed_months
+            allowed, _reason = get_allowed_months(record.year)
+            if f"month_{effective_from_month}" not in allowed:
+                messages.error(
+                    request,
+                    f"Sie dürfen Monat {effective_from_month} nicht mehr ändern "
+                    "(vergangener Monat).",
+                )
+                return redirect("karteien:record_detail", pk=pk)
+
+        # --- determine affected month range ---
+        from_month = effective_from_month
+        existing_status_entries = list(
+            record.contract_status_entries
+            .filter(effective_from_month__gt=from_month)
+            .order_by("effective_from_month")
+        )
+        if existing_status_entries:
+            to_month = existing_status_entries[0].effective_from_month - 1
+        else:
+            to_month = 12
+
+        # --- build snapshot ---
+        snapshot = build_snapshot(record)
+        snapshot["_pending_contract_status_entry"] = {
+            "effective_from_month": effective_from_month,
+            "kind": kind,
+            "comment": comment,
+            "changed_by_id": user.id,
+        }
+
+        # Adjust month values in snapshot depending on requested status
+        if kind in (ContractStatusKind.PAUSED, ContractStatusKind.TERMINATED):
+            for m in range(from_month, to_month + 1):
+                snapshot[f"month_{m}"] = "0.00"
+
+        elif kind == ContractStatusKind.ACTIVE:
+            if record.months_mode == MonthsMode.AUTO:
+                # Restore months from base_amounts through the billing pipeline
+                ba = record.base_amounts or {}
+                base_amounts_decimals: dict[str, Decimal] = {}
+                for m in range(1, 13):
+                    raw = ba.get(f"month_{m}", "0")
+                    try:
+                        base_amounts_decimals[f"month_{m}"] = Decimal(str(raw))
+                    except Exception:
+                        base_amounts_decimals[f"month_{m}"] = Decimal("0")
+                existing = list(
+                    record.contract_status_entries.exclude(
+                        effective_from_month=effective_from_month
+                    )
+                )
+                proposed_entry = ContractStatusEntry(
+                    record=record,
+                    effective_from_month=effective_from_month,
+                    kind=ContractStatusKind.ACTIVE,
+                )
+                month_values, _flags = calculate_month_values(
+                    record,
+                    base_amounts=base_amounts_decimals,
+                    contract_status_entries=existing + [proposed_entry],
+                )
+                for m in range(from_month, to_month + 1):
+                    snapshot[f"month_{m}"] = str(
+                        month_values.get(f"month_{m}", Decimal("0"))
+                    )
+            # OVERRIDE mode: leave snapshot months unchanged (user-controlled)
+
+        create_or_update_pending_change_from_snapshot(
+            record, snapshot=snapshot, admin_comment=comment,
+        )
+
+        # Set status = PENDING
+        KarteiRecord.objects.filter(pk=pk).update(status=RecordStatus.PENDING)
+
+        STATUS_LABELS = {
+            ContractStatusKind.ACTIVE: "Aktiv",
+            ContractStatusKind.PAUSED: "Pausiert",
+            ContractStatusKind.TERMINATED: "Gekündigt",
+        }
+        status_label = STATUS_LABELS.get(kind, kind)
+        messages.info(
+            request,
+            f"Vertragsstatus-Änderung ({status_label} ab Monat "
+            f"{effective_from_month}) wurde zur Genehmigung eingereicht.",
+        )
+        return redirect("karteien:record_detail", pk=pk)
+
+
+# =====================================================================
+# Quick-set subject*_ref  (PROMPT 149.3)
+# =====================================================================
+
+def _find_subject_ref_candidates(record) -> dict:
+    """Return unambiguous Subject matches for legacy text fields.
+
+    Returns ``{"sem1": {"subject": Subject, "legacy_text": str} | None,
+               "sem2": ... }``.
+    A match is included **only** when:
+    * ``subject*_ref`` is NULL *and* legacy text is non-empty
+    * Exactly one active Subject has a normalised name equal to the legacy text
+    """
+    from apps.catalog.models import Subject
+    from .billing import _normalize_subject_name
+
+    result: dict = {"sem1": None, "sem2": None}
+    for sem, ref_field, text_field in (
+        ("sem1", "subject1_ref", "subject1"),
+        ("sem2", "subject2_ref", "subject2"),
+    ):
+        if getattr(record, ref_field) is not None:
+            continue
+        legacy_text = (getattr(record, text_field, "") or "").strip()
+        if not legacy_text:
+            continue
+        norm = _normalize_subject_name(legacy_text)
+        if not norm:
+            continue
+        # Query active subjects; filter in Python for casefold match
+        candidates = [
+            s for s in Subject.objects.filter(is_active=True).iterator()
+            if _normalize_subject_name(s.name) == norm
+        ]
+        if len(candidates) == 1:
+            result[sem] = {"subject": candidates[0], "legacy_text": legacy_text}
+    return result
+
+
+class QuickSetSubjectRefView(KarteiEditorMixin, View):
+    """POST-only: set subject*_ref from unambiguous legacy text match.
+
+    Creates a PendingChange so the billing impact is reviewed.
+    """
+
+    http_method_names = ["post"]
+
+    def post(self, request: HttpRequest, pk: int) -> HttpResponse:
+        record = get_object_or_404(KarteiRecord, pk=pk)
+        detail_url = reverse("karteien:record_detail", kwargs={"pk": pk})
+
+        # Guard: status must be NORMAL
+        if record.status != RecordStatus.NORMAL:
+            messages.error(
+                request,
+                "subject_ref kann nur auf Datensätze im Status NORMAL "
+                "angewendet werden.",
+            )
+            return redirect(detail_url)
+
+        semester_key = request.POST.get("semester")  # "sem1" or "sem2"
+        if semester_key not in ("sem1", "sem2"):
+            messages.error(request, "Ungültiger Semester-Parameter.")
+            return redirect(detail_url)
+
+        candidates = _find_subject_ref_candidates(record)
+        match = candidates.get(semester_key)
+        if match is None:
+            messages.error(
+                request,
+                "Keine eindeutige Übereinstimmung (mehr) gefunden.",
+            )
+            return redirect(detail_url)
+
+        subject = match["subject"]
+        ref_field = "subject1_ref" if semester_key == "sem1" else "subject2_ref"
+        sem_label = "1. HJ" if semester_key == "sem1" else "2. HJ"
+
+        # Apply FK on the in-memory record so snapshot picks it up
+        setattr(record, ref_field, subject)
+
+        # Create PendingChange with snapshot that includes the new FK
+        pending = create_or_update_pending_change(
+            record,
+            admin_comment=(
+                f"Quick-set {ref_field} \u2192 {subject.name} "
+                f"(\u00fcbereinstimmend mit Legacy-Text)"
+            ),
+        )
+
+        # Persist FK + status via .update() (no full save)
+        KarteiRecord.objects.filter(pk=pk).update(
+            **{f"{ref_field}_id": subject.pk},
+            status=RecordStatus.PENDING,
+        )
+
+        messages.info(
+            request,
+            f"{sem_label}: {ref_field} wurde auf \u201e{subject.name}\u201c gesetzt. "
+            f"\u00c4nderung wurde zur Genehmigung eingereicht.",
+        )
+        return redirect(detail_url)

@@ -11,7 +11,7 @@ Access is restricted to Superadmin role only.
 Report structure:
 - One section per year (latest 3 years with data for the family)
 - One row per child/record
-- Columns: child_name, subject1, month_1..6, subject2, month_7..12
+- Columns split by semester according to SemesterConfig for each year
 - Summary row with totals per month
 """
 
@@ -27,6 +27,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.views import View
 
+from .billing import get_semester_month_ranges
 from .models import KarteiRecord, RecordStatus, MONTH_FIELD_NAMES
 
 
@@ -81,7 +82,7 @@ class FamilyKostenReportView(SuperadminOnlyMixin, View):
     Displays:
     - Last 3 years that have data for the family
     - One row per child/record (child_name)
-    - Columns: subject1, months 1-6, subject2, months 7-12
+    - Columns split by semester per year (SemesterConfig boundary)
     - Summary row with monthly totals
     - For current year, future months are empty and excluded from totals
     
@@ -121,6 +122,9 @@ class FamilyKostenReportView(SuperadminOnlyMixin, View):
         years_data = []
         
         for year in all_years:
+            sem1_months, sem2_months = get_semester_month_ranges(year)
+            sem1_len = len(sem1_months)
+
             # Get records for this family in this year
             # Filter: status in (NORMAL, PENDING) - exclude DECLINED
             records = KarteiRecord.objects.filter(
@@ -142,7 +146,13 @@ class FamilyKostenReportView(SuperadminOnlyMixin, View):
             month_sums = [ZERO] * 12
             
             for record in records:
-                row = self._build_record_row(record, year, current_year, current_month)
+                row = self._build_record_row(
+                    record,
+                    year,
+                    current_year,
+                    current_month,
+                    sem1_len,
+                )
                 rows.append(row)
                 
                 # Accumulate monthly sums
@@ -162,8 +172,10 @@ class FamilyKostenReportView(SuperadminOnlyMixin, View):
                 "year": year,
                 "rows": rows,
                 "month_sums": month_sums,
-                "month_sums_sem1": month_sums[:6],
-                "month_sums_sem2": month_sums[6:],
+                "month_sums_sem1": month_sums[:sem1_len],
+                "month_sums_sem2": month_sums[sem1_len:],
+                "month_names_sem1": MONTH_NAMES_DE[:sem1_len],
+                "month_names_sem2": MONTH_NAMES_DE[sem1_len:],
                 "year_total": year_total,
                 "has_pending_records": has_pending_records,
             })
@@ -184,8 +196,6 @@ class FamilyKostenReportView(SuperadminOnlyMixin, View):
             "parent_name": parent_name,
             "years_data": years_data,
             "month_names": MONTH_NAMES_DE,
-            "month_names_sem1": MONTH_NAMES_DE[:6],
-            "month_names_sem2": MONTH_NAMES_DE[6:],
         }
         
         return render(request, self.template_name, context)
@@ -196,6 +206,7 @@ class FamilyKostenReportView(SuperadminOnlyMixin, View):
         year: int,
         current_year: int,
         current_month: int,
+        sem1_len: int,
     ) -> dict[str, Any]:
         """
         Build a row dict for a single record.
@@ -207,8 +218,8 @@ class FamilyKostenReportView(SuperadminOnlyMixin, View):
             - subject1: str
             - subject2: str
             - months: list of 12 Decimal values (None for future months)
-            - months_sem1: list of first 6 months
-            - months_sem2: list of last 6 months
+            - months_sem1: list of semester-1 months
+            - months_sem2: list of semester-2 months
             - is_pending: bool
             - row_total: Decimal (sum of non-None months)
         """
@@ -236,8 +247,8 @@ class FamilyKostenReportView(SuperadminOnlyMixin, View):
             "subject1": record.subject1 or "-",
             "subject2": record.subject2 or "-",
             "months": months,
-            "months_sem1": months[:6],
-            "months_sem2": months[6:],
+            "months_sem1": months[:sem1_len],
+            "months_sem2": months[sem1_len:],
             "is_pending": record.status == RecordStatus.PENDING,
             "row_total": row_total,
         }
@@ -300,6 +311,9 @@ class FamilyKostenFragmentView(SuperadminOnlyMixin, View):
         years_data = []
         
         for year in all_years:
+            sem1_months, sem2_months = get_semester_month_ranges(year)
+            sem1_len = len(sem1_months)
+
             records = KarteiRecord.objects.filter(
                 family_id=family_id,
                 year=year,
@@ -315,7 +329,13 @@ class FamilyKostenFragmentView(SuperadminOnlyMixin, View):
             month_sums = [ZERO] * 12
             
             for record in records:
-                row = self._build_record_row(record, year, current_year, current_month)
+                row = self._build_record_row(
+                    record,
+                    year,
+                    current_year,
+                    current_month,
+                    sem1_len,
+                )
                 rows.append(row)
                 
                 for i, month_val in enumerate(row["months"]):
@@ -332,8 +352,10 @@ class FamilyKostenFragmentView(SuperadminOnlyMixin, View):
                 "year": year,
                 "rows": rows,
                 "month_sums": month_sums,
-                "month_sums_sem1": month_sums[:6],
-                "month_sums_sem2": month_sums[6:],
+                "month_sums_sem1": month_sums[:sem1_len],
+                "month_sums_sem2": month_sums[sem1_len:],
+                "month_names_sem1": MONTH_NAMES_DE[:sem1_len],
+                "month_names_sem2": MONTH_NAMES_DE[sem1_len:],
                 "year_total": year_total,
                 "has_pending_records": has_pending_records,
             })
@@ -353,8 +375,6 @@ class FamilyKostenFragmentView(SuperadminOnlyMixin, View):
             "parent_name": parent_name,
             "years_data": years_data,
             "month_names": MONTH_NAMES_DE,
-            "month_names_sem1": MONTH_NAMES_DE[:6],
-            "month_names_sem2": MONTH_NAMES_DE[6:],
         }
         
         return render(request, self.template_name, context)
@@ -365,6 +385,7 @@ class FamilyKostenFragmentView(SuperadminOnlyMixin, View):
         year: int,
         current_year: int,
         current_month: int,
+        sem1_len: int,
     ) -> dict[str, Any]:
         """Build a row dict for a single record (same logic as FamilyKostenReportView)."""
         months = []
@@ -387,8 +408,8 @@ class FamilyKostenFragmentView(SuperadminOnlyMixin, View):
             "subject1": record.subject1 or "-",
             "subject2": record.subject2 or "-",
             "months": months,
-            "months_sem1": months[:6],
-            "months_sem2": months[6:],
+            "months_sem1": months[:sem1_len],
+            "months_sem2": months[sem1_len:],
             "is_pending": record.status == RecordStatus.PENDING,
             "row_total": row_total,
         }

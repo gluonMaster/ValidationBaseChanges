@@ -67,6 +67,10 @@ urlpatterns = [
     # Sync from Legacy tool (Admin only)
     path("sync-from-legacy/", views.SyncFromLegacyView.as_view(), name="sync_from_legacy"),
     
+    # Copy categories between years
+    path("categories/copy-year/", views.CopyCategoriesView.as_view(), name="categories_copy_year"),
+    path("categories/copy-year/preview/", views.CopyCategoriesPreviewView.as_view(), name="categories_copy_year_preview"),
+
     # Subject Categories CRUD (per year)
     path("categories/<int:year>/", views.SubjectCategoryListView.as_view(), name="category_list"),
     path("categories/<int:year>/create/", views.SubjectCategoryCreateView.as_view(), name="category_create"),
@@ -83,6 +87,11 @@ urlpatterns = [
     path("groups/<int:year>/<int:pk>/duration/add/", views.DurationEntryCreateView.as_view(), name="group_duration_add"),
     path("groups/<int:year>/<int:pk>/size/add/", views.GroupSizeEntryCreateView.as_view(), name="group_size_add"),
     path("groups/<int:year>/<int:pk>/toggle-scaling/", views.DisciplineGroupToggleScalingView.as_view(), name="group_toggle_scaling"),
+    path("groups/<int:year>/<int:pk>/prepare-legacy/", views.DisciplineGroupPrepareLegacyView.as_view(), name="group_prepare_legacy"),
+
+    # Bulk apply category price (preview + apply)
+    path("groups/<int:year>/<int:pk>/apply-preview/", views.BulkApplyPreviewView.as_view(), name="group_apply_preview"),
+    path("groups/<int:year>/<int:pk>/apply-bulk/", views.BulkApplyCategoryPriceView.as_view(), name="group_apply_bulk"),
 
     # API endpoints
     path("api/groups/<int:year>/<int:pk>/size/", views.GroupSizeApiView.as_view(), name="group_size_api"),

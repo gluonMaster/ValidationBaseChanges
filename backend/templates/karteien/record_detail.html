@@ -106,6 +106,16 @@ Shows all fields of a single KarteiRecord.
     color: #198754;
     font-weight: 500;
   }
+  /* Price mismatch highlight — orange border for category price discrepancies */
+  .price-mismatch-cell {
+    border-color: #fd7e14 !important;
+    box-shadow: 0 0 0 0.2rem rgba(253, 126, 20, 0.25) !important;
+    background-color: #fff3cd;
+  }
+  /* Pricing source badge */
+  .pricing-source-badge {
+    font-size: 0.8rem;
+  }
 </style>
 {% endblock %}
 
@@ -254,6 +264,54 @@ Shows all fields of a single KarteiRecord.
   </div>
   {% endif %}
 
+  <!-- Pricing Warnings (PROMPT 149.2) -->
+  {% if pricing_warnings %}
+  {% for w in pricing_warnings %}
+  <div class="alert alert-{% if w.severity == 'error' %}danger{% elif w.severity == 'warning' %}warning{% else %}info{% endif %} py-2 mb-2" role="alert">
+    <i class="bi bi-{% if w.severity == 'error' %}exclamation-triangle-fill{% elif w.severity == 'warning' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+    <strong>{{ w.code }}:</strong> {{ w.message_de }}
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  <!-- Quick-set subject_ref candidates (PROMPT 149.3) -->
+  {% if subject_ref_candidates.sem1 %}
+  <div class="alert alert-info py-2 mb-2 d-flex align-items-center justify-content-between" role="alert">
+    <span>
+      <i class="bi bi-link-45deg"></i>
+      <strong>1. HJ:</strong> Mögliche Übereinstimmung für „{{ subject_ref_candidates.sem1.legacy_text }}“
+      → <strong>{{ subject_ref_candidates.sem1.subject.name }}</strong>
+    </span>
+    {% if not record.status or record.status == "NORMAL" %}
+    <form method="post" action="{% url 'karteien:record_quick_set_subject_ref' pk=record.pk %}" class="d-inline ms-2 mb-0">
+      {% csrf_token %}
+      <input type="hidden" name="semester" value="sem1">
+      <button type="submit" class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-check-lg"></i> subject1_ref setzen
+      </button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if subject_ref_candidates.sem2 %}
+  <div class="alert alert-info py-2 mb-2 d-flex align-items-center justify-content-between" role="alert">
+    <span>
+      <i class="bi bi-link-45deg"></i>
+      <strong>2. HJ:</strong> Mögliche Übereinstimmung für „{{ subject_ref_candidates.sem2.legacy_text }}“
+      → <strong>{{ subject_ref_candidates.sem2.subject.name }}</strong>
+    </span>
+    {% if not record.status or record.status == "NORMAL" %}
+    <form method="post" action="{% url 'karteien:record_quick_set_subject_ref' pk=record.pk %}" class="d-inline ms-2 mb-0">
+      {% csrf_token %}
+      <input type="hidden" name="semester" value="sem2">
+      <button type="submit" class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-check-lg"></i> subject2_ref setzen
+      </button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
   <div class="row">
     <!-- Basic Info -->
     <div class="col-md-6">
@@ -391,6 +449,11 @@ Shows all fields of a single KarteiRecord.
         {% if record.discounts_disabled %}
         <span class="badge bg-warning text-dark ms-1">Rabatte deaktiviert</span>
         {% endif %}
+        {% if record.months_mode == 'AUTO' and price_mismatch_count %}
+        <span class="badge bg-warning text-dark ms-1" title="Kategoriepreis weicht in {{ price_mismatch_count }} Monat(en) ab">
+          Preisabweichung {{ price_mismatch_count }}
+        </span>
+        {% endif %}
       </span>
     </div>
     <div class="card-body">
@@ -398,75 +461,181 @@ Shows all fields of a single KarteiRecord.
         <i class="bi bi-info-circle"></i>
         Klicken Sie auf einen Monatswert, um die Berechnungsdetails zu sehen.
       </p>
+
+      {% if price_mismatches %}
+      <div class="alert alert-warning" role="alert">
+        <i class="bi bi-exclamation-triangle"></i>
+        <strong>Preisabweichung:</strong>
+        Die Kategorie-Preise weichen in {{ price_mismatch_count }} Monat(en) von den gespeicherten Werten ab.
+      </div>
+      {% endif %}
+
+      <!-- Semester 1 Pricing Badge -->
+      {% with sem_info=pricing_info.1 %}
+      <div class="d-flex align-items-center mb-2">
+        <strong class="me-2">1. Halbjahr</strong>
+        {% if sem_info.source_value == "CATEGORY" %}
+        <span class="badge bg-success pricing-source-badge me-1">
+          <i class="bi bi-tag-fill"></i> Kategorie: {{ sem_info.category_name|default:"–" }}
+        </span>
+        {% if sem_info.formula_example %}
+        <button class="btn btn-sm btn-outline-secondary py-0 px-1" type="button"
+                data-bs-toggle="collapse" data-bs-target="#sem1Formula"
+                aria-expanded="false" aria-controls="sem1Formula">
+          <i class="bi bi-calculator"></i>
+        </button>
+        {% endif %}
+        {% else %}
+        <span class="badge bg-secondary pricing-source-badge">
+          <i class="bi bi-tag"></i> Preisoption
+        </span>
+        {% endif %}
+      </div>
+      {% if sem_info.formula_example %}
+      <div class="collapse mb-2" id="sem1Formula">
+        {% with f=sem_info.formula_example %}
+        <div class="card card-body small py-2 px-3">
+          <table class="table table-sm table-borderless mb-0">
+            {% if f.category_kind == "GROUP" %}
+            <tr><td class="text-muted">Vertragstyp:</td><td>{% if f.contract_type == "monthly" %}Monatlich{% else %}Jährlich{% endif %}</td></tr>
+            <tr><td class="text-muted">Satz:</td><td>{{ f.rate|floatformat:2 }} €/UE</td></tr>
+            <tr><td class="text-muted">Dauer:</td><td>{{ f.duration_minutes }} Min ({{ f.ue_count|floatformat:2 }} UE)</td></tr>
+            <tr><td class="text-muted">Grundpreis:</td><td>{{ f.base_price|floatformat:2 }} €</td></tr>
+            <tr><td class="text-muted">Gruppengröße:</td><td>{{ f.size }}</td></tr>
+            <tr><td class="text-muted">Schwelle:</td><td>{{ f.threshold }}</td></tr>
+            {% if f.scaling_applied %}<tr><td colspan="2"><span class="badge bg-warning text-dark">Skalierung angewendet</span></td></tr>{% endif %}
+            {% elif f.category_kind == "INDIVIDUAL" %}
+            <tr><td class="text-muted">Vertragstyp:</td><td>{% if f.contract_type == "monthly" %}Monatlich{% else %}Jährlich{% endif %}</td></tr>
+            <tr><td class="text-muted">Satz:</td><td>{{ f.rate|floatformat:2 }} €/Std</td></tr>
+            <tr><td class="text-muted">Stunden:</td><td>{{ f.hours|floatformat:2 }}</td></tr>
+            {% endif %}
+            <tr><td class="text-muted"><strong>Vorgeschl. Preis:</strong></td><td><strong>{{ f.price|floatformat:2 }} €</strong></td></tr>
+          </table>
+        </div>
+        {% endwith %}
+      </div>
+      {% endif %}
+      {% endwith %}
+
       <div class="row">
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center month-breakdown-btn{% if 1 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="1" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
+          <div class="p-2 border rounded text-center month-breakdown-btn{% if 1 in mismatch_months %} month-mismatch{% endif %}{% if price_mismatches.1 %} price-mismatch-cell{% endif %}" role="button" data-month="1" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="{% if price_mismatches.1 %}Vorgeschlagen: {{ price_mismatches.1.suggested|floatformat:2 }} €, gespeichert: {{ price_mismatches.1.current|floatformat:2 }} €{% else %}Klicken für Details{% endif %}">
             <small class="text-muted">Monat 1{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_1' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
             <div class="fw-bold">{% if display_record.month_1 %}{{ display_record.month_1|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center month-breakdown-btn{% if 2 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="2" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
+          <div class="p-2 border rounded text-center month-breakdown-btn{% if 2 in mismatch_months %} month-mismatch{% endif %}{% if price_mismatches.2 %} price-mismatch-cell{% endif %}" role="button" data-month="2" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="{% if price_mismatches.2 %}Vorgeschlagen: {{ price_mismatches.2.suggested|floatformat:2 }} €, gespeichert: {{ price_mismatches.2.current|floatformat:2 }} €{% else %}Klicken für Details{% endif %}">
             <small class="text-muted">Monat 2{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_2' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
             <div class="fw-bold">{% if display_record.month_2 %}{{ display_record.month_2|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center month-breakdown-btn{% if 3 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="3" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
+          <div class="p-2 border rounded text-center month-breakdown-btn{% if 3 in mismatch_months %} month-mismatch{% endif %}{% if price_mismatches.3 %} price-mismatch-cell{% endif %}" role="button" data-month="3" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="{% if price_mismatches.3 %}Vorgeschlagen: {{ price_mismatches.3.suggested|floatformat:2 }} €, gespeichert: {{ price_mismatches.3.current|floatformat:2 }} €{% else %}Klicken für Details{% endif %}">
             <small class="text-muted">Monat 3{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_3' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
             <div class="fw-bold">{% if display_record.month_3 %}{{ display_record.month_3|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center month-breakdown-btn{% if 4 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="4" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
+          <div class="p-2 border rounded text-center month-breakdown-btn{% if 4 in mismatch_months %} month-mismatch{% endif %}{% if price_mismatches.4 %} price-mismatch-cell{% endif %}" role="button" data-month="4" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="{% if price_mismatches.4 %}Vorgeschlagen: {{ price_mismatches.4.suggested|floatformat:2 }} €, gespeichert: {{ price_mismatches.4.current|floatformat:2 }} €{% else %}Klicken für Details{% endif %}">
             <small class="text-muted">Monat 4{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_4' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
             <div class="fw-bold">{% if display_record.month_4 %}{{ display_record.month_4|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center month-breakdown-btn{% if 5 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="5" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
+          <div class="p-2 border rounded text-center month-breakdown-btn{% if 5 in mismatch_months %} month-mismatch{% endif %}{% if price_mismatches.5 %} price-mismatch-cell{% endif %}" role="button" data-month="5" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="{% if price_mismatches.5 %}Vorgeschlagen: {{ price_mismatches.5.suggested|floatformat:2 }} €, gespeichert: {{ price_mismatches.5.current|floatformat:2 }} €{% else %}Klicken für Details{% endif %}">
             <small class="text-muted">Monat 5{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_5' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
             <div class="fw-bold">{% if display_record.month_5 %}{{ display_record.month_5|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center month-breakdown-btn{% if 6 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="6" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
+          <div class="p-2 border rounded text-center month-breakdown-btn{% if 6 in mismatch_months %} month-mismatch{% endif %}{% if price_mismatches.6 %} price-mismatch-cell{% endif %}" role="button" data-month="6" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="{% if price_mismatches.6 %}Vorgeschlagen: {{ price_mismatches.6.suggested|floatformat:2 }} €, gespeichert: {{ price_mismatches.6.current|floatformat:2 }} €{% else %}Klicken für Details{% endif %}">
             <small class="text-muted">Monat 6{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_6' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
             <div class="fw-bold">{% if display_record.month_6 %}{{ display_record.month_6|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
+      </div>
+
+      <!-- Semester 2 Pricing Badge -->
+      {% with sem_info=pricing_info.2 %}
+      <div class="d-flex align-items-center mb-2 mt-3">
+        <strong class="me-2">2. Halbjahr</strong>
+        {% if sem_info.source_value == "CATEGORY" %}
+        <span class="badge bg-success pricing-source-badge me-1">
+          <i class="bi bi-tag-fill"></i> Kategorie: {{ sem_info.category_name|default:"–" }}
+        </span>
+        {% if sem_info.formula_example %}
+        <button class="btn btn-sm btn-outline-secondary py-0 px-1" type="button"
+                data-bs-toggle="collapse" data-bs-target="#sem2Formula"
+                aria-expanded="false" aria-controls="sem2Formula">
+          <i class="bi bi-calculator"></i>
+        </button>
+        {% endif %}
+        {% else %}
+        <span class="badge bg-secondary pricing-source-badge">
+          <i class="bi bi-tag"></i> Preisoption
+        </span>
+        {% endif %}
+      </div>
+      {% if sem_info.formula_example %}
+      <div class="collapse mb-2" id="sem2Formula">
+        {% with f=sem_info.formula_example %}
+        <div class="card card-body small py-2 px-3">
+          <table class="table table-sm table-borderless mb-0">
+            {% if f.category_kind == "GROUP" %}
+            <tr><td class="text-muted">Vertragstyp:</td><td>{% if f.contract_type == "monthly" %}Monatlich{% else %}Jährlich{% endif %}</td></tr>
+            <tr><td class="text-muted">Satz:</td><td>{{ f.rate|floatformat:2 }} €/UE</td></tr>
+            <tr><td class="text-muted">Dauer:</td><td>{{ f.duration_minutes }} Min ({{ f.ue_count|floatformat:2 }} UE)</td></tr>
+            <tr><td class="text-muted">Grundpreis:</td><td>{{ f.base_price|floatformat:2 }} €</td></tr>
+            <tr><td class="text-muted">Gruppengröße:</td><td>{{ f.size }}</td></tr>
+            <tr><td class="text-muted">Schwelle:</td><td>{{ f.threshold }}</td></tr>
+            {% if f.scaling_applied %}<tr><td colspan="2"><span class="badge bg-warning text-dark">Skalierung angewendet</span></td></tr>{% endif %}
+            {% elif f.category_kind == "INDIVIDUAL" %}
+            <tr><td class="text-muted">Vertragstyp:</td><td>{% if f.contract_type == "monthly" %}Monatlich{% else %}Jährlich{% endif %}</td></tr>
+            <tr><td class="text-muted">Satz:</td><td>{{ f.rate|floatformat:2 }} €/Std</td></tr>
+            <tr><td class="text-muted">Stunden:</td><td>{{ f.hours|floatformat:2 }}</td></tr>
+            {% endif %}
+            <tr><td class="text-muted"><strong>Vorgeschl. Preis:</strong></td><td><strong>{{ f.price|floatformat:2 }} €</strong></td></tr>
+          </table>
+        </div>
+        {% endwith %}
+      </div>
+      {% endif %}
+      {% endwith %}
+
+      <div class="row">
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center month-breakdown-btn{% if 7 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="7" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
+          <div class="p-2 border rounded text-center month-breakdown-btn{% if 7 in mismatch_months %} month-mismatch{% endif %}{% if price_mismatches.7 %} price-mismatch-cell{% endif %}" role="button" data-month="7" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="{% if price_mismatches.7 %}Vorgeschlagen: {{ price_mismatches.7.suggested|floatformat:2 }} €, gespeichert: {{ price_mismatches.7.current|floatformat:2 }} €{% else %}Klicken für Details{% endif %}">
             <small class="text-muted">Monat 7{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_7' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
             <div class="fw-bold">{% if display_record.month_7 %}{{ display_record.month_7|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center month-breakdown-btn{% if 8 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="8" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
+          <div class="p-2 border rounded text-center month-breakdown-btn{% if 8 in mismatch_months %} month-mismatch{% endif %}{% if price_mismatches.8 %} price-mismatch-cell{% endif %}" role="button" data-month="8" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="{% if price_mismatches.8 %}Vorgeschlagen: {{ price_mismatches.8.suggested|floatformat:2 }} €, gespeichert: {{ price_mismatches.8.current|floatformat:2 }} €{% else %}Klicken für Details{% endif %}">
             <small class="text-muted">Monat 8{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_8' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
             <div class="fw-bold">{% if display_record.month_8 %}{{ display_record.month_8|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center month-breakdown-btn{% if 9 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="9" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
+          <div class="p-2 border rounded text-center month-breakdown-btn{% if 9 in mismatch_months %} month-mismatch{% endif %}{% if price_mismatches.9 %} price-mismatch-cell{% endif %}" role="button" data-month="9" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="{% if price_mismatches.9 %}Vorgeschlagen: {{ price_mismatches.9.suggested|floatformat:2 }} €, gespeichert: {{ price_mismatches.9.current|floatformat:2 }} €{% else %}Klicken für Details{% endif %}">
             <small class="text-muted">Monat 9{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_9' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
             <div class="fw-bold">{% if display_record.month_9 %}{{ display_record.month_9|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center month-breakdown-btn{% if 10 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="10" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
+          <div class="p-2 border rounded text-center month-breakdown-btn{% if 10 in mismatch_months %} month-mismatch{% endif %}{% if price_mismatches.10 %} price-mismatch-cell{% endif %}" role="button" data-month="10" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="{% if price_mismatches.10 %}Vorgeschlagen: {{ price_mismatches.10.suggested|floatformat:2 }} €, gespeichert: {{ price_mismatches.10.current|floatformat:2 }} €{% else %}Klicken für Details{% endif %}">
             <small class="text-muted">Monat 10{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_10' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
             <div class="fw-bold">{% if display_record.month_10 %}{{ display_record.month_10|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center month-breakdown-btn{% if 11 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="11" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
+          <div class="p-2 border rounded text-center month-breakdown-btn{% if 11 in mismatch_months %} month-mismatch{% endif %}{% if price_mismatches.11 %} price-mismatch-cell{% endif %}" role="button" data-month="11" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="{% if price_mismatches.11 %}Vorgeschlagen: {{ price_mismatches.11.suggested|floatformat:2 }} €, gespeichert: {{ price_mismatches.11.current|floatformat:2 }} €{% else %}Klicken für Details{% endif %}">
             <small class="text-muted">Monat 11{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_11' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
             <div class="fw-bold">{% if display_record.month_11 %}{{ display_record.month_11|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
         </div>
         <div class="col-md-2 col-sm-4 col-6 mb-2">
-          <div class="p-2 border rounded text-center month-breakdown-btn{% if 12 in mismatch_months %} month-mismatch{% endif %}" role="button" data-month="12" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="Klicken für Details">
+          <div class="p-2 border rounded text-center month-breakdown-btn{% if 12 in mismatch_months %} month-mismatch{% endif %}{% if price_mismatches.12 %} price-mismatch-cell{% endif %}" role="button" data-month="12" data-record-pk="{{ record.pk }}" style="cursor: pointer;" title="{% if price_mismatches.12 %}Vorgeschlagen: {{ price_mismatches.12.suggested|floatformat:2 }} €, gespeichert: {{ price_mismatches.12.current|floatformat:2 }} €{% else %}Klicken für Details{% endif %}">
             <small class="text-muted">Monat 12{% if is_override_mode %}<span class="month-override-badge">Override</span>{% endif %}{% if 'month_12' in pending_changed_fields %}<span class="pending-field-badge">Wartend</span>{% endif %}</small>
             <div class="fw-bold">{% if display_record.month_12 %}{{ display_record.month_12|floatformat:2 }} €{% else %}0.00 €{% endif %}</div>
           </div>
@@ -474,7 +643,6 @@ Shows all fields of a single KarteiRecord.
       </div>
     </div>
   </div>
-
   <!-- Rabatte (Discounts Summary) -->
   <div class="card mb-4">
     <div class="card-header d-flex justify-content-between align-items-center">
@@ -576,6 +744,210 @@ Shows all fields of a single KarteiRecord.
         <i class="bi bi-info-circle"></i>
         Keine Rabatte definiert.
       </p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Vertragsdetails: Timeline + Verlauf (PROMPT 148.1) -->
+  <div class="card mb-4">
+    <div class="card-header">
+      <i class="bi bi-file-earmark-text"></i>
+      Vertragsdetails
+    </div>
+    <div class="card-body">
+      {# ---- 12-month timeline ---- #}
+      <h6 class="mb-2">Monats-Timeline ({{ record.year }})</h6>
+      <div class="table-responsive mb-4">
+        <table class="table table-bordered table-sm text-center mb-0">
+          <thead class="table-light">
+            <tr>
+              <th style="width:80px"></th>
+              {% for item in contract_timeline %}
+              <th>{{ item.month }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="text-muted text-start fw-bold">Typ</td>
+              {% for item in contract_timeline %}
+              <td title="{{ item.type_long }}">
+                <span class="badge {% if item.type_label == 'M' %}bg-info{% else %}bg-secondary{% endif %} bg-opacity-25 text-dark">{{ item.type_label }}</span>
+              </td>
+              {% endfor %}
+            </tr>
+            <tr>
+              <td class="text-muted text-start fw-bold">Status</td>
+              {% for item in contract_timeline %}
+              <td title="{{ item.status_label }}">
+                <span class="badge bg-{{ item.status_color }}">{{ item.status_symbol }}</span>
+              </td>
+              {% endfor %}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {# ---- Vertragstyp-Verlauf ---- #}
+      <h6 class="mb-2"><i class="bi bi-arrow-repeat"></i> Vertragstyp-Verlauf</h6>
+      {% if contract_type_entries %}
+      <div class="table-responsive mb-4">
+        <table class="table table-sm table-striped mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Ab Monat</th>
+              <th>Typ</th>
+              <th>Geändert von</th>
+              <th>Datum</th>
+              <th>Kommentar</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for e in contract_type_entries %}
+            <tr>
+              <td>{{ e.effective_from_month }}</td>
+              <td>{% if e.is_monthly %}Monatsvertrag{% else %}Jahresvertrag{% endif %}</td>
+              <td>{{ e.changed_by.get_full_name|default:e.changed_by.username|default:"-" }}</td>
+              <td>{{ e.changed_at|date:"d.m.Y H:i" }}</td>
+              <td>{{ e.comment|default:"-" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-muted mb-4">
+        <i class="bi bi-info-circle"></i>
+        Kein Vertragstyp-Verlauf vorhanden.
+        Fallback: <strong>{% if record.is_monthly_contract %}Monatsvertrag{% else %}Jahresvertrag{% endif %}</strong>
+        (Legacy-Feld)
+      </p>
+      {% endif %}
+
+      {# ---- Vertragsstatus-Verlauf ---- #}
+      <h6 class="mb-2"><i class="bi bi-arrow-repeat"></i> Vertragsstatus-Verlauf</h6>
+      {% if contract_status_entries %}
+      <div class="table-responsive mb-0">
+        <table class="table table-sm table-striped mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Ab Monat</th>
+              <th>Status</th>
+              <th>Geändert von</th>
+              <th>Datum</th>
+              <th>Kommentar</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for e in contract_status_entries %}
+            <tr>
+              <td>{{ e.effective_from_month }}</td>
+              <td>{{ e.get_kind_display }}</td>
+              <td>{{ e.changed_by.get_full_name|default:e.changed_by.username|default:"-" }}</td>
+              <td>{{ e.changed_at|date:"d.m.Y H:i" }}</td>
+              <td>{{ e.comment|default:"-" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-muted mb-0">
+        <i class="bi bi-info-circle"></i>
+        Kein Vertragsstatus-Verlauf vorhanden.
+        Fallback: <strong>{% if record.contract_terminated_from_month %}Gekündigt ab Monat {{ record.contract_terminated_from_month }}{% else %}Aktiv{% endif %}</strong>
+        (Legacy-Feld)
+      </p>
+      {% endif %}
+
+      {# ---- Change forms (PROMPT 148.2) — only for editors on NORMAL records ---- #}
+      {% if user.can_edit_kartei and not record.status or user.can_edit_kartei and record.status == 'NORMAL' %}
+      <hr class="my-4">
+      <div class="row g-4">
+        {# -- Vertragstyp ändern -- #}
+        <div class="col-md-6">
+          <div class="card border-primary">
+            <div class="card-header bg-primary bg-opacity-10 text-primary">
+              <i class="bi bi-pencil-square"></i> Vertragstyp ändern
+            </div>
+            <div class="card-body">
+              <form method="post" action="{% url 'karteien:record_contract_type_change' pk=record.pk %}">
+                {% csrf_token %}
+                <div class="mb-3">
+                  <label for="ct_from_month" class="form-label">Gültig ab Monat</label>
+                  <select name="effective_from_month" id="ct_from_month" class="form-select" required>
+                    {% for m in contract_timeline %}
+                    <option value="{{ m.month }}">{{ m.month }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Vertragstyp</label>
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="is_monthly" id="ct_yearly" value="0" checked>
+                    <label class="form-check-label" for="ct_yearly">Jahresvertrag</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="is_monthly" id="ct_monthly" value="1">
+                    <label class="form-check-label" for="ct_monthly">Monatsvertrag</label>
+                  </div>
+                </div>
+                <div class="mb-3">
+                  <label for="ct_comment" class="form-label">Kommentar <span class="text-danger">*</span></label>
+                  <textarea name="comment" id="ct_comment" class="form-control" rows="2" required></textarea>
+                </div>
+                <button type="submit" class="btn btn-outline-primary btn-sm">
+                  <i class="bi bi-send"></i> Änderung vorschlagen
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        {# -- Vertragsstatus ändern -- #}
+        <div class="col-md-6">
+          <div class="card border-warning">
+            <div class="card-header bg-warning bg-opacity-10 text-dark">
+              <i class="bi bi-pencil-square"></i> Vertragsstatus ändern
+            </div>
+            <div class="card-body">
+              <form method="post" action="{% url 'karteien:record_contract_status_change' pk=record.pk %}">
+                {% csrf_token %}
+                <div class="mb-3">
+                  <label for="cs_from_month" class="form-label">Gültig ab Monat</label>
+                  <select name="effective_from_month" id="cs_from_month" class="form-select" required>
+                    {% for m in contract_timeline %}
+                    <option value="{{ m.month }}">{{ m.month }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Status</label>
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="kind" id="cs_active" value="ACTIVE" checked>
+                    <label class="form-check-label" for="cs_active">Aktiv</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="kind" id="cs_paused" value="PAUSED">
+                    <label class="form-check-label" for="cs_paused">Pausiert</label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input" type="radio" name="kind" id="cs_terminated" value="TERMINATED">
+                    <label class="form-check-label" for="cs_terminated">Gekündigt</label>
+                  </div>
+                </div>
+                <div class="mb-3">
+                  <label for="cs_comment" class="form-label">Kommentar <span class="text-danger">*</span></label>
+                  <textarea name="comment" id="cs_comment" class="form-control" rows="2" required></textarea>
+                </div>
+                <button type="submit" class="btn btn-outline-warning btn-sm">
+                  <i class="bi bi-send"></i> Änderung vorschlagen
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
       {% endif %}
     </div>
   </div>
@@ -939,6 +1311,34 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
     `;
     
+    // Category pricing section (PROMPT 147.4)
+    const cp = data.category_pricing;
+    if (cp && cp.source === 'CATEGORY' && !cp.incomplete) {
+      html += '<hr>';
+      html += '<h6><i class="bi bi-tag-fill text-success"></i> Kategorie-Preis</h6>';
+      html += '<dl class="row mb-0 small">';
+      html += `<dt class="col-sm-4">Kategorie</dt><dd class="col-sm-8">${cp.category_name || '–'}</dd>`;
+      html += `<dt class="col-sm-4">Typ</dt><dd class="col-sm-8">${cp.category_kind === 'GROUP' ? 'Gruppe' : cp.category_kind === 'INDIVIDUAL' ? 'Einzelunterricht' : cp.category_kind}</dd>`;
+      html += `<dt class="col-sm-4">Vertragstyp</dt><dd class="col-sm-8">${cp.contract_type === 'monthly' ? 'Monatlich' : 'Jährlich'}</dd>`;
+      html += `<dt class="col-sm-4">Satz</dt><dd class="col-sm-8">${parseFloat(cp.rate || 0).toFixed(2)} €</dd>`;
+
+      if (cp.category_kind === 'GROUP') {
+        html += `<dt class="col-sm-4">Dauer</dt><dd class="col-sm-8">${cp.duration_minutes || 0} Min</dd>`;
+        html += `<dt class="col-sm-4">UE</dt><dd class="col-sm-8">${parseFloat(cp.ue_count || 0).toFixed(2)} UE</dd>`;
+        html += `<dt class="col-sm-4">Grundpreis</dt><dd class="col-sm-8">${parseFloat(cp.base_price || 0).toFixed(2)} €</dd>`;
+        html += `<dt class="col-sm-4">Gruppengröße</dt><dd class="col-sm-8">${cp.size}</dd>`;
+        html += `<dt class="col-sm-4">Schwelle</dt><dd class="col-sm-8">${cp.threshold}</dd>`;
+        if (cp.scaling_applied) {
+          html += `<dt class="col-sm-4">Skalierung</dt><dd class="col-sm-8"><span class="badge bg-warning text-dark">Angewendet</span></dd>`;
+        }
+      } else if (cp.category_kind === 'INDIVIDUAL') {
+        html += `<dt class="col-sm-4">Stunden</dt><dd class="col-sm-8">${parseFloat(cp.hours || 0).toFixed(2)} Std</dd>`;
+      }
+
+      html += `<dt class="col-sm-4"><strong>Vorgeschl. Preis</strong></dt><dd class="col-sm-8"><strong>${parseFloat(cp.suggested_price || 0).toFixed(2)} €</strong></dd>`;
+      html += '</dl>';
+    }
+
     return html;
   }
 });

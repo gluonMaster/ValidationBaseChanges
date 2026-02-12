@@ -942,9 +942,15 @@ def get_contract_type_for_month(
         month:  Month number (1-12).
         entries: Optional pre-fetched list of ContractTypeEntry objects
                  for the record (avoids extra DB queries in bulk ops).
+                 For unsaved records (``record.pk is None``), when this
+                 is not provided, legacy fallback is used without
+                 touching related managers.
     """
     if entries is None:
-        entries = list(record.contract_type_entries.all())
+        if record.pk is None:
+            entries = []
+        else:
+            entries = list(record.contract_type_entries.all())
     applicable = [e for e in entries if e.effective_from_month <= month]
     if applicable:
         return max(applicable, key=lambda e: e.effective_from_month).is_monthly
@@ -966,6 +972,8 @@ def get_contract_status_for_month(
     Logic:
       1. If ContractStatusEntry rows exist for this record, find the
          last entry with ``effective_from_month <= month``.
+         If multiple entries have the same ``effective_from_month``,
+         the later item in ``entries`` wins.
       2. Fallback:
          - If ``record.contract_terminated_from_month`` is set and
            ``month >= record.contract_terminated_from_month`` → ``'TERMINATED'``
@@ -976,12 +984,22 @@ def get_contract_status_for_month(
         month:  Month number (1-12).
         entries: Optional pre-fetched list of ContractStatusEntry objects
                  for the record (avoids extra DB queries in bulk ops).
+                 For unsaved records (``record.pk is None``), when this
+                 is not provided, legacy fallback is used without
+                 touching related managers.
     """
     if entries is None:
-        entries = list(record.contract_status_entries.all())
+        if record.pk is None:
+            entries = []
+        else:
+            entries = list(record.contract_status_entries.all())
     applicable = [e for e in entries if e.effective_from_month <= month]
     if applicable:
-        return max(applicable, key=lambda e: e.effective_from_month).kind
+        # Tie-breaker for same effective month: keep the later item from `entries`.
+        return max(
+            enumerate(applicable),
+            key=lambda pair: (pair[1].effective_from_month, pair[0]),
+        )[1].kind
     # No entry covers this month – fall back to legacy fields
     if (
         record.contract_terminated_from_month is not None

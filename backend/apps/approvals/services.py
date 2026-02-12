@@ -646,6 +646,9 @@ def apply_decision(
             record.status = RecordStatus.NORMAL
             record.save()
 
+            # ── Create ContractTypeEntry / ContractStatusEntry from pending metadata ──
+            _create_contract_entries_from_snapshot(record, new_snapshot)
+
             # Mark pending as processed
             pending.is_processed = True
             pending.save(update_fields=["is_processed", "updated_at"])
@@ -689,7 +692,17 @@ def apply_decision(
 
             # Update record status to DECLINED
             record.status = RecordStatus.DECLINED
-            record.save(update_fields=["status"])
+            pending_snapshot = (
+                pending.snapshot
+                if isinstance(pending.snapshot, dict)
+                else {}
+            )
+            old_base_amounts = pending_snapshot.get("_old_base_amounts")
+            if old_base_amounts is not None:
+                record.base_amounts = old_base_amounts
+                record.save(update_fields=["status", "base_amounts"])
+            else:
+                record.save(update_fields=["status"])
 
             # Mark pending as processed
             pending.is_processed = True
@@ -713,6 +726,49 @@ def apply_decision(
                 pass  # Don't fail if notification cleanup fails
 
     return record
+
+
+def _create_contract_entries_from_snapshot(
+    record: KarteiRecord,
+    snapshot: dict[str, Any],
+) -> None:
+    """
+    Create ContractTypeEntry / ContractStatusEntry from pending metadata.
+
+    Called only on APPROVE. The snapshot may contain special keys
+    ``_pending_contract_type_entry`` and ``_pending_contract_status_entry``
+    that describe timeline entries requested by the Admin/Operator.
+    These keys are **not** tracked fields and are silently ignored by
+    ``_apply_snapshot_to_record``.
+
+    Each value is a dict with at least ``effective_from_month`` and the
+    type-specific payload (``is_monthly`` or ``kind``).
+    """
+    from apps.karteien.models import ContractTypeEntry, ContractStatusEntry
+
+    meta_type = snapshot.get("_pending_contract_type_entry")
+    if meta_type and isinstance(meta_type, dict):
+        ContractTypeEntry.objects.update_or_create(
+            record=record,
+            effective_from_month=int(meta_type["effective_from_month"]),
+            defaults={
+                "is_monthly": meta_type.get("is_monthly", False),
+                "changed_by_id": meta_type.get("changed_by_id"),
+                "comment": meta_type.get("comment", ""),
+            },
+        )
+
+    meta_status = snapshot.get("_pending_contract_status_entry")
+    if meta_status and isinstance(meta_status, dict):
+        ContractStatusEntry.objects.update_or_create(
+            record=record,
+            effective_from_month=int(meta_status["effective_from_month"]),
+            defaults={
+                "kind": meta_status["kind"],
+                "changed_by_id": meta_status.get("changed_by_id"),
+                "comment": meta_status.get("comment", ""),
+            },
+        )
 
 
 def _apply_snapshot_to_record(

@@ -52,16 +52,30 @@ DisciplineGroup detail view — duration entries, size entries, monthly summary.
                     {% else %}
                     <span class="badge bg-secondary">Aus</span>
                     {% endif %}
+                    {% if user.is_admin_role %}
                     <form method="post" action="{% url 'catalog:group_toggle_scaling' year=year pk=group.pk %}" class="d-inline ms-2">
                         {% csrf_token %}
                         <button type="submit" class="btn btn-sm btn-outline-{% if group.auto_scaling_enabled %}warning{% else %}success{% endif %}">
                             {% if group.auto_scaling_enabled %}Deaktivieren{% else %}Aktivieren{% endif %}
                         </button>
                     </form>
+                    {% endif %}
                 </div>
             </div>
         </div>
     </div>
+
+    <!-- Warnings (PROMPT 149.2) -->
+    {% if warnings %}
+    <div class="mb-4">
+      {% for w in warnings %}
+      <div class="alert alert-{% if w.severity == 'error' %}danger{% elif w.severity == 'warning' %}warning{% else %}info{% endif %} py-2 mb-2" role="alert">
+        <i class="bi bi-{% if w.severity == 'error' %}exclamation-triangle-fill{% elif w.severity == 'warning' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+        <strong>{{ w.code }}:</strong> {{ w.message_de }}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     <div class="row">
         <!-- Duration Entries -->
@@ -229,9 +243,206 @@ DisciplineGroup detail view — duration entries, size entries, monthly summary.
                         <td>{% if item.manual_size is not None %}{{ item.manual_size }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
                         {% endfor %}
                     </tr>
+                    <tr class="table-info">
+                        <td class="text-start"><strong>Vorgeschl. Preis</strong></td>
+                        {% for item in monthly_summary %}
+                        <td>
+                            {% if item.suggested_contract_type == "mixed" %}
+                            {% if item.suggested_monthly_price is not None %}
+                            <span class="small d-block">
+                                <span class="badge bg-secondary" title="Monatsvertrag">M</span>
+                                {{ item.suggested_monthly_price }}
+                                {% if item.suggested_monthly_scaling %}
+                                    <span class="badge bg-warning text-dark" title="Kleingruppen-Scaling angewandt">S</span>
+                                {% endif %}
+                            </span>
+                            {% endif %}
+                            {% if item.suggested_yearly_price is not None %}
+                            <span class="small d-block">
+                                <span class="badge bg-primary" title="Jahresvertrag">J</span>
+                                {{ item.suggested_yearly_price }}
+                                {% if item.suggested_yearly_scaling %}
+                                    <span class="badge bg-warning text-dark" title="Kleingruppen-Scaling angewandt">S</span>
+                                {% endif %}
+                            </span>
+                            {% endif %}
+                            {% elif item.suggested_price is not None %}
+                            <strong>{{ item.suggested_price }}</strong>
+                            {% if item.suggested_scaling %}
+                                <span class="badge bg-warning text-dark" title="Kleingruppen-Scaling angewandt">S</span>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <td class="text-start"><strong>Basispreis</strong></td>
+                        {% for item in monthly_summary %}
+                        <td>
+                            {% if item.suggested_contract_type == "mixed" %}
+                            {% if item.suggested_monthly_base_price is not None %}
+                            <span class="small d-block">
+                                <span class="badge bg-secondary" title="Monatsvertrag">M</span>
+                                {{ item.suggested_monthly_base_price }}
+                            </span>
+                            {% endif %}
+                            {% if item.suggested_yearly_base_price is not None %}
+                            <span class="small d-block">
+                                <span class="badge bg-primary" title="Jahresvertrag">J</span>
+                                {{ item.suggested_yearly_base_price }}
+                            </span>
+                            {% endif %}
+                            {% elif item.suggested_base_price is not None %}
+                            {{ item.suggested_base_price }}
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <td class="text-start"><strong>Vertrag</strong></td>
+                        {% for item in monthly_summary %}
+                        <td>
+                            {% if item.suggested_contract_type == "monthly" %}
+                            <span class="badge bg-secondary" title="Monatsvertrag">M</span>
+                            {% elif item.suggested_contract_type == "yearly" %}
+                            <span class="badge bg-primary" title="Jahresvertrag">J</span>
+                            {% elif item.suggested_contract_type == "mixed" %}
+                            <span class="badge bg-info text-dark" title="Gemischt: Monats- und Jahresvertrag">M+J</span>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
                 </tbody>
             </table>
         </div>
     </div>
+
+    <!-- Legacy Preparation -->
+    {% if user.is_admin_role %}
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-wrench-adjustable-circle"></i>
+            LEGACY vorbereiten (subject_ref + AUTO)
+        </div>
+        <div class="card-body">
+            <p class="text-muted small mb-3">
+                Dieser Schritt bereitet Legacy-Datensaetze fuer Kategoriepreise vor:
+                fehlende <code>subject*_ref</code> werden gesetzt und
+                <code>LEGACY</code>-Datensaetze auf <code>AUTO</code> umgestellt.
+                Die Aenderungen werden als <code>PENDING</code> eingereicht.
+            </p>
+
+            <div class="table-responsive mb-3">
+                <table class="table table-sm table-bordered align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Halbjahr</th>
+                            <th class="text-end">Gesamt</th>
+                            <th class="text-end">NORMAL</th>
+                            <th class="text-end">LEGACY</th>
+                            <th class="text-end">NORMAL ohne subject_ref</th>
+                            <th class="text-end">NORMAL in LEGACY</th>
+                            <th class="text-end">Ready fuer Apply</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>1. Halbjahr</td>
+                            <td class="text-end">{{ sem1_stats.total }}</td>
+                            <td class="text-end">{{ sem1_stats.normal }}</td>
+                            <td class="text-end">{{ sem1_stats.legacy }}</td>
+                            <td class="text-end">{{ sem1_stats.normal_missing_ref }}</td>
+                            <td class="text-end">{{ sem1_stats.normal_legacy }}</td>
+                            <td class="text-end">{{ sem1_stats.eligible_apply }}</td>
+                        </tr>
+                        <tr>
+                            <td>2. Halbjahr</td>
+                            <td class="text-end">{{ sem2_stats.total }}</td>
+                            <td class="text-end">{{ sem2_stats.normal }}</td>
+                            <td class="text-end">{{ sem2_stats.legacy }}</td>
+                            <td class="text-end">{{ sem2_stats.normal_missing_ref }}</td>
+                            <td class="text-end">{{ sem2_stats.normal_legacy }}</td>
+                            <td class="text-end">{{ sem2_stats.eligible_apply }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <form method="post" action="{% url 'catalog:group_prepare_legacy' year=year pk=group.pk %}" class="row g-3 align-items-end">
+                {% csrf_token %}
+                <div class="col-auto">
+                    <label for="id_prepare_semester" class="form-label small">Halbjahr</label>
+                    <select name="semester" id="id_prepare_semester" class="form-select form-select-sm">
+                        <option value="1">1. Halbjahr</option>
+                        <option value="2">2. Halbjahr</option>
+                    </select>
+                </div>
+                <div class="col">
+                    <label for="id_prepare_comment" class="form-label small">Kommentar (optional)</label>
+                    <input type="text" name="comment" id="id_prepare_comment" class="form-control form-control-sm"
+                           placeholder="z.B. Vorbereitung fuer Kategoriepreis-Massenupdate">
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-outline-warning btn-sm"
+                            onclick="return confirm('Legacy-Datensaetze fuer dieses Halbjahr vorbereiten und als PENDING einreichen?');">
+                        <i class="bi bi-gear"></i> Legacy vorbereiten
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Bulk Apply Category Price -->
+    {% if user.is_admin_role or user.is_operator %}
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-arrow-repeat"></i>
+            Kategoriepreis anwenden (Massenaktualisierung)
+        </div>
+        <div class="card-body">
+            <p class="text-muted small mb-3">
+                Wendet den Kategoriepreis auf alle berechtigten Datensätze dieser Gruppe an.
+                Datensätze mit Status PENDING/DECLINED oder Modus LEGACY werden übersprungen.
+            </p>
+            <form method="get" action="{% url 'catalog:group_apply_preview' year=year pk=group.pk %}" class="row g-3 align-items-end">
+                <div class="col-auto">
+                    <label for="id_bulk_semester" class="form-label small">Halbjahr</label>
+                    <select name="semester" id="id_bulk_semester" class="form-select form-select-sm">
+                        <option value="1">1. Halbjahr</option>
+                        <option value="2">2. Halbjahr</option>
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <label for="id_bulk_from_month" class="form-label small">Ab Monat</label>
+                    <select name="from_month" id="id_bulk_from_month" class="form-select form-select-sm">
+                        {% for m in "123456789" %}
+                        <option value="{{ m }}">{{ m }}</option>
+                        {% endfor %}
+                        <option value="10">10</option>
+                        <option value="11">11</option>
+                        <option value="12">12</option>
+                    </select>
+                </div>
+                <div class="col">
+                    <label for="id_bulk_comment" class="form-label small">Kommentar</label>
+                    <input type="text" name="comment" id="id_bulk_comment" class="form-control form-control-sm"
+                           placeholder="Grund der Massenaktualisierung" required>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-outline-primary btn-sm">
+                        <i class="bi bi-eye"></i> Vorschau
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}

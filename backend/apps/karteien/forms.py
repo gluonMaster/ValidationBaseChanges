@@ -33,6 +33,7 @@ from .billing import (
     normalize_hours,
     recalculate_record_months,
     get_semester_for_month,
+    get_semester_month_ranges,
     get_subject_name_for_semester,
     build_base_amounts,
     calculate_month_values,
@@ -51,19 +52,6 @@ from .validators import (
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
-
-
-# Semester month ranges
-SEMESTER_1_MONTHS = (1, 2, 3, 4, 5, 6)
-SEMESTER_2_MONTHS = (7, 8, 9, 10, 11, 12)
-
-# Start month choices
-START_MONTH_1_CHOICES = [(i, f"Monat {i}") for i in range(1, 7)]
-START_MONTH_2_CHOICES = [(i, f"Monat {i}") for i in range(7, 13)]
-
-# End month choices (with empty option for "until end of semester")
-END_MONTH_1_CHOICES = [("", "---")] + [(i, f"Monat {i}") for i in range(1, 7)]
-END_MONTH_2_CHOICES = [("", "---")] + [(i, f"Monat {i}") for i in range(7, 13)]
 
 # Contract type choices (form-only field)
 CONTRACT_TYPE_CHOICES = [
@@ -292,14 +280,14 @@ class KarteiRecordForm(forms.ModelForm):
             "subject1_ref": forms.Select(attrs={"class": "form-select", "data-semester": "1"}),
             "teacher1_ref": forms.Select(attrs={"class": "form-select", "data-semester": "1"}),
             "price1_ref": forms.Select(attrs={"class": "form-select", "data-semester": "1"}),
-            "start_month_1": forms.Select(attrs={"class": "form-select"}, choices=START_MONTH_1_CHOICES),
-            "end_month_1": forms.Select(attrs={"class": "form-select"}, choices=END_MONTH_1_CHOICES),
+            "start_month_1": forms.Select(attrs={"class": "form-select"}, choices=[]),
+            "end_month_1": forms.Select(attrs={"class": "form-select"}, choices=[("", "---")]),
             "months_csv_1": forms.TextInput(attrs={"class": "form-control", "placeholder": "z.B. 1,3,6"}),
             "subject2_ref": forms.Select(attrs={"class": "form-select", "data-semester": "2"}),
             "teacher2_ref": forms.Select(attrs={"class": "form-select", "data-semester": "2"}),
             "price2_ref": forms.Select(attrs={"class": "form-select", "data-semester": "2"}),
-            "start_month_2": forms.Select(attrs={"class": "form-select"}, choices=START_MONTH_2_CHOICES),
-            "end_month_2": forms.Select(attrs={"class": "form-select"}, choices=END_MONTH_2_CHOICES),
+            "start_month_2": forms.Select(attrs={"class": "form-select"}, choices=[]),
+            "end_month_2": forms.Select(attrs={"class": "form-select"}, choices=[("", "---")]),
             "months_csv_2": forms.TextInput(attrs={"class": "form-control", "placeholder": "z.B. 7,8,12"}),
             # Legacy fields (hidden)
             "subject1": forms.HiddenInput(),
@@ -431,13 +419,13 @@ class KarteiRecordForm(forms.ModelForm):
     # Price change application month (for edit mode when price changes)
     apply_from_month_1 = forms.ChoiceField(
         required=False,
-        choices=[('', '---')] + START_MONTH_1_CHOICES,
+        choices=[('', '---')],
         widget=forms.Select(attrs={"class": "form-select"}),
         help_text="Ab welchem Monat soll die neue Preis 1 gelten?",
     )
     apply_from_month_2 = forms.ChoiceField(
         required=False,
-        choices=[('', '---')] + START_MONTH_2_CHOICES,
+        choices=[('', '---')],
         widget=forms.Select(attrs={"class": "form-select"}),
         help_text="Ab welchem Monat soll die neue Preis 2 gelten?",
     )
@@ -445,13 +433,13 @@ class KarteiRecordForm(forms.ModelForm):
     # Price change end month (optional - to apply changes only to a range)
     apply_to_month_1 = forms.ChoiceField(
         required=False,
-        choices=[('', '---')] + START_MONTH_1_CHOICES,
+        choices=[('', '---')],
         widget=forms.Select(attrs={"class": "form-select"}),
         help_text="Bis zu welchem Monat soll die neue Preis 1 gelten? (leer = bis Ende Semester)",
     )
     apply_to_month_2 = forms.ChoiceField(
         required=False,
-        choices=[('', '---')] + START_MONTH_2_CHOICES,
+        choices=[('', '---')],
         widget=forms.Select(attrs={"class": "form-select"}),
         help_text="Bis zu welchem Monat soll die neue Preis 2 gelten? (leer = bis Ende Semester)",
     )
@@ -511,6 +499,31 @@ class KarteiRecordForm(forms.ModelForm):
         self._requires_comment: bool = kwargs.pop("requires_comment", False)
         
         super().__init__(*args, **kwargs)
+        
+        # Build dynamic semester choices based on SemesterConfig for this year
+        sem1_months, sem2_months = get_semester_month_ranges(self.year)
+        self._sem1_list = list(sem1_months)
+        self._sem2_list = list(sem2_months)
+        self._sem1_set = set(self._sem1_list)
+        self._sem2_set = set(self._sem2_list)
+        self._sem1_first = min(self._sem1_list)
+        self._sem1_last = max(self._sem1_list)
+        self._sem2_first = min(self._sem2_list)
+        self._sem2_last = max(self._sem2_list)
+
+        sem1_choices = [(m, f"Monat {m}") for m in self._sem1_list]
+        sem2_choices = [(m, f"Monat {m}") for m in self._sem2_list]
+        sem1_choices_blank = [("", "---")] + sem1_choices
+        sem2_choices_blank = [("", "---")] + sem2_choices
+
+        self.fields["start_month_1"].choices = sem1_choices
+        self.fields["start_month_2"].choices = sem2_choices
+        self.fields["end_month_1"].choices = sem1_choices_blank
+        self.fields["end_month_2"].choices = sem2_choices_blank
+        self.fields["apply_from_month_1"].choices = sem1_choices_blank
+        self.fields["apply_from_month_2"].choices = sem2_choices_blank
+        self.fields["apply_to_month_1"].choices = sem1_choices_blank
+        self.fields["apply_to_month_2"].choices = sem2_choices_blank
         
         # Store original price refs for detecting changes
         self._original_price1_ref_id = None
@@ -671,9 +684,9 @@ class KarteiRecordForm(forms.ModelForm):
         
         # Check each semester
         if is_per_hour_subject(subject1_name):
-            hourly_months.extend(SEMESTER_1_MONTHS)
+            hourly_months.extend(self._sem1_list)
         if is_per_hour_subject(subject2_name):
-            hourly_months.extend(SEMESTER_2_MONTHS)
+            hourly_months.extend(self._sem2_list)
         
         return hourly_months
     
@@ -758,9 +771,7 @@ class KarteiRecordForm(forms.ModelForm):
         self.fields["price2_ref"].queryset = active_prices
         self.fields["price2_ref"].required = False
         
-        # Start month choices
-        self.fields["start_month_1"].choices = START_MONTH_1_CHOICES
-        self.fields["start_month_2"].choices = START_MONTH_2_CHOICES
+        # Start month choices are set dynamically in __init__
     
     def _configure_sepa_marker_field(self) -> None:
         """
@@ -1441,10 +1452,13 @@ class KarteiRecordForm(forms.ModelForm):
         if apply_to_1_str:
             try:
                 apply_to_1 = int(apply_to_1_str)
-                # Validate range (1-6 for semester 1)
-                if apply_to_1 < 1 or apply_to_1 > 6:
+                # Validate range for semester 1
+                if apply_to_1 not in self._sem1_set:
                     raise ValidationError({
-                        'apply_to_month_1': 'Endmonat muss zwischen 1 und 6 liegen.'
+                        'apply_to_month_1': (
+                            f'Endmonat muss zwischen {self._sem1_first} und '
+                            f'{self._sem1_last} liegen.'
+                        )
                     })
                 # Validate that end >= start
                 if apply_from_1 is not None and apply_to_1 < apply_from_1:
@@ -1460,10 +1474,13 @@ class KarteiRecordForm(forms.ModelForm):
         if apply_to_2_str:
             try:
                 apply_to_2 = int(apply_to_2_str)
-                # Validate range (7-12 for semester 2)
-                if apply_to_2 < 7 or apply_to_2 > 12:
+                # Validate range for semester 2
+                if apply_to_2 not in self._sem2_set:
                     raise ValidationError({
-                        'apply_to_month_2': 'Endmonat muss zwischen 7 und 12 liegen.'
+                        'apply_to_month_2': (
+                            f'Endmonat muss zwischen {self._sem2_first} und '
+                            f'{self._sem2_last} liegen.'
+                        )
                     })
                 # Validate that end >= start
                 if apply_from_2 is not None and apply_to_2 < apply_from_2:
@@ -1609,17 +1626,23 @@ class KarteiRecordForm(forms.ModelForm):
                 })
         
         # Validate start_month ranges
-        start_month_1 = cleaned_data.get("start_month_1", 1)
-        start_month_2 = cleaned_data.get("start_month_2", 7)
+        start_month_1 = cleaned_data.get("start_month_1", self._sem1_first)
+        start_month_2 = cleaned_data.get("start_month_2", self._sem2_first)
         
-        if start_month_1 is not None and start_month_1 not in SEMESTER_1_MONTHS:
+        if start_month_1 is not None and start_month_1 not in self._sem1_set:
             raise ValidationError({
-                "start_month_1": f"Startmonat 1. HJ muss zwischen 1 und 6 liegen."
+                "start_month_1": (
+                    f"Startmonat 1. HJ muss zwischen {self._sem1_first} "
+                    f"und {self._sem1_last} liegen."
+                )
             })
         
-        if start_month_2 is not None and start_month_2 not in SEMESTER_2_MONTHS:
+        if start_month_2 is not None and start_month_2 not in self._sem2_set:
             raise ValidationError({
-                "start_month_2": f"Startmonat 2. HJ muss zwischen 7 und 12 liegen."
+                "start_month_2": (
+                    f"Startmonat 2. HJ muss zwischen {self._sem2_first} "
+                    f"und {self._sem2_last} liegen."
+                )
             })
         
         # Validate end_month ranges and ensure end >= start
@@ -1627,22 +1650,28 @@ class KarteiRecordForm(forms.ModelForm):
         end_month_2 = cleaned_data.get("end_month_2")
         
         if end_month_1 is not None:
-            if end_month_1 not in SEMESTER_1_MONTHS:
+            if end_month_1 not in self._sem1_set:
                 raise ValidationError({
-                    "end_month_1": "Endmonat 1. HJ muss zwischen 1 und 6 liegen."
+                    "end_month_1": (
+                        f"Endmonat 1. HJ muss zwischen {self._sem1_first} "
+                        f"und {self._sem1_last} liegen."
+                    )
                 })
-            effective_start_1 = start_month_1 if start_month_1 else 1
+            effective_start_1 = start_month_1 if start_month_1 else self._sem1_first
             if end_month_1 < effective_start_1:
                 raise ValidationError({
                     "end_month_1": f"Endmonat ({end_month_1}) darf nicht vor Startmonat ({effective_start_1}) liegen."
                 })
         
         if end_month_2 is not None:
-            if end_month_2 not in SEMESTER_2_MONTHS:
+            if end_month_2 not in self._sem2_set:
                 raise ValidationError({
-                    "end_month_2": "Endmonat 2. HJ muss zwischen 7 und 12 liegen."
+                    "end_month_2": (
+                        f"Endmonat 2. HJ muss zwischen {self._sem2_first} "
+                        f"und {self._sem2_last} liegen."
+                    )
                 })
-            effective_start_2 = start_month_2 if start_month_2 else 7
+            effective_start_2 = start_month_2 if start_month_2 else self._sem2_first
             if end_month_2 < effective_start_2:
                 raise ValidationError({
                     "end_month_2": f"Endmonat ({end_month_2}) darf nicht vor Startmonat ({effective_start_2}) liegen."
@@ -1654,19 +1683,23 @@ class KarteiRecordForm(forms.ModelForm):
         
         # Normalize months_csv_1
         if months_csv_1:
-            normalized_1, error_1 = self._normalize_months_csv(months_csv_1, SEMESTER_1_MONTHS)
+            normalized_1, error_1 = self._normalize_months_csv(months_csv_1, self._sem1_list)
             if error_1:
                 raise ValidationError({"months_csv_1": error_1})
             cleaned_data["months_csv_1"] = normalized_1
         
         # Normalize months_csv_2
         if months_csv_2:
-            normalized_2, error_2 = self._normalize_months_csv(months_csv_2, SEMESTER_2_MONTHS)
+            normalized_2, error_2 = self._normalize_months_csv(months_csv_2, self._sem2_list)
             if error_2:
                 raise ValidationError({"months_csv_2": error_2})
             cleaned_data["months_csv_2"] = normalized_2
     
-    def _normalize_months_csv(self, csv_str: str, valid_months: tuple) -> tuple[str, str | None]:
+    def _normalize_months_csv(
+        self,
+        csv_str: str,
+        valid_months: tuple[int, ...] | list[int],
+    ) -> tuple[str, str | None]:
         """
         Normalize a months CSV string.
         

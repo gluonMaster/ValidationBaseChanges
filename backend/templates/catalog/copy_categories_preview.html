@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% comment %}
+Preview of categories/links that would be copied between years.
+Read-only — no database writes.
+{% endcomment %}
+
+{% block title %}Kategorien kopieren — Vorschau{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:index' %}">Katalog</a>
+                    </li>
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:categories_copy_year' %}">Kategorien kopieren</a>
+                    </li>
+                    <li class="breadcrumb-item active">Vorschau</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-eye"></i>
+                Vorschau: Kategorien kopieren
+                {% if source_year and target_year %}
+                    {{ source_year }} → {{ target_year }}
+                {% endif %}
+            </h1>
+        </div>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle"></i> {{ error }}
+    </div>
+    {% else %}
+
+    <!-- Warnings -->
+    {% if warnings %}
+    <div class="row mb-3">
+        <div class="col">
+            {% for w in warnings %}
+            <div class="alert alert-warning">
+                <i class="bi bi-exclamation-triangle"></i> {{ w }}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="row">
+        <!-- Source categories to copy -->
+        <div class="col-md-7">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-box-arrow-right"></i>
+                    Quellkategorien ({{ source_year }}) — {{ source_categories|length }} aktiv
+                </div>
+                <div class="card-body p-0">
+                    {% if source_categories %}
+                    <table class="table table-sm table-striped mb-0">
+                        <thead>
+                            <tr>
+                                <th>Kategorie</th>
+                                <th>Art</th>
+                                <th>Jahresvertrag €/UE</th>
+                                <th>Monatsvertrag €/UE</th>
+                                <th>Schwellenwert</th>
+                                <th>Verknüpfte Fächer</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in source_categories %}
+                            <tr>
+                                <td><strong>{{ item.category.name }}</strong></td>
+                                <td>
+                                    {% if item.category.kind == "GROUP" %}
+                                    <span class="badge bg-info">Gruppe</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Einzel</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ item.category.yearly_rate }}</td>
+                                <td>{{ item.category.monthly_rate }}</td>
+                                <td>{{ item.category.group_threshold }}</td>
+                                <td>
+                                    {% for link in item.links %}
+                                    <span class="badge {% if link.already_linked %}bg-warning text-dark{% else %}bg-success{% endif %}">
+                                        {{ link.subject_name }}
+                                        {% if link.already_linked %}
+                                        <i class="bi bi-exclamation-circle" title="Bereits im Zieljahr verknüpft"></i>
+                                        {% endif %}
+                                    </span>
+                                    {% endfor %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="p-3 text-muted">
+                        Keine aktiven Kategorien im Quelljahr.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Target year existing categories -->
+        <div class="col-md-5">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-box-arrow-in-left"></i>
+                    Zieljahr ({{ target_year }}) — {{ target_categories|length }} vorhanden
+                </div>
+                <div class="card-body p-0">
+                    {% if target_categories %}
+                    <table class="table table-sm table-striped mb-0">
+                        <thead>
+                            <tr>
+                                <th>Kategorie</th>
+                                <th>Art</th>
+                                <th>Aktiv</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for cat in target_categories %}
+                            <tr>
+                                <td>{{ cat.name }}</td>
+                                <td>
+                                    {% if cat.kind == "GROUP" %}
+                                    <span class="badge bg-info">Gruppe</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Einzel</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if cat.is_active %}
+                                    <span class="badge bg-success">Ja</span>
+                                    {% else %}
+                                    <span class="badge bg-danger">Nein</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="p-3 text-muted">
+                        Keine Kategorien im Zieljahr vorhanden — Kopie kann ohne „Überschreiben" erfolgen.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <i class="bi bi-info-circle"></i>
+                    Legende
+                </div>
+                <div class="card-body">
+                    <p class="mb-1">
+                        <span class="badge bg-success">Fachname</span>
+                        — wird verknüpft
+                    </p>
+                    <p class="mb-0">
+                        <span class="badge bg-warning text-dark">Fachname <i class="bi bi-exclamation-circle"></i></span>
+                        — bereits im Zieljahr verknüpft (wird übersprungen)
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+
+    <div class="row mt-3">
+        <div class="col">
+            <a href="{% url 'catalog:categories_copy_year' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i>
+                Zurück zum Kopieren
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% comment %}
+Copy subject categories from one year to another.
+{% endcomment %}
+
+{% block title %}Katalog - Kategorien kopieren{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="row mb-4">
+        <div class="col">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item">
+                        <a href="{% url 'catalog:index' %}">Katalog</a>
+                    </li>
+                    <li class="breadcrumb-item active">Kategorien kopieren</li>
+                </ol>
+            </nav>
+            <h1>
+                <i class="bi bi-copy"></i>
+                Kategorien zwischen Jahren kopieren
+            </h1>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Form -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-arrow-right-circle"></i>
+                    Kopiereinstellungen
+                </div>
+                <div class="card-body">
+                    <form method="post" novalidate>
+                        {% csrf_token %}
+
+                        <!-- Validation Errors -->
+                        {% if form.non_field_errors %}
+                        <div class="alert alert-danger" role="alert">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>Fehler:</strong>
+                            <ul class="mb-0">
+                                {% for error in form.non_field_errors %}
+                                <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="{{ form.from_year.id_for_label }}" class="form-label">
+                                    Von Jahr <span class="text-danger">*</span>
+                                </label>
+                                {{ form.from_year }}
+                                {% if form.from_year.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {{ form.from_year.errors.0 }}
+                                </div>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-6">
+                                <label for="{{ form.to_year.id_for_label }}" class="form-label">
+                                    Nach Jahr <span class="text-danger">*</span>
+                                </label>
+                                {{ form.to_year }}
+                                {% if form.to_year.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {{ form.to_year.errors.0 }}
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="form-check">
+                                {{ form.overwrite }}
+                                <label class="form-check-label" for="{{ form.overwrite.id_for_label }}">
+                                    {{ form.overwrite.label }}
+                                </label>
+                            </div>
+                            <small class="text-muted text-warning">
+                                <i class="bi bi-exclamation-triangle"></i>
+                                {{ form.overwrite.help_text }}
+                            </small>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            <strong>Ohne Überschreiben:</strong>
+                            Wenn im Zieljahr bereits Kategorien existieren, wird keine Kopie durchgeführt.
+                            Es werden nur aktive Kategorien aus dem Quelljahr kopiert.
+                        </div>
+
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-warning">
+                                <i class="bi bi-copy"></i>
+                                Jetzt kopieren
+                            </button>
+                            <a id="btn-preview" href="#" class="btn btn-outline-info"
+                               onclick="openPreview(); return false;">
+                                <i class="bi bi-eye"></i>
+                                Vorschau
+                            </a>
+                            <a href="{% url 'catalog:index' %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-x-lg"></i>
+                                Abbrechen
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Year Statistics -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-bar-chart"></i>
+                    Kategorien pro Jahr
+                </div>
+                <div class="card-body">
+                    {% if year_stats %}
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Jahr</th>
+                                <th>Gesamt</th>
+                                <th>Aktiv</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for stat in year_stats %}
+                            <tr>
+                                <td>
+                                    <strong>{{ stat.year }}</strong>
+                                    {% if stat.year == current_year %}
+                                    <span class="badge bg-primary">Aktuell</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ stat.total }}</td>
+                                <td>{{ stat.active }}</td>
+                                <td>
+                                    <a href="{% url 'catalog:category_list' stat.year %}"
+                                       class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="text-muted">
+                        Noch keine Kategorien vorhanden.
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <i class="bi bi-lightbulb"></i>
+                    Hinweise
+                </div>
+                <div class="card-body">
+                    <ul class="mb-0">
+                        <li>Es werden nur <strong>aktive</strong> Kategorien kopiert</li>
+                        <li>Verknüpfungen (Fach → Kategorie) werden mitgenommen</li>
+                        <li>Für Gruppenkategorien werden DisciplineGroups erstellt</li>
+                        <li>DurationEntry / GroupSizeEntry / Contract-Einträge werden <strong>nicht</strong> kopiert</li>
+                        <li>Mit „Überschreiben" werden bestehende Kategorien deaktiviert (nicht gelöscht)</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function openPreview() {
+    var fromYear = document.getElementById("{{ form.from_year.id_for_label }}").value;
+    var toYear = document.getElementById("{{ form.to_year.id_for_label }}").value;
+    if (fromYear && toYear) {
+        window.open(
+            "{% url 'catalog:categories_copy_year_preview' %}?from_year=" + fromYear + "&to_year=" + toYear,
+            "_blank"
+        );
+    } else {
+        alert("Bitte Quell- und Zieljahr eingeben.");
+    }
+}
+</script>
+{% endblock %}

@@ -44,6 +44,7 @@ from apps.catalog.models import (
 from .billing import (
     recalculate_record_months,
     is_per_hour_subject,
+    get_semester_month_ranges,
     ZERO,
 )
 from .models import KarteiRecord, RecordStatus, MonthsMode
@@ -445,6 +446,15 @@ class ChildRecordForm(forms.Form):
         self.year = year or date.today().year
         super().__init__(*args, **kwargs)
         
+        # Dynamic semester choices from SemesterConfig
+        sem1_months, sem2_months = get_semester_month_ranges(self.year)
+        sem1_choices = [(m, f"Monat {m}") for m in sem1_months]
+        sem2_choices = [(m, f"Monat {m}") for m in sem2_months]
+        self.fields["start_month_1"].choices = sem1_choices
+        self.fields["start_month_1"].initial = min(sem1_months)
+        self.fields["start_month_2"].choices = sem2_choices
+        self.fields["start_month_2"].initial = min(sem2_months)
+        
         self._configure_catalog_fields()
     
     def _configure_catalog_fields(self) -> None:
@@ -587,6 +597,16 @@ class NewFamilyWizardView(AdminOnlyMixin, View):
     """
     
     template_name = "karteien/new_family_wizard.html"
+
+    def _build_semester_context(self, year: int) -> dict[str, int]:
+        """Return semester boundaries for template labels."""
+        sem1, sem2 = get_semester_month_ranges(year)
+        return {
+            "sem1_first": min(sem1),
+            "sem1_last": max(sem1),
+            "sem2_first": min(sem2),
+            "sem2_last": max(sem2),
+        }
     
     def get(self, request: HttpRequest) -> HttpResponse:
         """Display the wizard form."""
@@ -605,6 +625,7 @@ class NewFamilyWizardView(AdminOnlyMixin, View):
             "header_form": header_form,
             "child_formset": child_formset,
             "year": year,
+            **self._build_semester_context(year),
         })
     
     def post(self, request: HttpRequest) -> HttpResponse:
@@ -627,6 +648,7 @@ class NewFamilyWizardView(AdminOnlyMixin, View):
                 "header_form": header_form,
                 "child_formset": child_formset,
                 "year": year,
+                **self._build_semester_context(year),
             })
         
         # Process in a transaction
@@ -644,6 +666,7 @@ class NewFamilyWizardView(AdminOnlyMixin, View):
                         "header_form": header_form,
                         "child_formset": child_formset,
                         "year": year,
+                        **self._build_semester_context(year),
                     })
                 
                 # Success message
@@ -667,6 +690,7 @@ class NewFamilyWizardView(AdminOnlyMixin, View):
                 "header_form": header_form,
                 "child_formset": child_formset,
                 "year": year,
+                **self._build_semester_context(year),
             })
     
     def _create_family(
@@ -746,12 +770,13 @@ class NewFamilyWizardView(AdminOnlyMixin, View):
             hours_per_month_2 = child_data.get("hours_per_month_2") or Decimal("0.00")
             
             hours_amounts = {}
-            start_month_1 = int(child_data.get("start_month_1") or 1)
-            start_month_2 = int(child_data.get("start_month_2") or 7)
+            sem1_m, sem2_m = get_semester_month_ranges(year)
+            start_month_1 = int(child_data.get("start_month_1") or min(sem1_m))
+            start_month_2 = int(child_data.get("start_month_2") or min(sem2_m))
             
-            for i in range(1, 7):
+            for i in sem1_m:
                 hours_amounts[f"month_{i}"] = str(hours_per_month_1) if i >= start_month_1 else "0.00"
-            for i in range(7, 13):
+            for i in sem2_m:
                 hours_amounts[f"month_{i}"] = str(hours_per_month_2) if i >= start_month_2 else "0.00"
             
             # Create record

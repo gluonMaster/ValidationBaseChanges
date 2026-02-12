@@ -13,7 +13,7 @@ from django import forms
 from .models import (
     Teacher, Subject, TeachingAssignment, PriceOption,
     Discount, DiscountKind, FamilyDiscount, RecordDiscount,
-    SubjectCategory, DurationEntry, GroupSizeEntry,
+    CategoryKind, SubjectCategory, DurationEntry, GroupSizeEntry,
 )
 
 
@@ -251,6 +251,57 @@ class CopyPricesYearForm(forms.Form):
                 "Quell- und Zieljahr dürfen nicht identisch sein."
             )
         
+        return cleaned_data
+
+
+class CopyCategoriesYearForm(forms.Form):
+    """Form for copying SubjectCategories from one year to another."""
+
+    from_year = forms.IntegerField(
+        label="Von Jahr",
+        min_value=2000,
+        max_value=2100,
+        widget=forms.NumberInput(attrs={
+            "class": "form-control",
+        }),
+    )
+    to_year = forms.IntegerField(
+        label="Nach Jahr",
+        min_value=2000,
+        max_value=2100,
+        widget=forms.NumberInput(attrs={
+            "class": "form-control",
+        }),
+    )
+    overwrite = forms.BooleanField(
+        label="Bestehende Kategorien im Zieljahr ersetzen",
+        required=False,
+        initial=False,
+        widget=forms.CheckboxInput(attrs={
+            "class": "form-check-input",
+        }),
+        help_text=(
+            "Wenn aktiviert, werden alle bestehenden Kategorien im Zieljahr "
+            "deaktiviert und deren Verknüpfungen gelöscht."
+        ),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        current_year = date.today().year
+        self.fields["from_year"].initial = current_year
+        self.fields["to_year"].initial = current_year + 1
+
+    def clean(self):
+        cleaned_data = super().clean()
+        from_year = cleaned_data.get("from_year")
+        to_year = cleaned_data.get("to_year")
+
+        if from_year and to_year and from_year == to_year:
+            raise forms.ValidationError(
+                "Quell- und Zieljahr dürfen nicht identisch sein."
+            )
+
         return cleaned_data
 
 
@@ -523,6 +574,40 @@ class SubjectCategoryForm(forms.ModelForm):
             "group_threshold": forms.NumberInput(attrs={"min": "1", "class": "form-control"}),
             "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Requiredness depends on category kind and is handled in clean().
+        self.fields["group_threshold"].required = False
+        self.fields["group_threshold"].widget.attrs.pop("required", None)
+
+    def clean(self):
+        cleaned_data = super().clean()
+        kind = cleaned_data.get("kind")
+        threshold = cleaned_data.get("group_threshold")
+
+        if kind == CategoryKind.GROUP:
+            if threshold in (None, ""):
+                self.add_error(
+                    "group_threshold",
+                    "Bitte Schwellenwert fuer Gruppenunterricht angeben.",
+                )
+            elif threshold < 1:
+                self.add_error(
+                    "group_threshold",
+                    "Der Schwellenwert muss mindestens 1 sein.",
+                )
+
+        if kind == CategoryKind.INDIVIDUAL:
+            # Keep a stable stored value for a field that is irrelevant in this mode.
+            if self.instance and self.instance.pk:
+                cleaned_data["group_threshold"] = self.instance.group_threshold
+            else:
+                cleaned_data["group_threshold"] = (
+                    SubjectCategory._meta.get_field("group_threshold").get_default()
+                )
+
+        return cleaned_data
 
 
 # =============================================================================

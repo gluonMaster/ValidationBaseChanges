@@ -170,11 +170,11 @@ Includes embedded CSS and JS for standalone functionality.
                             <tr>
                                 <th class="col-child">Kind</th>
                                 <th class="col-subject">Fach 1</th>
-                                {% for month_name in month_names_sem1 %}
+                                {% for month_name in year_data.month_names_sem1 %}
                                 <th class="col-month">{{ month_name }}</th>
                                 {% endfor %}
                                 <th class="col-subject col-subject-sep">Fach 2</th>
-                                {% for month_name in month_names_sem2 %}
+                                {% for month_name in year_data.month_names_sem2 %}
                                 <th class="col-month">{{ month_name }}</th>
                                 {% endfor %}
                                 <th class="col-total">Gesamt</th>

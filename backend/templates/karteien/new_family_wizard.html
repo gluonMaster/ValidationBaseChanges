@@ -304,7 +304,7 @@ Admin-only page for creating a new family with multiple children in one pass.
                                 
                                 <!-- Semester 1 -->
                                 <div class="semester-section">
-                                    <h6><i class="bi bi-1-circle"></i> 1. Halbjahr (Monate 1-6)</h6>
+                                    <h6><i class="bi bi-1-circle"></i> 1. Halbjahr (Monate {{ sem1_first }}-{{ sem1_last }})</h6>
                                     <div class="row">
                                         <div class="col-md-4 mb-2">
                                             <label class="form-label form-label-sm">Fach</label>
@@ -345,7 +345,7 @@ Admin-only page for creating a new family with multiple children in one pass.
                                 
                                 <!-- Semester 2 -->
                                 <div class="semester-section">
-                                    <h6><i class="bi bi-2-circle"></i> 2. Halbjahr (Monate 7-12)</h6>
+                                    <h6><i class="bi bi-2-circle"></i> 2. Halbjahr (Monate {{ sem2_first }}-{{ sem2_last }})</h6>
                                     <div class="row">
                                         <div class="col-md-4 mb-2">
                                             <label class="form-label form-label-sm">Fach</label>
@@ -465,7 +465,7 @@ Admin-only page for creating a new family with multiple children in one pass.
         
         <!-- Semester 1 -->
         <div class="semester-section">
-            <h6><i class="bi bi-1-circle"></i> 1. Halbjahr (Monate 1-6)</h6>
+            <h6><i class="bi bi-1-circle"></i> 1. Halbjahr (Monate {{ sem1_first }}-{{ sem1_last }})</h6>
             <div class="row">
                 <div class="col-md-4 mb-2">
                     <label class="form-label form-label-sm">Fach</label>
@@ -490,12 +490,9 @@ Admin-only page for creating a new family with multiple children in one pass.
                 <div class="col-md-6 mb-2">
                     <label class="form-label form-label-sm">Ab Monat</label>
                     <select name="form-__prefix__-start_month_1" id="id_form-__prefix__-start_month_1" class="form-select">
-                        <option value="1">Monat 1</option>
-                        <option value="2">Monat 2</option>
-                        <option value="3">Monat 3</option>
-                        <option value="4">Monat 4</option>
-                        <option value="5">Monat 5</option>
-                        <option value="6">Monat 6</option>
+                        {% for value, label in child_formset.empty_form.start_month_1.field.choices %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
                     </select>
                 </div>
                 <div class="col-md-6 mb-2">
@@ -507,7 +504,7 @@ Admin-only page for creating a new family with multiple children in one pass.
         
         <!-- Semester 2 -->
         <div class="semester-section">
-            <h6><i class="bi bi-2-circle"></i> 2. Halbjahr (Monate 7-12)</h6>
+            <h6><i class="bi bi-2-circle"></i> 2. Halbjahr (Monate {{ sem2_first }}-{{ sem2_last }})</h6>
             <div class="row">
                 <div class="col-md-4 mb-2">
                     <label class="form-label form-label-sm">Fach</label>
@@ -532,12 +529,9 @@ Admin-only page for creating a new family with multiple children in one pass.
                 <div class="col-md-6 mb-2">
                     <label class="form-label form-label-sm">Ab Monat</label>
                     <select name="form-__prefix__-start_month_2" id="id_form-__prefix__-start_month_2" class="form-select">
-                        <option value="7">Monat 7</option>
-                        <option value="8">Monat 8</option>
-                        <option value="9">Monat 9</option>
-                        <option value="10">Monat 10</option>
-                        <option value="11">Monat 11</option>
-                        <option value="12">Monat 12</option>
+                        {% for value, label in child_formset.empty_form.start_month_2.field.choices %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
                     </select>
                 </div>
                 <div class="col-md-6 mb-2">

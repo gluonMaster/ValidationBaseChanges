@@ -23,7 +23,11 @@ Subject categories list view — shows categories for a given year.
                 Kategorien {{ year }}
             </h1>
         </div>
-        <div class="col-auto d-flex align-items-start">
+        <div class="col-auto d-flex align-items-start gap-2">
+            <a href="{% url 'catalog:categories_copy_year' %}" class="btn btn-warning">
+                <i class="bi bi-copy"></i>
+                Vom Vorjahr kopieren
+            </a>
             <a href="{% url 'catalog:category_create' year=year %}" class="btn btn-success">
                 <i class="bi bi-plus-lg"></i>
                 Neue Kategorie

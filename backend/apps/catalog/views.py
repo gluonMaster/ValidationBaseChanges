@@ -8,7 +8,8 @@ This module contains views for managing:
 - Price Options (Preise)
 - Copying assignments and prices between years
 
-Access is restricted to Admin role only.
+Most catalog management is Admin-only. Some bulk pricing views are available
+to Admin and Operator.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from typing import Any
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.db import IntegrityError
-from django.db.models import Count, OuterRef, QuerySet, Subquery
+from django.db.models import Count, OuterRef, Q, QuerySet, Subquery
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse, reverse_lazy
@@ -34,6 +35,7 @@ from django.views.generic import (
 )
 
 from .forms import (
+    CopyCategoriesYearForm,
     CopyYearForm,
     CopyPricesYearForm,
     DurationEntryForm,
@@ -63,7 +65,9 @@ from .models import (
     get_manual_size_for_month,
 )
 from .group_size_service import get_group_size_for_month
-from .services import ensure_default_categories
+from .pricing import calculate_suggested_price_group
+from .services import copy_categories_between_years, ensure_default_categories
+from .warnings import get_group_warnings
 
 
 
@@ -94,6 +98,147 @@ class CatalogAdminMixin(LoginRequiredMixin, UserPassesTestMixin):
             "Nur Administratoren haben Zugriff."
         )
         return redirect("karteien:record_list")
+
+
+class CatalogEditorMixin(LoginRequiredMixin, UserPassesTestMixin):
+    """
+    Mixin that allows Admin and Operator roles.
+
+    Used for pricing workflows where Operator is allowed to create PENDING
+    changes but still has month restrictions.
+    """
+
+    def test_func(self) -> bool:
+        user = self.request.user
+        return user.is_authenticated and (user.is_admin_role or user.is_operator)
+
+    def handle_no_permission(self) -> HttpResponse:
+        if not self.request.user.is_authenticated:
+            return super().handle_no_permission()
+
+        messages.error(
+            self.request,
+            "Sie haben keine Berechtigung für diese Aktion. "
+            "Nur Admin und Operator haben Zugriff."
+        )
+        return redirect("karteien:record_list")
+
+
+# =============================================================================
+# Group Record Lookup Helpers
+# =============================================================================
+
+def _get_group_records_for_semester(
+    group: DisciplineGroup,
+    *,
+    semester: int,
+):
+    """
+    Return records for a group/semester with legacy subject-name fallback.
+
+    Matches:
+    - direct FK (subject*_ref_id == group.subject_id), or
+    - legacy text (subject*), when subject*_ref is NULL and normalised names match.
+    """
+    from apps.karteien.billing import _normalize_subject_name
+    from apps.karteien.models import KarteiRecord
+
+    if semester not in (1, 2):
+        return []
+
+    if semester == 1:
+        ref_field = "subject1_ref_id"
+        legacy_field = "subject1"
+        ref_null_field = "subject1_ref__isnull"
+    else:
+        ref_field = "subject2_ref_id"
+        legacy_field = "subject2"
+        ref_null_field = "subject2_ref__isnull"
+
+    candidates = (
+        KarteiRecord.objects
+        .filter(year=group.year)
+        .filter(
+            Q(**{ref_field: group.subject_id})
+            | (Q(**{ref_null_field: True}) & ~Q(**{legacy_field: ""}))
+        )
+    )
+
+    norm_subject = _normalize_subject_name(group.subject.name)
+    matched = []
+    for rec in candidates.iterator():
+        ref_value = getattr(rec, ref_field)
+        if ref_value == group.subject_id:
+            matched.append(rec)
+            continue
+
+        legacy_value = getattr(rec, legacy_field) or ""
+        if _normalize_subject_name(legacy_value) == norm_subject:
+            matched.append(rec)
+
+    return matched
+
+
+def _get_group_records(
+    group: DisciplineGroup,
+    *,
+    semester: int | None = None,
+):
+    """Return group records for one semester or both semesters (deduplicated)."""
+    if semester in (1, 2):
+        return _get_group_records_for_semester(group, semester=semester)
+
+    by_pk = {}
+    for sem in (1, 2):
+        for rec in _get_group_records_for_semester(group, semester=sem):
+            by_pk[rec.pk] = rec
+    return list(by_pk.values())
+
+
+def _get_group_semester_stats(group: DisciplineGroup, *, semester: int) -> dict[str, int]:
+    """Return readiness stats for group records in a semester."""
+    from apps.karteien.models import MonthsMode, RecordStatus
+
+    records = _get_group_records(group, semester=semester)
+    ref_id_attr = "subject1_ref_id" if semester == 1 else "subject2_ref_id"
+
+    total = len(records)
+    normal = 0
+    legacy = 0
+    pending = 0
+    declined = 0
+    normal_legacy = 0
+    normal_missing_ref = 0
+    eligible_apply = 0
+
+    for rec in records:
+        status = rec.status
+        if status == RecordStatus.NORMAL:
+            normal += 1
+            if rec.months_mode == MonthsMode.LEGACY:
+                normal_legacy += 1
+            if getattr(rec, ref_id_attr) is None:
+                normal_missing_ref += 1
+            if rec.months_mode != MonthsMode.LEGACY:
+                eligible_apply += 1
+        elif status == RecordStatus.PENDING:
+            pending += 1
+        elif status == RecordStatus.DECLINED:
+            declined += 1
+
+        if rec.months_mode == MonthsMode.LEGACY:
+            legacy += 1
+
+    return {
+        "total": total,
+        "normal": normal,
+        "legacy": legacy,
+        "pending": pending,
+        "declined": declined,
+        "normal_legacy": normal_legacy,
+        "normal_missing_ref": normal_missing_ref,
+        "eligible_apply": eligible_apply,
+    }
 
 
 # =============================================================================
@@ -2205,7 +2350,7 @@ class DisciplineGroupListView(CatalogAdminMixin, ListView):
         return ctx
 
 
-class DisciplineGroupDetailView(CatalogAdminMixin, TemplateView):
+class DisciplineGroupDetailView(CatalogEditorMixin, TemplateView):
     """Detail view for a single DisciplineGroup with duration/size entries."""
 
     template_name = "catalog/group_detail.html"
@@ -2222,10 +2367,95 @@ class DisciplineGroupDetailView(CatalogAdminMixin, TemplateView):
 
         duration_entries = list(group.duration_entries.order_by("effective_from_month"))
         size_entries = list(group.size_entries.order_by("effective_from_month"))
+        records_sem1 = _get_group_records(group, semester=1)
+        records_sem2 = _get_group_records(group, semester=2)
+        records_for_semester = {
+            1: records_sem1,
+            2: records_sem2,
+        }
+
+        from apps.karteien.billing import get_semester_for_month
+        from apps.karteien.models import (
+            get_contract_type_for_month,
+            is_billable_in_month,
+        )
+        from .group_size_service import _is_month_active_for_slot
+
+        # Prefetch category link once (same for all months)
+        cat_link = SubjectCategoryLink.objects.filter(
+            subject=group.subject,
+            year=year,
+            category__is_active=True,
+        ).select_related("category").first()
+
+        # Prefetch contract-type entries for all involved records once.
+        ct_entries_by_pk: dict[int, list] = {}
+        for rec in {r.pk: r for r in (records_sem1 + records_sem2)}.values():
+            ct_entries_by_pk[rec.pk] = list(rec.contract_type_entries.all())
 
         monthly_summary = []
         for m in range(1, 13):
             size_info = get_group_size_for_month(group, m)
+            semester = get_semester_for_month(m, year)
+
+            # Contract type marker for this month from all billable records.
+            # monthly/yearly/mixed/None
+            contract_types: set[str] = set()
+            monthly_sample_record = None
+            yearly_sample_record = None
+            for rec in records_for_semester.get(semester, []):
+                if not _is_month_active_for_slot(rec, semester, m):
+                    continue
+                if not is_billable_in_month(rec, m):
+                    continue
+                is_monthly = get_contract_type_for_month(
+                    rec, m, entries=ct_entries_by_pk.get(rec.pk),
+                )
+                if is_monthly:
+                    contract_types.add("monthly")
+                    if monthly_sample_record is None:
+                        monthly_sample_record = rec
+                else:
+                    contract_types.add("yearly")
+                    if yearly_sample_record is None:
+                        yearly_sample_record = rec
+
+            if len(contract_types) == 1:
+                contract_type_marker = next(iter(contract_types))
+            elif len(contract_types) > 1:
+                contract_type_marker = "mixed"
+            else:
+                contract_type_marker = None
+
+            suggested_monthly = None
+            if monthly_sample_record is not None:
+                suggested_monthly = calculate_suggested_price_group(
+                    monthly_sample_record,
+                    m,
+                    link=cat_link,
+                    group=group,
+                    duration_entries=duration_entries,
+                    contract_type_entries=ct_entries_by_pk.get(monthly_sample_record.pk),
+                )
+
+            suggested_yearly = None
+            if yearly_sample_record is not None:
+                suggested_yearly = calculate_suggested_price_group(
+                    yearly_sample_record,
+                    m,
+                    link=cat_link,
+                    group=group,
+                    duration_entries=duration_entries,
+                    contract_type_entries=ct_entries_by_pk.get(yearly_sample_record.pk),
+                )
+
+            if contract_type_marker == "monthly":
+                suggested_primary = suggested_monthly
+            elif contract_type_marker == "yearly":
+                suggested_primary = suggested_yearly
+            else:
+                suggested_primary = None
+
             monthly_summary.append({
                 "month": m,
                 "duration": get_duration_for_month(group, m, entries=duration_entries),
@@ -2234,6 +2464,16 @@ class DisciplineGroupDetailView(CatalogAdminMixin, TemplateView):
                 "effective_size": size_info["size"],
                 "billable_count": size_info["billable_count"],
                 "is_manual": size_info["is_manual"],
+                "suggested_price": suggested_primary["price"] if suggested_primary else None,
+                "suggested_base_price": suggested_primary["base_price"] if suggested_primary else None,
+                "suggested_scaling": suggested_primary["scaling_applied"] if suggested_primary else False,
+                "suggested_contract_type": contract_type_marker,
+                "suggested_monthly_price": suggested_monthly["price"] if suggested_monthly else None,
+                "suggested_monthly_base_price": suggested_monthly["base_price"] if suggested_monthly else None,
+                "suggested_monthly_scaling": suggested_monthly["scaling_applied"] if suggested_monthly else False,
+                "suggested_yearly_price": suggested_yearly["price"] if suggested_yearly else None,
+                "suggested_yearly_base_price": suggested_yearly["base_price"] if suggested_yearly else None,
+                "suggested_yearly_scaling": suggested_yearly["scaling_applied"] if suggested_yearly else False,
             })
 
         ctx["year"] = year
@@ -2241,8 +2481,11 @@ class DisciplineGroupDetailView(CatalogAdminMixin, TemplateView):
         ctx["duration_entries"] = duration_entries
         ctx["size_entries"] = size_entries
         ctx["monthly_summary"] = monthly_summary
+        ctx["sem1_stats"] = _get_group_semester_stats(group, semester=1)
+        ctx["sem2_stats"] = _get_group_semester_stats(group, semester=2)
         ctx["duration_form"] = DurationEntryForm()
         ctx["size_form"] = GroupSizeEntryForm()
+        ctx["warnings"] = get_group_warnings(group)
         return ctx
 
 
@@ -2311,6 +2554,23 @@ class DisciplineGroupToggleScalingView(CatalogAdminMixin, View):
 
     def post(self, request, year: int, pk: int):
         group = get_object_or_404(DisciplineGroup, pk=pk, year=year)
+
+        # Enabling is only allowed if the group has students in at least one month.
+        if not group.auto_scaling_enabled:
+            has_any_students = any(
+                get_group_size_for_month(group, m)["size"] > 0
+                for m in range(1, 13)
+            )
+            if not has_any_students:
+                messages.error(
+                    request,
+                    "Auto-Skalierung kann nicht aktiviert werden: "
+                    "Die Gruppe ist in allen Monaten leer (Groesse = 0).",
+                )
+                return redirect(
+                    reverse("catalog:group_detail", kwargs={"year": year, "pk": pk})
+                )
+
         group.auto_scaling_enabled = not group.auto_scaling_enabled
         group.save(update_fields=["auto_scaling_enabled"])
         state = "aktiviert" if group.auto_scaling_enabled else "deaktiviert"
@@ -2339,4 +2599,505 @@ class GroupSizeApiView(CatalogAdminMixin, View):
 
         data = get_group_size_for_month(group, month)
         return JsonResponse(data)
+
+
+# =============================================================================
+# Group Legacy Preparation
+# =============================================================================
+
+class DisciplineGroupPrepareLegacyView(CatalogAdminMixin, View):
+    """
+    POST-only: prepare legacy records for category pricing in a semester.
+
+    Steps per eligible record (status NORMAL):
+    1) Set subject*_ref to the group's subject when missing.
+    2) Convert LEGACY -> AUTO (full 12-month recalculation).
+    3) Create/update PendingChange and set status=PENDING.
+    """
+
+    def post(self, request, year: int, pk: int):
+        group = get_object_or_404(
+            DisciplineGroup.objects.select_related("subject"),
+            pk=pk,
+            year=year,
+        )
+
+        try:
+            semester = int(request.POST.get("semester", 0))
+        except (TypeError, ValueError):
+            semester = 0
+        if semester not in (1, 2):
+            messages.error(request, "Ungültiges Halbjahr.")
+            return redirect(reverse("catalog:group_detail", kwargs={"year": year, "pk": pk}))
+
+        comment = (request.POST.get("comment") or "").strip()
+
+        from apps.approvals.services import create_or_update_pending_change
+        from apps.karteien.billing import _normalize_subject_name, recalculate_legacy_to_auto
+        from apps.karteien.models import KarteiRecord, MonthsMode, RecordStatus
+
+        records = _get_group_records(group, semester=semester)
+        if not records:
+            messages.warning(request, "Keine Datensätze für diese Gruppe / dieses Halbjahr gefunden.")
+            return redirect(reverse("catalog:group_detail", kwargs={"year": year, "pk": pk}))
+
+        ref_field = "subject1_ref" if semester == 1 else "subject2_ref"
+        ref_field_id = f"{ref_field}_id"
+        legacy_field = "subject1" if semester == 1 else "subject2"
+        norm_subject = _normalize_subject_name(group.subject.name)
+
+        total = len(records)
+        prepared = 0
+        refs_set = 0
+        converted_auto = 0
+        skipped_status = 0
+        skipped_unchanged = 0
+        skipped_unmatched_legacy = 0
+        failed = 0
+
+        for record in records:
+            if record.status != RecordStatus.NORMAL:
+                skipped_status += 1
+                continue
+
+            changed = False
+            old_base_amounts = dict(record.base_amounts or {})
+
+            # Ensure subject*_ref is set for this semester.
+            if getattr(record, ref_field_id) is None:
+                legacy_value = (getattr(record, legacy_field) or "").strip()
+                if _normalize_subject_name(legacy_value) == norm_subject:
+                    setattr(record, ref_field, group.subject)
+                    refs_set += 1
+                    changed = True
+                else:
+                    skipped_unmatched_legacy += 1
+                    continue
+
+            # Convert LEGACY -> AUTO so category pricing can be applied.
+            if record.months_mode == MonthsMode.LEGACY:
+                try:
+                    recalculate_legacy_to_auto(
+                        record,
+                        touched_months=set(range(1, 13)),
+                        hours_amounts=(record.hours_amounts or {}),
+                    )
+                    converted_auto += 1
+                    changed = True
+                except Exception:
+                    failed += 1
+                    continue
+
+            if not changed:
+                skipped_unchanged += 1
+                continue
+
+            admin_comment = (
+                f"[Gruppe: {group.subject.name}] LEGACY-Vorbereitung ({semester}. Halbjahr)"
+            )
+            if comment:
+                admin_comment = f"{admin_comment}: {comment}"
+
+            pending = create_or_update_pending_change(
+                record, admin_comment=admin_comment,
+            )
+
+            pending_snapshot = dict(pending.snapshot or {})
+            pending_snapshot["_old_base_amounts"] = old_base_amounts
+            pending.snapshot = pending_snapshot
+            pending.save(update_fields=["snapshot"])
+
+            KarteiRecord.objects.filter(pk=record.pk).update(
+                **{
+                    ref_field_id: getattr(record, ref_field_id),
+                    "months_mode": record.months_mode,
+                    "base_amounts": record.base_amounts,
+                    "hours_amounts": record.hours_amounts,
+                    "legacy_base_amounts_enabled": record.legacy_base_amounts_enabled,
+                    "status": RecordStatus.PENDING,
+                }
+            )
+            prepared += 1
+
+        if prepared:
+            messages.success(
+                request,
+                f"Vorbereitung abgeschlossen ({semester}. Halbjahr): "
+                f"{prepared}/{total} Datensatz/Datensätze als PENDING eingereicht "
+                f"(subject_ref gesetzt: {refs_set}, LEGACY→AUTO: {converted_auto}).",
+            )
+        else:
+            messages.warning(
+                request,
+                f"Keine Datensätze vorbereitet ({semester}. Halbjahr).",
+            )
+
+        if skipped_status:
+            messages.info(
+                request,
+                f"Übersprungen wegen Status != NORMAL: {skipped_status}.",
+            )
+        if skipped_unchanged:
+            messages.info(
+                request,
+                f"Bereits vorbereitet / keine Änderungen nötig: {skipped_unchanged}.",
+            )
+        if skipped_unmatched_legacy:
+            messages.warning(
+                request,
+                f"Legacy-Fachname passte nicht eindeutig zur Gruppe: {skipped_unmatched_legacy}.",
+            )
+        if failed:
+            messages.error(
+                request,
+                f"Fehler bei der Umstellung LEGACY→AUTO: {failed}.",
+            )
+
+        return redirect(
+            reverse("catalog:group_detail", kwargs={"year": year, "pk": pk})
+        )
+
+
+# =============================================================================
+# Bulk Apply Category Price (Preview + Apply)
+# =============================================================================
+
+class BulkApplyPreviewView(CatalogEditorMixin, TemplateView):
+    """GET-only: preview bulk category-price application for group records."""
+
+    template_name = "catalog/group_bulk_apply_preview.html"
+
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        ctx = super().get_context_data(**kwargs)
+        year = self.kwargs["year"]
+        pk = self.kwargs["pk"]
+        group = get_object_or_404(
+            DisciplineGroup.objects.select_related("subject"),
+            pk=pk,
+            year=year,
+        )
+
+        semester = int(self.request.GET.get("semester", 1))
+        from_month = int(self.request.GET.get("from_month", 1))
+
+        from apps.karteien.models import KarteiRecord, MonthsMode, RecordStatus
+
+        # Find records linked to this group's subject in the matching semester
+        # (with legacy fallback for records that still have only text subjects).
+        records = _get_group_records(group, semester=semester)
+
+        from copy import deepcopy
+        from apps.karteien.category_price import apply_category_price_to_record
+
+        preview_rows: list[dict[str, Any]] = []
+        for record in records:
+            row: dict[str, Any] = {
+                "record": record,
+                "eligible": False,
+                "skip_reason": "",
+                "diff": None,
+                "error": None,
+            }
+
+            # Eligibility checks
+            if record.status != RecordStatus.NORMAL:
+                row["skip_reason"] = f"Status: {record.get_status_display()}"
+            elif record.months_mode == MonthsMode.LEGACY:
+                row["skip_reason"] = "Abrechnungsmodus: Legacy"
+            else:
+                row["eligible"] = True
+                # Apply on a deep copy to avoid DB changes
+                try:
+                    record_copy = deepcopy(record)
+                    diff = apply_category_price_to_record(
+                        record_copy, semester=semester, from_month=from_month,
+                    )
+                    row["diff"] = diff
+                except Exception as exc:
+                    row["eligible"] = False
+                    row["error"] = str(exc)
+
+            preview_rows.append(row)
+
+        ctx["year"] = year
+        ctx["group"] = group
+        ctx["semester"] = semester
+        ctx["from_month"] = from_month
+        ctx["comment"] = self.request.GET.get("comment", "")
+        ctx["preview_rows"] = preview_rows
+        ctx["eligible_count"] = sum(1 for r in preview_rows if r["eligible"])
+        ctx["skip_count"] = sum(1 for r in preview_rows if not r["eligible"])
+        return ctx
+
+
+class BulkApplyCategoryPriceView(CatalogEditorMixin, View):
+    """POST-only: bulk apply category prices and create PendingChanges."""
+
+    def post(self, request, year: int, pk: int):
+        group = get_object_or_404(
+            DisciplineGroup.objects.select_related("subject"),
+            pk=pk,
+            year=year,
+        )
+
+        semester = int(request.POST.get("semester", 1))
+        from_month = int(request.POST.get("from_month", 1))
+        comment = request.POST.get("comment", "").strip()
+
+        if not comment:
+            messages.error(request, "Bitte geben Sie einen Kommentar ein.")
+            return redirect(
+                reverse("catalog:group_detail", kwargs={"year": year, "pk": pk})
+            )
+
+        # Operator: block past months (current/future months only).
+        user = request.user
+        if user.has_past_months_restrictions:
+            from apps.karteien.validators import get_allowed_months
+
+            allowed_fields, _reason = get_allowed_months(year)
+            if f"month_{from_month}" not in allowed_fields:
+                messages.error(
+                    request,
+                    f"Sie dürfen vergangene Monate nicht ändern (Monat {from_month})."
+                )
+                return redirect(
+                    reverse("catalog:group_detail", kwargs={"year": year, "pk": pk})
+                )
+
+        from apps.karteien.models import KarteiRecord, MonthsMode, RecordStatus
+        from apps.karteien.category_price import apply_category_price_to_record
+        from apps.approvals.services import create_or_update_pending_change
+
+        # Find records linked to this group's subject in the matching semester
+        # (with legacy fallback for records that still have only text subjects).
+        records = _get_group_records(group, semester=semester)
+
+        updated_count = 0
+        skipped_count = 0
+
+        for record in records:
+            # Skip ineligible records
+            if record.status != RecordStatus.NORMAL:
+                skipped_count += 1
+                continue
+            if record.months_mode == MonthsMode.LEGACY:
+                skipped_count += 1
+                continue
+
+            old_base_amounts = dict(record.base_amounts or {})
+
+            # Apply category price in-memory
+            try:
+                apply_category_price_to_record(
+                    record, semester=semester, from_month=from_month,
+                )
+            except Exception:
+                skipped_count += 1
+                continue
+
+            # Create pending change
+            admin_comment = f"[Gruppe: {group.subject.name}] {comment}"
+            pending = create_or_update_pending_change(
+                record, admin_comment=admin_comment
+            )
+            pending_snapshot = dict(pending.snapshot or {})
+            pending_snapshot["_old_base_amounts"] = old_base_amounts
+            pending.snapshot = pending_snapshot
+            pending.save(update_fields=["snapshot"])
+
+            # Save safe fields via queryset update (no full record.save())
+            KarteiRecord.objects.filter(pk=record.pk).update(
+                status=RecordStatus.PENDING,
+                base_amounts=record.base_amounts,
+                months_mode=record.months_mode,
+            )
+            updated_count += 1
+
+        messages.success(
+            request,
+            f"{updated_count} Datensatz/Datensätze aktualisiert, "
+            f"{skipped_count} übersprungen.",
+        )
+        return redirect(
+            reverse("catalog:group_detail", kwargs={"year": year, "pk": pk})
+        )
+
+
+# =============================================================================
+# Copy Categories Between Years
+# =============================================================================
+
+
+class CopyCategoriesView(CatalogAdminMixin, FormView):
+    """
+    Copy subject categories (with links and discipline groups) from one year
+    to another.
+
+    GET  → form with source_year / target_year / overwrite checkbox.
+    POST → call ``copy_categories_between_years`` and show result.
+    """
+
+    template_name = "catalog/copy_categories_year.html"
+    form_class = CopyCategoriesYearForm
+
+    def form_valid(self, form):
+        from_year = form.cleaned_data["from_year"]
+        to_year = form.cleaned_data["to_year"]
+        overwrite = form.cleaned_data["overwrite"]
+
+        result = copy_categories_between_years(
+            source_year=from_year,
+            target_year=to_year,
+            overwrite=overwrite,
+        )
+
+        # Warnings only (no categories copied)
+        if result.warnings and result.categories_created == 0:
+            for w in result.warnings:
+                messages.warning(self.request, w)
+            return self.form_invalid(form)
+
+        # Build success message
+        parts = [f"Kopieren von {from_year} nach {to_year} abgeschlossen."]
+        if result.categories_created:
+            parts.append(f"{result.categories_created} Kategorien erstellt.")
+        if result.categories_skipped:
+            parts.append(
+                f"{result.categories_skipped} Kategorien übersprungen."
+            )
+        if result.links_created:
+            parts.append(f"{result.links_created} Verknüpfungen erstellt.")
+        if result.links_skipped:
+            parts.append(
+                f"{result.links_skipped} Verknüpfungen übersprungen."
+            )
+        if result.groups_created:
+            parts.append(f"{result.groups_created} Gruppen erstellt.")
+
+        messages.success(self.request, " ".join(parts))
+
+        # Show individual warnings (e.g. duplicate subject links)
+        for w in result.warnings:
+            messages.warning(self.request, w)
+
+        return redirect(
+            reverse("catalog:category_list", kwargs={"year": to_year})
+        )
+
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+
+        year_stats = (
+            SubjectCategory.objects.values("year")
+            .annotate(
+                total=Count("id"),
+                active=Count("id", filter=Q(is_active=True)),
+            )
+            .order_by("-year")
+        )
+        context["year_stats"] = list(year_stats)
+        context["current_year"] = date.today().year
+        return context
+
+
+class CopyCategoriesPreviewView(CatalogAdminMixin, TemplateView):
+    """
+    Preview which categories / links would be created when copying between
+    years.  Read-only — does **not** write to the database.
+    """
+
+    template_name = "catalog/copy_categories_preview.html"
+
+    def get_context_data(self, **kwargs) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+
+        source_year = self.request.GET.get("from_year")
+        target_year = self.request.GET.get("to_year")
+
+        if not source_year or not target_year:
+            context["error"] = "Bitte Quell- und Zieljahr angeben."
+            return context
+
+        try:
+            source_year = int(source_year)
+            target_year = int(target_year)
+        except (ValueError, TypeError):
+            context["error"] = "Ungültige Jahrwerte."
+            return context
+
+        if source_year == target_year:
+            context["error"] = (
+                "Quell- und Zieljahr dürfen nicht identisch sein."
+            )
+            return context
+
+        context["source_year"] = source_year
+        context["target_year"] = target_year
+
+        # Source categories (active only)
+        source_cats = list(
+            SubjectCategory.objects.filter(
+                year=source_year, is_active=True
+            ).order_by("name")
+        )
+
+        # Source links grouped by category
+        source_links = (
+            SubjectCategoryLink.objects.filter(year=source_year)
+            .select_related("subject", "category")
+            .order_by("category__name", "subject__name")
+        )
+        links_by_cat: dict[int, list] = {}
+        for link in source_links:
+            links_by_cat.setdefault(link.category_id, []).append(link)
+
+        # Subjects already linked in target year
+        already_linked = set(
+            SubjectCategoryLink.objects.filter(year=target_year).values_list(
+                "subject_id", flat=True
+            )
+        )
+        context["already_linked_subject_ids"] = already_linked
+
+        # Build template-friendly list: category + its links + conflict info
+        categories_with_links = []
+        for cat in source_cats:
+            cat_links = links_by_cat.get(cat.pk, [])
+            annotated_links = []
+            for link in cat_links:
+                annotated_links.append({
+                    "subject_name": link.subject.name,
+                    "subject_id": link.subject_id,
+                    "already_linked": link.subject_id in already_linked,
+                })
+            categories_with_links.append({
+                "category": cat,
+                "links": annotated_links,
+            })
+        context["source_categories"] = categories_with_links
+
+        # Existing target categories
+        target_cats = list(
+            SubjectCategory.objects.filter(year=target_year).order_by("name")
+        )
+        context["target_categories"] = target_cats
+
+        # Warnings
+        warnings: list[str] = []
+        if target_cats:
+            active_count = sum(1 for c in target_cats if c.is_active)
+            warnings.append(
+                f"Im Zieljahr {target_year} existieren bereits "
+                f"{len(target_cats)} Kategorien ({active_count} aktiv). "
+                "Ohne \"Überschreiben\" wird keine Kopie durchgeführt."
+            )
+        if not source_cats:
+            warnings.append(
+                f"Keine aktiven Kategorien im Quelljahr {source_year} "
+                "gefunden."
+            )
+        context["warnings"] = warnings
+
+        return context
 

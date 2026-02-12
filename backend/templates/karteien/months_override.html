@@ -185,59 +185,38 @@ Allows direct editing of month values with approval workflow.
       </div>
       <div class="card-body">
         <div class="row">
+          {% for mi in month_infos %}
           <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label class="form-label">Monat 1</label>
-            {{ form.month_1 }}
+            <label class="form-label{% if mi.blocked %} text-muted{% endif %}">
+              Monat {{ mi.num }}
+              {% if mi.blocked %}
+              <i class="bi bi-lock-fill text-secondary"
+                 title="Vertrag {{ mi.status_label }} — keine Änderung möglich"></i>
+              {% endif %}
+            </label>
+            {% if mi.blocked %}
+              <input type="text" class="form-control bg-light text-muted" value="0.00" disabled
+                     title="Vertrag {{ mi.status_label }} — keine Änderung möglich">
+            {% else %}
+              {% with field_name=mi.field_name %}
+              {% for field in form %}{% if field.name == field_name %}{{ field }}{% endif %}{% endfor %}
+              {% endwith %}
+            {% endif %}
           </div>
-          <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label class="form-label">Monat 2</label>
-            {{ form.month_2 }}
-          </div>
-          <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label class="form-label">Monat 3</label>
-            {{ form.month_3 }}
-          </div>
-          <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label class="form-label">Monat 4</label>
-            {{ form.month_4 }}
-          </div>
-          <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label class="form-label">Monat 5</label>
-            {{ form.month_5 }}
-          </div>
-          <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label class="form-label">Monat 6</label>
-            {{ form.month_6 }}
-          </div>
-          <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label class="form-label">Monat 7</label>
-            {{ form.month_7 }}
-          </div>
-          <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label class="form-label">Monat 8</label>
-            {{ form.month_8 }}
-          </div>
-          <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label class="form-label">Monat 9</label>
-            {{ form.month_9 }}
-          </div>
-          <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label class="form-label">Monat 10</label>
-            {{ form.month_10 }}
-          </div>
-          <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label class="form-label">Monat 11</label>
-            {{ form.month_11 }}
-          </div>
-          <div class="col-md-2 col-sm-4 col-6 mb-3">
-            <label class="form-label">Monat 12</label>
-            {{ form.month_12 }}
-          </div>
+          {% endfor %}
         </div>
         <small class="text-muted">
           Alle Werte werden auf 2 Dezimalstellen gerundet (immer aufwärts).
           Leere Felder werden als 0.00 € gespeichert.
         </small>
+        {% if blocked_months %}
+        <div class="mt-2">
+          <small class="text-danger">
+            <i class="bi bi-lock-fill"></i>
+            Gesperrte Monate (Vertrag pausiert/gekündigt) werden automatisch auf 0,00 € gesetzt.
+          </small>
+        </div>
+        {% endif %}
       </div>
     </div>
 

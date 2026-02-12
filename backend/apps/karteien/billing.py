@@ -302,6 +302,9 @@ class CalculationFlags:
     # Months zeroed due to contract termination
     terminated_months: list[int] = field(default_factory=list)
     
+    # Months zeroed due to contract pause
+    paused_months: list[int] = field(default_factory=list)
+    
     # Termination effective month (if contract is terminated)
     termination_from_month: int | None = None
     
@@ -372,36 +375,62 @@ def get_price_for_semester(record: "KarteiRecord", semester: int) -> Decimal | N
 def get_start_month_for_semester(record: "KarteiRecord", semester: int) -> int:
     """
     Get the start month for billing in a semester.
-    
+
+    Uses SemesterConfig-driven ranges so the default start month
+    follows the actual semester boundary for the record's year.
+    If the stored value falls outside the semester range, falls back
+    to the first month of the semester.
+
     Args:
         record: The KarteiRecord instance.
         semester: 1 or 2.
-        
+
     Returns:
-        Start month number (1-6 for semester 1, 7-12 for semester 2).
+        Start month number within the semester range.
     """
+    sem1_months, sem2_months = get_semester_month_ranges(record.year)
     if semester == 1:
-        return record.start_month_1 or 1
+        default = min(sem1_months)
+        value = record.start_month_1
+        valid_range = sem1_months
     else:
-        return record.start_month_2 or 7
+        default = min(sem2_months)
+        value = record.start_month_2
+        valid_range = sem2_months
+    if not value or value not in valid_range:
+        return default
+    return value
 
 
 def get_end_month_for_semester(record: "KarteiRecord", semester: int) -> int:
     """
     Get the end month for billing in a semester.
-    
+
+    Uses SemesterConfig-driven ranges so the default end month
+    follows the actual semester boundary for the record's year.
+    If the stored value falls outside the semester range, falls back
+    to the last month of the semester.
+
     Args:
         record: The KarteiRecord instance.
         semester: 1 or 2.
-        
+
     Returns:
-        End month number (1-6 for semester 1, 7-12 for semester 2).
-        Returns 6 or 12 (end of semester) if end_month is not set.
+        End month number within the semester range.
+        Returns last month of the semester if end_month is not set.
     """
+    sem1_months, sem2_months = get_semester_month_ranges(record.year)
     if semester == 1:
-        return record.end_month_1 if record.end_month_1 is not None else 6
+        default = max(sem1_months)
+        value = record.end_month_1
+        valid_range = sem1_months
     else:
-        return record.end_month_2 if record.end_month_2 is not None else 12
+        default = max(sem2_months)
+        value = record.end_month_2
+        valid_range = sem2_months
+    if value is None or value not in valid_range:
+        return default
+    return value
 
 
 def get_months_csv_for_semester(record: "KarteiRecord", semester: int) -> set[int] | None:
@@ -604,6 +633,7 @@ def calculate_month_values(
     record_discounts: list | None = None,
     *,
     base_amounts: dict[str, Decimal] | None = None,
+    contract_status_entries: list | None = None,
 ) -> tuple[dict[str, Decimal], CalculationFlags]:
     """
     Calculate final month values after applying discounts.
@@ -623,11 +653,16 @@ def calculate_month_values(
         record_discounts: List of RecordDiscount instances for this record.
             If None, will be fetched from database.
         base_amounts: Pre-calculated base amounts. If None, will be calculated.
+        contract_status_entries: Optional pre-fetched/overridden
+            ContractStatusEntry-like objects with ``effective_from_month``
+            and ``kind`` attributes. If None, entries are fetched once for
+            saved records and legacy fallback is used for unsaved records.
         
     Returns:
         Tuple of (month_values dict, CalculationFlags).
     """
     from apps.catalog.models import FamilyDiscount, RecordDiscount
+    from .models import get_contract_status_for_month
     
     flags = CalculationFlags()
     result: dict[str, Decimal] = {}
@@ -654,11 +689,13 @@ def calculate_month_values(
     discounts_disabled = getattr(record, 'discounts_disabled', False)
     discounts_disabled_months = getattr(record, 'discounts_disabled_months', None) or []
     
-    # Check for contract termination
-    is_terminated = getattr(record, 'is_contract_terminated', False)
-    terminated_from_month = getattr(record, 'contract_terminated_from_month', None)
-    if is_terminated and terminated_from_month is not None:
-        flags.termination_from_month = terminated_from_month
+    # Resolve contract status entries once
+    # (get_contract_status_for_month handles legacy fallback internally)
+    if contract_status_entries is None:
+        if record.pk and hasattr(record, 'contract_status_entries'):
+            contract_status_entries = list(record.contract_status_entries.all())
+        else:
+            contract_status_entries = None
     
     # Get semester ranges
     sem1_months, sem2_months = get_semester_month_ranges(record.year)
@@ -667,12 +704,20 @@ def calculate_month_values(
         field_key = f"month_{month_num}"
         base = base_amounts.get(field_key, ZERO)
         
-        # Check contract termination first - months >= terminated_from_month are zero
-        if is_terminated and terminated_from_month is not None:
-            if month_num >= terminated_from_month:
-                result[field_key] = ZERO
-                flags.terminated_months.append(month_num)
-                continue
+        # Check contract status (PAUSED / TERMINATED) — zeroes the month
+        status_kind = get_contract_status_for_month(
+            record, month_num, entries=contract_status_entries,
+        )
+        if status_kind == 'PAUSED':
+            result[field_key] = ZERO
+            flags.paused_months.append(month_num)
+            continue
+        if status_kind == 'TERMINATED':
+            result[field_key] = ZERO
+            flags.terminated_months.append(month_num)
+            if flags.termination_from_month is None:
+                flags.termination_from_month = month_num
+            continue
         
         # Determine subject for this month
         semester = get_semester_for_month(month_num, record.year)
@@ -785,6 +830,24 @@ def get_month_breakdown(
     
     # AUTO mode or LEGACY with legacy_base_amounts_enabled - full breakdown available
     result['available'] = True
+    
+    # Contract status for this month
+    from .models import get_contract_status_for_month
+    if record.pk and hasattr(record, 'contract_status_entries'):
+        _cs_entries: list | None = list(record.contract_status_entries.all())
+    else:
+        _cs_entries = None
+    status_kind = get_contract_status_for_month(record, month, entries=_cs_entries)
+    result['contract_status'] = status_kind
+    
+    if status_kind in ('PAUSED', 'TERMINATED'):
+        result['zeroed_reason'] = (
+            'CONTRACT_PAUSED' if status_kind == 'PAUSED' else 'CONTRACT_TERMINATED'
+        )
+        result['final'] = str(ZERO)
+        return result
+    
+    result['zeroed_reason'] = None
     
     # Determine semester
     semester = get_semester_for_month(month, record.year)
@@ -1053,18 +1116,23 @@ def detect_meaningful_changes(
     has_changes = False
     touched_months: set[int] = set()
     
-    sem1_months = set(range(1, 7))
-    sem2_months = set(range(7, 13))
+    sem1_list, sem2_list = get_semester_month_ranges(original.year)
+    sem1_months = set(sem1_list)
+    sem2_months = set(sem2_list)
+    sem1_first = min(sem1_list)
+    sem1_last = max(sem1_list)
+    sem2_first = min(sem2_list)
+    sem2_last = max(sem2_list)
     
     # Parse apply_from_month values from form data
     apply_from_1 = _parse_apply_from_month(cleaned_data.get('apply_from_month_1'))
     apply_from_2 = _parse_apply_from_month(cleaned_data.get('apply_from_month_2'))
     
     # Get new start months for reference
-    new_start_1 = cleaned_data.get('start_month_1') or 1
-    new_start_2 = cleaned_data.get('start_month_2') or 7
-    old_start_1 = original.start_month_1 or 1
-    old_start_2 = original.start_month_2 or 7
+    new_start_1 = cleaned_data.get('start_month_1') or sem1_first
+    new_start_2 = cleaned_data.get('start_month_2') or sem2_first
+    old_start_1 = original.start_month_1 or sem1_first
+    old_start_2 = original.start_month_2 or sem2_first
     
     # Check price1_ref change - only touch months from apply_from_month_1
     # Any change to price1_ref (including linking to same legacy value) is meaningful
@@ -1072,9 +1140,9 @@ def detect_meaningful_changes(
     new_price1_ref_id = new_price1_ref.id if new_price1_ref else None
     if new_price1_ref_id != original.price1_ref_id:
         has_changes = True
-        # Only touch months from apply_from_month_1 to 6
-        start_month = apply_from_1 if apply_from_1 else 1
-        touched_months.update(range(start_month, 7))
+        # Only touch months from apply_from_month_1 to end of semester 1
+        start_month = apply_from_1 if apply_from_1 else sem1_first
+        touched_months.update(m for m in sem1_months if m >= start_month)
     
     # Check price2_ref change - only touch months from apply_from_month_2
     # Any change to price2_ref (including linking to same legacy value) is meaningful
@@ -1082,9 +1150,9 @@ def detect_meaningful_changes(
     new_price2_ref_id = new_price2_ref.id if new_price2_ref else None
     if new_price2_ref_id != original.price2_ref_id:
         has_changes = True
-        # Only touch months from apply_from_month_2 to 12
-        start_month = apply_from_2 if apply_from_2 else 7
-        touched_months.update(range(start_month, 13))
+        # Only touch months from apply_from_month_2 to end of semester 2
+        start_month = apply_from_2 if apply_from_2 else sem2_first
+        touched_months.update(m for m in sem2_months if m >= start_month)
     
     # Check subject1_ref change (may change pricing type - hourly vs monthly)
     # Touch months from current start_month onwards (subject change affects calculation type)
@@ -1093,9 +1161,9 @@ def detect_meaningful_changes(
     new_subject1_ref_id = new_subject1_ref.id if new_subject1_ref else None
     if new_subject1_ref_id != original.subject1_ref_id:
         has_changes = True
-        # Touch months from start_month_1 to 6
+        # Touch months from start_month_1 to end of semester 1
         effective_start = min(old_start_1, new_start_1)
-        touched_months.update(range(effective_start, 7))
+        touched_months.update(m for m in sem1_months if m >= effective_start)
     
     # Check subject2_ref change
     # Any change to subject2_ref (including linking to same legacy value) is meaningful
@@ -1103,9 +1171,9 @@ def detect_meaningful_changes(
     new_subject2_ref_id = new_subject2_ref.id if new_subject2_ref else None
     if new_subject2_ref_id != original.subject2_ref_id:
         has_changes = True
-        # Touch months from start_month_2 to 12
+        # Touch months from start_month_2 to end of semester 2
         effective_start = min(old_start_2, new_start_2)
-        touched_months.update(range(effective_start, 13))
+        touched_months.update(m for m in sem2_months if m >= effective_start)
     
     # Check start_month_1 change - only touch months that changed status
     if new_start_1 != old_start_1:
@@ -1130,8 +1198,8 @@ def detect_meaningful_changes(
     if new_end_1 != old_end_1:
         has_changes = True
         # Compute effective values (None means end of semester)
-        eff_old_end_1 = old_end_1 if old_end_1 is not None else 6
-        eff_new_end_1 = new_end_1 if new_end_1 is not None else 6
+        eff_old_end_1 = old_end_1 if old_end_1 is not None else sem1_last
+        eff_new_end_1 = new_end_1 if new_end_1 is not None else sem1_last
         # Touch months from min_end to max_end (months that changed their billing status)
         min_end = min(eff_old_end_1, eff_new_end_1)
         max_end = max(eff_old_end_1, eff_new_end_1)
@@ -1143,8 +1211,8 @@ def detect_meaningful_changes(
     old_end_2 = original.end_month_2
     if new_end_2 != old_end_2:
         has_changes = True
-        eff_old_end_2 = old_end_2 if old_end_2 is not None else 12
-        eff_new_end_2 = new_end_2 if new_end_2 is not None else 12
+        eff_old_end_2 = old_end_2 if old_end_2 is not None else sem2_last
+        eff_new_end_2 = new_end_2 if new_end_2 is not None else sem2_last
         min_end = min(eff_old_end_2, eff_new_end_2)
         max_end = max(eff_old_end_2, eff_new_end_2)
         touched_months.update(range(min_end + 1, max_end + 1))
@@ -1162,7 +1230,7 @@ def detect_meaningful_changes(
         # Also consider months in range if going from CSV to empty or vice versa
         if not old_months_1 or not new_months_1:
             # One is empty - need to consider all semester 1 months
-            touched_months.update(range(1, 7))
+            touched_months.update(sem1_months)
         else:
             touched_months.update(diff_months_1)
     
@@ -1175,7 +1243,7 @@ def detect_meaningful_changes(
         new_months_2 = _parse_months_csv(new_csv_2)
         diff_months_2 = old_months_2.symmetric_difference(new_months_2)
         if not old_months_2 or not new_months_2:
-            touched_months.update(range(7, 13))
+            touched_months.update(sem2_months)
         else:
             touched_months.update(diff_months_2)
     

@@ -44,6 +44,17 @@ urlpatterns = [
     # Emergency months override (admin-only)
     path('<int:pk>/months-override/', views.MonthsOverrideView.as_view(), name='months_override'),
     
+    # Apply category price (admin/operator)
+    path('<int:pk>/apply-price/preview/', views.apply_price_preview, name='record_apply_price_preview'),
+    path('<int:pk>/apply-price/', views.ApplyCategoryPriceView.as_view(), name='record_apply_price'),
+
+    # Contract type/status change (creates PendingChange)
+    path('<int:pk>/contract-type/change/', views.ContractTypeChangeView.as_view(), name='record_contract_type_change'),
+    path('<int:pk>/contract-status/change/', views.ContractStatusChangeView.as_view(), name='record_contract_status_change'),
+
+    # Quick-set subject*_ref from legacy text match (creates PendingChange)
+    path('<int:pk>/quick-set-subject-ref/', views.QuickSetSubjectRefView.as_view(), name='record_quick_set_subject_ref'),
+    
     # API: Live search (for AJAX filtering)
     path('live-search/', api.live_search_api, name='live_search_api'),
     

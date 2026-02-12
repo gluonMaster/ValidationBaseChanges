@@ -41,6 +41,7 @@ class DeclinedChangeEditForm(forms.Form):
             snapshot: The DeclinedChange.snapshot dict to prefill fields.
         """
         super().__init__(*args, **kwargs)
+        self._original_snapshot = dict(snapshot) if snapshot else {}
         
         # Create fields from KarteiRecord field definitions
         for field_name in TRACKED_FIELDS:
@@ -129,6 +130,8 @@ class DeclinedChangeEditForm(forms.Form):
             - dates as ISO strings
             - decimals as strings
             - other values as-is
+            Plus preserved metadata keys from the original snapshot
+            (keys starting with "_" that are not tracked fields).
         """
         snapshot: dict[str, Any] = {}
         
@@ -147,6 +150,11 @@ class DeclinedChangeEditForm(forms.Form):
                 snapshot[field_name] = str(value)
             else:
                 snapshot[field_name] = value
+
+        # Preserve metadata keys from original snapshot (e.g. pending-contract payloads).
+        for key, value in self._original_snapshot.items():
+            if key not in TRACKED_FIELDS and key.startswith("_"):
+                snapshot[key] = value
         
         return snapshot
 

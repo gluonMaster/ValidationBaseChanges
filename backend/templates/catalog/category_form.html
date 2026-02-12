@@ -128,6 +128,7 @@ Subject category create/edit form.
                         <div class="mb-3">
                             <label for="{{ form.group_threshold.id_for_label }}" class="form-label">
                                 Schwellenwert Kleingruppe
+                                <span class="text-danger d-none" id="group-threshold-required-marker">*</span>
                             </label>
                             {{ form.group_threshold }}
                             {% if form.group_threshold.errors %}
@@ -165,4 +166,40 @@ Subject category create/edit form.
         </div>
     </div>
 </div>
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const kindSelect = document.getElementById('{{ form.kind.id_for_label }}');
+    const thresholdInput = document.getElementById('{{ form.group_threshold.id_for_label }}');
+    const requiredMarker = document.getElementById('group-threshold-required-marker');
+
+    function updateThresholdState() {
+        if (!kindSelect || !thresholdInput) {
+            return;
+        }
+
+        const isGroup = kindSelect.value === 'GROUP';
+        thresholdInput.required = isGroup;
+
+        if (isGroup) {
+            thresholdInput.removeAttribute('disabled');
+            thresholdInput.setAttribute('required', 'required');
+        } else {
+            thresholdInput.removeAttribute('required');
+            thresholdInput.setAttribute('disabled', 'disabled');
+        }
+
+        if (requiredMarker) {
+            requiredMarker.classList.toggle('d-none', !isGroup);
+        }
+    }
+
+    if (kindSelect && thresholdInput) {
+        kindSelect.addEventListener('change', updateThresholdState);
+        updateThresholdState();
+    }
+});
+</script>
+{% endblock %}
 {% endblock %}

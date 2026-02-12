@@ -383,7 +383,48 @@ def month_breakdown_api(request: HttpRequest, pk: int) -> JsonResponse:
     
     # Get breakdown
     breakdown = get_month_breakdown(record, month)
-    
+
+    # -----------------------------------------------------------------
+    # Enrich with category pricing data (PROMPT 147.4)
+    # -----------------------------------------------------------------
+    from apps.catalog.pricing import calculate_suggested_price, determine_pricing_source
+    from apps.karteien.billing import get_semester_for_month
+
+    semester = get_semester_for_month(month, record.year)
+    pricing_source = determine_pricing_source(record, semester)
+
+    if pricing_source.value == "CATEGORY":
+        suggested = calculate_suggested_price(record, month)
+        if suggested is not None:
+            cat_info: dict = {
+                "source": "CATEGORY",
+                "category_name": suggested.get("category_name", ""),
+                "category_kind": str(suggested.get("category_kind", "")),
+                "suggested_price": str(suggested["price"]),
+                "rate": str(suggested.get("rate", "")),
+                "contract_type": suggested.get("contract_type", ""),
+            }
+            kind = suggested.get("category_kind")
+            # Convert CategoryKind enum to string for JSON
+            kind_str = kind.value if hasattr(kind, "value") else str(kind)
+            cat_info["category_kind"] = kind_str
+
+            if kind_str == "GROUP":
+                cat_info["duration_minutes"] = suggested.get("duration_minutes")
+                cat_info["ue_count"] = str(suggested.get("ue_count", ""))
+                cat_info["base_price"] = str(suggested.get("base_price", ""))
+                cat_info["size"] = suggested.get("size")
+                cat_info["threshold"] = suggested.get("threshold")
+                cat_info["scaling_applied"] = suggested.get("scaling_applied", False)
+            elif kind_str == "INDIVIDUAL":
+                cat_info["hours"] = str(suggested.get("hours", ""))
+
+            breakdown["category_pricing"] = cat_info
+        else:
+            breakdown["category_pricing"] = {"source": "CATEGORY", "incomplete": True}
+    else:
+        breakdown["category_pricing"] = None
+
     return JsonResponse(breakdown)
 
 
@@ -554,7 +595,7 @@ def live_search_api(request: HttpRequest) -> JsonResponse:
         page_obj = paginator.page(1)
     except EmptyPage:
         page_obj = paginator.page(paginator.num_pages)
-    
+
     # Build context for templates
     context = {
         'records': page_obj.object_list,
@@ -726,6 +767,7 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         calculate_month_values,
         collect_discounts_for_month,
         get_semester_for_month,
+        get_semester_month_ranges,
         get_subject_name_for_semester,
         ZERO, round_money_up, MAX_PERCENT_DISCOUNT
     )
@@ -873,6 +915,15 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
     # For AUTO mode, ALL months are always calculated
     affected_months = set()
     
+    # Compute dynamic semester ranges for this record's year
+    sem1_list, sem2_list = get_semester_month_ranges(record.year)
+    sem1_months = set(sem1_list)
+    sem2_months = set(sem2_list)
+    sem1_first = min(sem1_list)
+    sem1_last = max(sem1_list)
+    sem2_first = min(sem2_list)
+    sem2_last = max(sem2_list)
+    
     if is_legacy_mode:
         # LEGACY mode: compute touched months based on meaningful changes
         # Mirrors logic from detect_meaningful_changes for consistency with save behavior
@@ -888,43 +939,43 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         old_price2_ref_id = record.price2_ref_id
         old_subject1_ref_id = record.subject1_ref_id
         old_subject2_ref_id = record.subject2_ref_id
-        old_start_1 = record.start_month_1 or 1
-        old_start_2 = record.start_month_2 or 7
+        old_start_1 = record.start_month_1 or sem1_first
+        old_start_2 = record.start_month_2 or sem2_first
         old_discounts_disabled = record.discounts_disabled
         old_is_terminated = record.is_contract_terminated
         old_hours_amounts = record.hours_amounts or {}
         
-        # Check price1_ref change - touch months from apply_from_month_1 (default=1) to 6
+        # Check price1_ref change - touch months from apply_from_month_1 to end of semester 1
         # Any change to price1_ref (including linking to same legacy value) is meaningful
         if price1_ref_id != old_price1_ref_id:
-            # Use apply_from_month_1 if provided, else default to 1
-            effective_apply_from = apply_from_month_1 if apply_from_month_1 is not None else 1
+            # Use apply_from_month_1 if provided, else default to first month of sem1
+            effective_apply_from = apply_from_month_1 if apply_from_month_1 is not None else sem1_first
             # Also respect apply_to
-            for m in range(effective_apply_from, 7):
-                if apply_to_month_1 is None or m <= apply_to_month_1:
+            for m in sem1_list:
+                if m >= effective_apply_from and (apply_to_month_1 is None or m <= apply_to_month_1):
                     affected_months.add(m)
         
-        # Check price2_ref change - touch months from apply_from_month_2 (default=7) to 12
+        # Check price2_ref change - touch months from apply_from_month_2 to end of semester 2
         # Any change to price2_ref (including linking to same legacy value) is meaningful
         if price2_ref_id != old_price2_ref_id:
-            # Use apply_from_month_2 if provided, else default to 7
-            effective_apply_from = apply_from_month_2 if apply_from_month_2 is not None else 7
+            # Use apply_from_month_2 if provided, else default to first month of sem2
+            effective_apply_from = apply_from_month_2 if apply_from_month_2 is not None else sem2_first
             # Also respect apply_to
-            for m in range(effective_apply_from, 13):
-                if apply_to_month_2 is None or m <= apply_to_month_2:
+            for m in sem2_list:
+                if m >= effective_apply_from and (apply_to_month_2 is None or m <= apply_to_month_2):
                     affected_months.add(m)
         
-        # Check subject1_ref change - touch months from min(old_start, new_start) to 6
+        # Check subject1_ref change - touch months from min(old_start, new_start) to end of sem1
         # Any change to subject1_ref (including linking to same legacy value) is meaningful
         if subject1_ref_id != old_subject1_ref_id:
             effective_start = min(old_start_1, start_month_1)
-            affected_months.update(range(effective_start, 7))
+            affected_months.update(m for m in sem1_months if m >= effective_start)
         
-        # Check subject2_ref change - touch months from min(old_start, new_start) to 12
+        # Check subject2_ref change - touch months from min(old_start, new_start) to end of sem2
         # Any change to subject2_ref (including linking to same legacy value) is meaningful
         if subject2_ref_id != old_subject2_ref_id:
             effective_start = min(old_start_2, start_month_2)
-            affected_months.update(range(effective_start, 13))
+            affected_months.update(m for m in sem2_months if m >= effective_start)
         
         # Check start_month_1 change - only touch months between old and new
         if start_month_1 != old_start_1:
@@ -941,8 +992,8 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         # Check end_month_1 change - touch months between old and new end
         old_end_1 = record.end_month_1
         if end_month_1 != old_end_1:
-            eff_old_end_1 = old_end_1 if old_end_1 is not None else 6
-            eff_new_end_1 = end_month_1 if end_month_1 is not None else 6
+            eff_old_end_1 = old_end_1 if old_end_1 is not None else sem1_last
+            eff_new_end_1 = end_month_1 if end_month_1 is not None else sem1_last
             min_end = min(eff_old_end_1, eff_new_end_1)
             max_end = max(eff_old_end_1, eff_new_end_1)
             affected_months.update(range(min_end + 1, max_end + 1))
@@ -950,8 +1001,8 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
         # Check end_month_2 change - touch months between old and new end
         old_end_2 = record.end_month_2
         if end_month_2 != old_end_2:
-            eff_old_end_2 = old_end_2 if old_end_2 is not None else 12
-            eff_new_end_2 = end_month_2 if end_month_2 is not None else 12
+            eff_old_end_2 = old_end_2 if old_end_2 is not None else sem2_last
+            eff_new_end_2 = end_month_2 if end_month_2 is not None else sem2_last
             min_end = min(eff_old_end_2, eff_new_end_2)
             max_end = max(eff_old_end_2, eff_new_end_2)
             affected_months.update(range(min_end + 1, max_end + 1))
@@ -962,7 +1013,7 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
             old_months_1 = _parse_months_csv_for_preview(old_csv_1)
             new_months_1 = _parse_months_csv_for_preview(months_csv_1)
             if not old_months_1 or not new_months_1:
-                affected_months.update(range(1, 7))
+                affected_months.update(sem1_months)
             else:
                 affected_months.update(old_months_1.symmetric_difference(new_months_1))
         
@@ -972,7 +1023,7 @@ def billing_preview_api(request: HttpRequest, pk: int) -> JsonResponse:
             old_months_2 = _parse_months_csv_for_preview(old_csv_2)
             new_months_2 = _parse_months_csv_for_preview(months_csv_2)
             if not old_months_2 or not new_months_2:
-                affected_months.update(range(7, 13))
+                affected_months.update(sem2_months)
             else:
                 affected_months.update(old_months_2.symmetric_difference(new_months_2))
         

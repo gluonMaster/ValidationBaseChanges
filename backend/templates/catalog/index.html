@@ -367,6 +367,27 @@ Only accessible to Admin users.
             </div>
         </div>
 
+        <!-- Copy Categories Year -->
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <i class="bi bi-copy"></i>
+                    Kategorien kopieren
+                </div>
+                <div class="card-body">
+                    <p class="card-text">
+                        Kopieren Sie Kategorien, Verknüpfungen und Gruppen von einem Jahr in ein anderes.
+                    </p>
+                </div>
+                <div class="card-footer bg-transparent">
+                    <a href="{% url 'catalog:categories_copy_year' %}" class="btn btn-warning">
+                        <i class="bi bi-arrow-right-circle"></i>
+                        Jahr kopieren
+                    </a>
+                </div>
+            </div>
+        </div>
+
         <!-- Copy Prices Year -->
         <div class="col-md-4 mb-4">
             <div class="card h-100 border-warning">
