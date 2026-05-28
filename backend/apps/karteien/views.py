@@ -51,14 +51,24 @@ from apps.catalog.warnings import (
     get_record_price_mismatches,
     get_record_pricing_warnings,
 )
-from .forms import KarteiRecordForm, KarteiRecordFilterForm, MonthsOverrideForm
+from .forms import (
+    KarteiRecordForm,
+    KarteiRecordFilterForm,
+    MonthsOverrideForm,
+    add_kn_marker,
+    add_ov_marker,
+    remove_kn_marker,
+    remove_ov_marker,
+)
 from .models import (
     KarteiRecord, RecordStatus, MonthsMode, ContractStatusKind, ContractStatusEntry,
     ContractTypeEntry, TRACKED_FIELDS, get_contract_type_for_month,
     get_contract_status_for_month,
 )
 from .services.pending_snapshot import (
+    build_pending_nontracked_payload,
     build_projected_record_from_snapshot,
+    build_snapshot_v2,
     changed_fields_between_records,
 )
 from .validators import validate_kartei_record, apply_operator_filters
@@ -1633,6 +1643,80 @@ class KarteiRecordDeleteView(KarteiEditorMixin, DeleteView):
         return response
 
 
+def _month_range(start_month: int, end_month: int | None = None) -> list[int]:
+    """Return a normalized 1..12 month range for pending metadata."""
+
+    end = 12 if end_month is None else end_month
+    return [month for month in range(start_month, end + 1) if 1 <= month <= 12]
+
+
+def _pending_meta(
+    *,
+    touched_months: list[int],
+    audit_summary: str,
+    ui_summary: str,
+    warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    meta: dict[str, Any] = {
+        "touched_months": touched_months,
+        "audit_summary": audit_summary,
+        "ui_summary": ui_summary,
+    }
+    if warnings:
+        meta["warnings"] = warnings
+    return meta
+
+
+def _pending_payload(
+    record: KarteiRecord,
+    overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = build_pending_nontracked_payload(record)
+    if overrides:
+        payload.update(overrides)
+    return payload
+
+
+def _contract_type_label(is_monthly: bool) -> str:
+    return "monthly" if is_monthly else "yearly"
+
+
+def _has_earlier_nonactive_status(record: KarteiRecord, month: int) -> bool:
+    if (
+        record.contract_terminated_from_month is not None
+        and record.contract_terminated_from_month < month
+    ):
+        return True
+    return record.contract_status_entries.filter(
+        effective_from_month__lt=month,
+    ).exclude(kind=ContractStatusKind.ACTIVE).exists()
+
+
+def _timeline_rollout_warnings(
+    record: KarteiRecord,
+    *,
+    contract_type_month: int | None = None,
+    contract_status_month: int | None = None,
+    contract_status_kind: str | None = None,
+) -> list[str]:
+    warnings: list[str] = []
+    if contract_type_month is not None and contract_type_month > 1:
+        warnings.append(
+            "Intra-year contract type approval is blocked until Prompt 09."
+        )
+    if contract_status_kind == ContractStatusKind.PAUSED:
+        warnings.append("PAUSED status approval is blocked until Prompt 09.")
+    elif (
+        contract_status_kind == ContractStatusKind.ACTIVE
+        and contract_status_month is not None
+        and _has_earlier_nonactive_status(record, contract_status_month)
+    ):
+        warnings.append(
+            "ACTIVE reactivation approval is blocked until Prompt 09."
+        )
+    return warnings
+
+
 # =============================================================================
 # Months Override View (Emergency Admin-only tool)
 # =============================================================================
@@ -1720,6 +1804,7 @@ class MonthsOverrideView(KarteiEditorMixin, View):
         # Get month changes
         month_changes = form.get_month_changes()
         reason = form.cleaned_data['reason']
+        old_months_mode = record.months_mode
         
         # Enforce 0.00 for PAUSED/TERMINATED months (ignore user input)
         for m in blocked_months:
@@ -1732,10 +1817,28 @@ class MonthsOverrideView(KarteiEditorMixin, View):
         # Set mode to OVERRIDE
         record.months_mode = MonthsMode.OVERRIDE
         
-        # Create pending change (always risky for override)
-        # Pass admin_comment with OVERRIDE prefix so Superadmin can see the reason
+        # Create pending change (always risky for override). The live row keeps
+        # its approved month values and mode until Superadmin approval.
         admin_comment = f"OVERRIDE: {reason}"
-        pending = create_or_update_pending_change(record, admin_comment=admin_comment)
+        touched_months = list(range(1, 13))
+        snapshot = build_snapshot_v2(
+            record,
+            pending_action="MONTHS_OVERRIDE",
+            pending_nontracked_payload=_pending_payload(record),
+            pending_meta=_pending_meta(
+                touched_months=touched_months,
+                audit_summary=(
+                    "MONTHS_OVERRIDE[months=1,2,3,4,5,6,7,8,9,10,11,12]; "
+                    f"MODE[{old_months_mode}->{MonthsMode.OVERRIDE}]"
+                ),
+                ui_summary="Manual month override submitted for approval.",
+            ),
+        )
+        create_or_update_pending_change_from_snapshot(
+            record,
+            snapshot=snapshot,
+            admin_comment=admin_comment,
+        )
         
         # Mark record as PENDING
         KarteiRecord.objects.filter(pk=record.pk).update(
@@ -2025,13 +2128,43 @@ class ContractTypeChangeView(KarteiEditorMixin, View):
                 return redirect("karteien:record_detail", pk=pk)
 
         # --- build snapshot with pending contract-type metadata ---
-        snapshot = build_snapshot(record)
-        snapshot["_pending_contract_type_entry"] = {
-            "effective_from_month": effective_from_month,
-            "is_monthly": is_monthly,
-            "comment": comment,
-            "changed_by_id": user.id,
-        }
+        legacy_payload_overrides: dict[str, Any] = {}
+        if effective_from_month == 1:
+            legacy_payload_overrides = {
+                "is_monthly_contract": is_monthly,
+                "contract_type_raw": (
+                    add_ov_marker(record.contract_type_raw)
+                    if is_monthly
+                    else remove_ov_marker(record.contract_type_raw)
+                ),
+            }
+
+        type_label = "Monatsvertrag" if is_monthly else "Jahresvertrag"
+        type_slug = _contract_type_label(is_monthly)
+        touched_months = _month_range(effective_from_month)
+        snapshot = build_snapshot_v2(
+            record,
+            pending_action="CONTRACT_TYPE_CHANGE",
+            pending_nontracked_payload=_pending_payload(
+                record,
+                legacy_payload_overrides,
+            ),
+            pending_contract_type_entry={
+                "effective_from_month": effective_from_month,
+                "is_monthly": is_monthly,
+                "comment": comment,
+                "changed_by_id": user.id,
+            },
+            pending_meta=_pending_meta(
+                touched_months=touched_months,
+                audit_summary=f"TL[type@{effective_from_month}={type_slug}]",
+                ui_summary=f"{type_label} ab Monat {effective_from_month}.",
+                warnings=_timeline_rollout_warnings(
+                    record,
+                    contract_type_month=effective_from_month,
+                ),
+            ),
+        )
 
         create_or_update_pending_change_from_snapshot(
             record, snapshot=snapshot, admin_comment=comment,
@@ -2040,7 +2173,6 @@ class ContractTypeChangeView(KarteiEditorMixin, View):
         # Set status = PENDING (safe DB update)
         KarteiRecord.objects.filter(pk=pk).update(status=RecordStatus.PENDING)
 
-        type_label = "Monatsvertrag" if is_monthly else "Jahresvertrag"
         messages.info(
             request,
             f'Vertragstyp-\u00c4nderung \u201e{type_label} ab Monat {effective_from_month}\u201c '
@@ -2122,19 +2254,39 @@ class ContractStatusChangeView(KarteiEditorMixin, View):
         else:
             to_month = 12
 
-        # --- build snapshot ---
-        snapshot = build_snapshot(record)
-        snapshot["_pending_contract_status_entry"] = {
-            "effective_from_month": effective_from_month,
-            "kind": kind,
-            "comment": comment,
-            "changed_by_id": user.id,
+        STATUS_LABELS = {
+            ContractStatusKind.ACTIVE: "Aktiv",
+            ContractStatusKind.PAUSED: "Pausiert",
+            ContractStatusKind.TERMINATED: "Gekuendigt",
         }
+        status_label = STATUS_LABELS.get(kind, kind)
+        touched_months = _month_range(from_month, to_month)
+        legacy_payload_overrides: dict[str, Any] = {}
+        if to_month == 12:
+            if kind == ContractStatusKind.TERMINATED:
+                legacy_payload_overrides = {
+                    "is_contract_terminated": True,
+                    "contract_status_raw": add_kn_marker(record.contract_status_raw),
+                    "contract_terminated_from_month": effective_from_month,
+                }
+            elif (
+                kind == ContractStatusKind.ACTIVE
+                and not _has_earlier_nonactive_status(record, effective_from_month)
+            ):
+                legacy_payload_overrides = {
+                    "is_contract_terminated": False,
+                    "contract_status_raw": remove_kn_marker(record.contract_status_raw),
+                    "contract_terminated_from_month": None,
+                }
+
+        # --- build snapshot ---
+        month_summary = "unchanged"
 
         # Adjust month values in snapshot depending on requested status
         if kind in (ContractStatusKind.PAUSED, ContractStatusKind.TERMINATED):
             for m in range(from_month, to_month + 1):
-                snapshot[f"month_{m}"] = "0.00"
+                setattr(record, f"month_{m}", Decimal("0.00"))
+            month_summary = "zeroed"
 
         elif kind == ContractStatusKind.ACTIVE:
             if record.months_mode == MonthsMode.AUTO:
@@ -2163,10 +2315,41 @@ class ContractStatusChangeView(KarteiEditorMixin, View):
                     contract_status_entries=existing + [proposed_entry],
                 )
                 for m in range(from_month, to_month + 1):
-                    snapshot[f"month_{m}"] = str(
-                        month_values.get(f"month_{m}", Decimal("0"))
+                    setattr(
+                        record,
+                        f"month_{m}",
+                        month_values.get(f"month_{m}", Decimal("0")),
                     )
+                month_summary = "restored"
             # OVERRIDE mode: leave snapshot months unchanged (user-controlled)
+
+        snapshot = build_snapshot_v2(
+            record,
+            pending_action="CONTRACT_STATUS_CHANGE",
+            pending_nontracked_payload=_pending_payload(
+                record,
+                legacy_payload_overrides,
+            ),
+            pending_contract_status_entry={
+                "effective_from_month": effective_from_month,
+                "kind": kind,
+                "comment": comment,
+                "changed_by_id": user.id,
+            },
+            pending_meta=_pending_meta(
+                touched_months=touched_months,
+                audit_summary=(
+                    f"TL[status@{effective_from_month}={kind}]; "
+                    f"MONTHS[{month_summary}={','.join(str(m) for m in touched_months)}]"
+                ),
+                ui_summary=f"{status_label} ab Monat {effective_from_month}.",
+                warnings=_timeline_rollout_warnings(
+                    record,
+                    contract_status_month=effective_from_month,
+                    contract_status_kind=kind,
+                ),
+            ),
+        )
 
         create_or_update_pending_change_from_snapshot(
             record, snapshot=snapshot, admin_comment=comment,
@@ -2175,12 +2358,6 @@ class ContractStatusChangeView(KarteiEditorMixin, View):
         # Set status = PENDING
         KarteiRecord.objects.filter(pk=pk).update(status=RecordStatus.PENDING)
 
-        STATUS_LABELS = {
-            ContractStatusKind.ACTIVE: "Aktiv",
-            ContractStatusKind.PAUSED: "Pausiert",
-            ContractStatusKind.TERMINATED: "Gekündigt",
-        }
-        status_label = STATUS_LABELS.get(kind, kind)
         messages.info(
             request,
             f"Vertragsstatus-Änderung ({status_label} ab Monat "
@@ -2265,25 +2442,40 @@ class QuickSetSubjectRefView(KarteiEditorMixin, View):
 
         subject = match["subject"]
         ref_field = "subject1_ref" if semester_key == "sem1" else "subject2_ref"
+        ref_id_field = f"{ref_field}_id"
         sem_label = "1. HJ" if semester_key == "sem1" else "2. HJ"
+        sem1_months, sem2_months = get_semester_month_ranges(record.year)
+        touched_months = sem1_months if semester_key == "sem1" else sem2_months
+        old_subject_id = getattr(record, ref_id_field)
 
         # Apply FK on the in-memory record so snapshot picks it up
         setattr(record, ref_field, subject)
 
-        # Create PendingChange with snapshot that includes the new FK
-        pending = create_or_update_pending_change(
+        snapshot = build_snapshot_v2(
             record,
+            pending_action="QUICK_SET_SUBJECT_REF",
+            pending_nontracked_payload=_pending_payload(record),
+            pending_meta=_pending_meta(
+                touched_months=touched_months,
+                audit_summary=(
+                    f"REF[{ref_id_field}={old_subject_id}->{subject.pk}]"
+                ),
+                ui_summary=(
+                    f"{sem_label}: {ref_field} matched to {subject.name}."
+                ),
+            ),
+        )
+        create_or_update_pending_change_from_snapshot(
+            record,
+            snapshot=snapshot,
             admin_comment=(
                 f"Quick-set {ref_field} \u2192 {subject.name} "
                 f"(\u00fcbereinstimmend mit Legacy-Text)"
             ),
         )
 
-        # Persist FK + status via .update() (no full save)
-        KarteiRecord.objects.filter(pk=pk).update(
-            **{f"{ref_field}_id": subject.pk},
-            status=RecordStatus.PENDING,
-        )
+        # Persist only approval status; FK changes live in the frozen payload.
+        KarteiRecord.objects.filter(pk=pk).update(status=RecordStatus.PENDING)
 
         messages.info(
             request,

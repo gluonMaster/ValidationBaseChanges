@@ -32,8 +32,10 @@ from apps.karteien.services.pending_snapshot import (
     apply_nontracked_payload_to_record,
     get_pending_contract_status_entry,
     get_pending_contract_type_entry,
+    get_pending_meta,
     get_rollback_nontracked_payload,
     is_snapshot_v2,
+    snapshot_dict,
 )
 
 from .models import DeclinedChange, PendingChange, SuperadminState
@@ -56,6 +58,14 @@ ChangeClassification = Literal["SAFE", "RISKY"]
 
 # Re-export for convenience
 RISK_TRACKED_FIELDS: tuple[str, ...] = TRACKED_FIELDS
+
+# Prompt 09 will switch internal read paths to month-aware contract helpers.
+# Until then, approval must not publish timeline states that legacy contract
+# summary fields cannot represent losslessly.
+ALLOW_NONLOSSLESS_TIMELINE_APPROVAL = False
+
+LEGACY_BASE_AMOUNTS_ROLLBACK_KEY = "_old_base_amounts"
+LEGACY_MONTH_VALUES_ROLLBACK_KEY = "_old_month_values"
 
 
 # =============================================================================
@@ -558,6 +568,226 @@ def apply_pending_change(pending: PendingChange) -> KarteiRecord:
 # Decision Application (Superadmin Workflow)
 # =============================================================================
 
+def _append_comment_context(
+    comment: str | None,
+    context: str | None,
+) -> str | None:
+    """Append frozen snapshot context to an existing history comment."""
+
+    base = (comment or "").strip()
+    extra = (context or "").strip()
+    if base and extra:
+        return f"{base}; {extra}"
+    return base or extra or None
+
+
+def _pending_audit_summary(snapshot: dict[str, Any]) -> str:
+    """Return the frozen v2 audit summary without deriving it from live state."""
+
+    if not is_snapshot_v2(snapshot):
+        return ""
+    return str(get_pending_meta(snapshot).get("audit_summary") or "").strip()
+
+
+def _timeline_summary_from_snapshot(snapshot: dict[str, Any]) -> str:
+    """Build a minimal fallback description from frozen timeline metadata."""
+
+    parts: list[str] = []
+
+    type_entry = get_pending_contract_type_entry(snapshot)
+    if type_entry:
+        month = type_entry.get("effective_from_month")
+        type_label = "monthly" if type_entry.get("is_monthly") else "yearly"
+        parts.append(f"contract type {type_label} from month {month}")
+
+    status_entry = get_pending_contract_status_entry(snapshot)
+    if status_entry:
+        month = status_entry.get("effective_from_month")
+        kind = status_entry.get("kind")
+        parts.append(f"contract status {kind} from month {month}")
+
+    return "; ".join(parts)
+
+
+def _history_comment_for_snapshot(
+    snapshot: dict[str, Any],
+    comment: str | None,
+) -> str | None:
+    """
+    Combine user comments with frozen snapshot audit context.
+
+    Timeline-only approvals can otherwise create APR records with no
+    meaningful text. When no v2 audit summary exists yet, use only the frozen
+    timeline metadata as a narrow transitional fallback.
+    """
+
+    audit_summary = _pending_audit_summary(snapshot)
+    if audit_summary:
+        return _append_comment_context(comment, audit_summary)
+
+    timeline_summary = _timeline_summary_from_snapshot(snapshot)
+    if timeline_summary:
+        return _append_comment_context(comment, timeline_summary)
+
+    return comment
+
+
+def _entry_month(entry: dict[str, Any] | None) -> int | None:
+    if not entry:
+        return None
+    try:
+        month = int(entry.get("effective_from_month"))
+    except (TypeError, ValueError):
+        return None
+    return month if 1 <= month <= 12 else None
+
+
+def _has_earlier_nonactive_status(record: KarteiRecord, month: int) -> bool:
+    """Return whether the record already has a non-ACTIVE state before month."""
+
+    from apps.karteien.models import ContractStatusKind
+
+    if (
+        record.contract_terminated_from_month is not None
+        and record.contract_terminated_from_month < month
+    ):
+        return True
+
+    return record.contract_status_entries.filter(
+        effective_from_month__lt=month,
+    ).exclude(kind=ContractStatusKind.ACTIVE).exists()
+
+
+def _nonlossless_timeline_approval_reasons(
+    record: KarteiRecord,
+    snapshot: dict[str, Any],
+) -> list[str]:
+    """Detect timeline proposals that legacy summary fields cannot represent."""
+
+    if ALLOW_NONLOSSLESS_TIMELINE_APPROVAL:
+        return []
+
+    from apps.karteien.models import ContractStatusKind
+
+    reasons: list[str] = []
+
+    status_entry = get_pending_contract_status_entry(snapshot)
+    status_month = _entry_month(status_entry)
+    if status_entry and status_month is not None:
+        status_kind = status_entry.get("kind")
+        if status_kind == ContractStatusKind.PAUSED:
+            reasons.append("PAUSED contract status is not lossless before Prompt 09")
+        elif (
+            status_kind == ContractStatusKind.ACTIVE
+            and _has_earlier_nonactive_status(record, status_month)
+        ):
+            reasons.append(
+                "ACTIVE reactivation after an earlier non-ACTIVE status "
+                "is not lossless before Prompt 09"
+            )
+
+    type_entry = get_pending_contract_type_entry(snapshot)
+    type_month = _entry_month(type_entry)
+    if type_entry and type_month is not None and type_month > 1:
+        reasons.append("intra-year contract type changes are not lossless before Prompt 09")
+
+    return reasons
+
+
+def _enforce_timeline_approval_guard(
+    record: KarteiRecord,
+    snapshot: dict[str, Any],
+) -> None:
+    reasons = _nonlossless_timeline_approval_reasons(record, snapshot)
+    if reasons:
+        details = "; ".join(reasons)
+        raise ValueError(
+            "Approval is blocked until month-aware contract read migration "
+            f"is complete: {details}."
+        )
+
+
+def _model_update_payload_from_snapshot_payload(
+    record: KarteiRecord,
+    payload: dict[str, Any],
+    *,
+    allow_tracked: bool = False,
+) -> dict[str, Any]:
+    """Return valid concrete model updates from a rollback payload."""
+
+    fields_by_name = {
+        name: field
+        for field in record._meta.fields
+        for name in (field.name, field.attname)
+    }
+    updates: dict[str, Any] = {}
+
+    for key, value in payload.items():
+        field = fields_by_name.get(key)
+        if field is None or field.primary_key:
+            continue
+        if key in ("id", "year", "status"):
+            continue
+        if not allow_tracked and key in TRACKED_FIELDS:
+            continue
+        updates[key] = value
+
+    return updates
+
+
+def _legacy_marker_rollback_updates(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Extract transitional legacy rollback markers from a snapshot."""
+
+    updates: dict[str, Any] = {}
+
+    old_base_amounts = snapshot.get(LEGACY_BASE_AMOUNTS_ROLLBACK_KEY)
+    if old_base_amounts is not None:
+        updates["base_amounts"] = old_base_amounts
+
+    old_month_values = snapshot.get(LEGACY_MONTH_VALUES_ROLLBACK_KEY)
+    if isinstance(old_month_values, dict):
+        for field_name, value in old_month_values.items():
+            if field_name in TRACKED_FIELDS and field_name.startswith("month_"):
+                updates[field_name] = value
+
+    return updates
+
+
+def _apply_decline_record_state(
+    record: KarteiRecord,
+    snapshot: dict[str, Any],
+) -> None:
+    """
+    Apply status=DECLINED plus only explicit transitional rollback payloads.
+
+    Clean v2 snapshots do not touch live billing/context state on decline.
+    V1 and transitional v2 snapshots may still carry explicit rollback markers
+    from paths that have not yet removed live prewrite behavior.
+    """
+
+    updates: dict[str, Any] = {"status": RecordStatus.DECLINED}
+
+    if is_snapshot_v2(snapshot):
+        rollback_payload = get_rollback_nontracked_payload(snapshot)
+        if rollback_payload:
+            apply_nontracked_payload_to_record(record, rollback_payload)
+            updates.update(
+                _model_update_payload_from_snapshot_payload(
+                    record,
+                    rollback_payload,
+                    allow_tracked=False,
+                )
+            )
+        else:
+            updates.update(_legacy_marker_rollback_updates(snapshot))
+    else:
+        updates.update(_legacy_marker_rollback_updates(snapshot))
+
+    for field_name, value in updates.items():
+        setattr(record, field_name, value)
+
+    KarteiRecord.objects.filter(pk=record.pk).update(**updates)
+
 def apply_decision(
     pending: PendingChange,
     decision: str,
@@ -610,6 +840,7 @@ def apply_decision(
         raise ValueError(f"PendingChange {pending.id} is already processed.")
 
     record = pending.record
+    pending_snapshot = snapshot_dict(pending.snapshot)
 
     # Build combined comment: Admin comment + Superadmin comment
     admin_comment = getattr(pending, "admin_comment", "") or ""
@@ -628,12 +859,18 @@ def apply_decision(
 
     with transaction.atomic():
         if decision == "APPROVED":
+            _enforce_timeline_approval_guard(record, pending_snapshot)
+
             # Build snapshot of current state BEFORE applying changes
             old_snapshot = build_snapshot(record)
-            new_snapshot = pending.snapshot
+            new_snapshot = pending_snapshot
             
             # Compute diff for history entry
             diff_string = _build_diff_string(old_snapshot, new_snapshot)
+            history_comment = _history_comment_for_snapshot(
+                new_snapshot,
+                combined_comment,
+            )
             
             # Apply changes from snapshot to record
             record = _apply_snapshot_to_record(record, new_snapshot)
@@ -650,7 +887,7 @@ def apply_decision(
             pending.save(update_fields=["is_processed", "updated_at"])
 
             # Write APR entry to history (append to history_raw) with diff
-            _write_history_entry(record, "APR", user, combined_comment, diff_string)
+            _write_history_entry(record, "APR", user, history_comment, diff_string)
 
             # Create notifications for Admin
             try:
@@ -681,46 +918,26 @@ def apply_decision(
             # Create DeclinedChange with snapshot
             declined = DeclinedChange.objects.create(
                 record=record,
-                snapshot=pending.snapshot,
+                snapshot=pending_snapshot,
                 decline_reason=comment,
                 declined_by=user,
             )
 
-            # Update record status to DECLINED
-            record.status = RecordStatus.DECLINED
-            pending_snapshot = (
-                pending.snapshot
-                if isinstance(pending.snapshot, dict)
-                else {}
+            history_comment = _history_comment_for_snapshot(
+                pending_snapshot,
+                combined_comment,
             )
-            rollback_payload = (
-                get_rollback_nontracked_payload(pending_snapshot)
-                if is_snapshot_v2(pending_snapshot)
-                else None
-            )
-            if rollback_payload:
-                rollback_updates = {
-                    key: value
-                    for key, value in rollback_payload.items()
-                    if key not in TRACKED_FIELDS
-                }
-                rollback_updates["status"] = RecordStatus.DECLINED
-                apply_nontracked_payload_to_record(record, rollback_payload)
-                KarteiRecord.objects.filter(pk=record.pk).update(**rollback_updates)
-            elif not is_snapshot_v2(pending_snapshot) and (
-                pending_snapshot.get("_old_base_amounts") is not None
-            ):
-                record.base_amounts = pending_snapshot["_old_base_amounts"]
-                record.save(update_fields=["status", "base_amounts"])
-            else:
-                record.save(update_fields=["status"])
+
+            # Update record status to DECLINED and apply only explicit
+            # transitional rollback payloads/markers.
+            _apply_decline_record_state(record, pending_snapshot)
 
             # Mark pending as processed
             pending.is_processed = True
             pending.save(update_fields=["is_processed", "updated_at"])
 
             # Write DCL entry to history
-            _write_history_entry(record, "DCL", user, combined_comment)
+            _write_history_entry(record, "DCL", user, history_comment)
 
             # Create notifications for Admin
             try:
