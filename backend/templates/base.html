@@ -217,6 +217,18 @@ Extends blocks:
                 </li>
               </ul>
             </li>
+            {% endif %} {% if user.is_operator %}
+            <li class="nav-item">
+              <a class="nav-link" href="/approvals/declined/">Declined</a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="/approvals/pending/">Pending</a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="/catalog/groups/{% now 'Y' %}/">
+                <i class="bi bi-people"></i> Gruppen
+              </a>
+            </li>
             {% endif %} {% endif %} {% endif %}
           </ul>
 

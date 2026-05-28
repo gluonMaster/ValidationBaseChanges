@@ -2323,7 +2323,7 @@ class SubjectCategoryUnlinkView(CatalogAdminMixin, View):
 # DisciplineGroup Views (PROMPT_141.2)
 # =============================================================================
 
-class DisciplineGroupListView(CatalogAdminMixin, ListView):
+class DisciplineGroupListView(CatalogEditorMixin, ListView):
     """List active DisciplineGroups for a given year."""
 
     template_name = "catalog/group_list.html"

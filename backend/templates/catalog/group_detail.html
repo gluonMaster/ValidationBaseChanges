@@ -13,9 +13,6 @@ DisciplineGroup detail view — duration entries, size entries, monthly summary.
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
                     <li class="breadcrumb-item">
-                        <a href="{% url 'catalog:index' %}">Katalog</a>
-                    </li>
-                    <li class="breadcrumb-item">
                         <a href="{% url 'catalog:group_list' year=year %}">Gruppen {{ year }}</a>
                     </li>
                     <li class="breadcrumb-item active">{{ group.subject.name }}</li>
@@ -109,6 +106,7 @@ DisciplineGroup detail view — duration entries, size entries, monthly summary.
                     <p class="text-muted">Keine Dauer-Einträge vorhanden.</p>
                     {% endif %}
 
+                    {% if user.is_admin_role %}
                     <hr>
                     <h6>Neuen Dauer-Eintrag hinzufügen</h6>
                     <form method="post" action="{% url 'catalog:group_duration_add' year=year pk=group.pk %}" class="row g-2 align-items-end">
@@ -131,6 +129,7 @@ DisciplineGroup detail view — duration entries, size entries, monthly summary.
                             </button>
                         </div>
                     </form>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -166,6 +165,7 @@ DisciplineGroup detail view — duration entries, size entries, monthly summary.
                     <p class="text-muted">Keine manuellen Größen-Einträge vorhanden.</p>
                     {% endif %}
 
+                    {% if user.is_admin_role %}
                     <hr>
                     <h6>Neuen Größen-Eintrag hinzufügen</h6>
                     <form method="post" action="{% url 'catalog:group_size_add' year=year pk=group.pk %}" class="row g-2 align-items-end">
@@ -188,6 +188,7 @@ DisciplineGroup detail view — duration entries, size entries, monthly summary.
                             </button>
                         </div>
                     </form>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -374,6 +375,7 @@ DisciplineGroup detail view — duration entries, size entries, monthly summary.
                 </table>
             </div>
 
+            {% if user.is_admin_role %}
             <form method="post" action="{% url 'catalog:group_prepare_legacy' year=year pk=group.pk %}" class="row g-3 align-items-end">
                 {% csrf_token %}
                 <div class="col-auto">
@@ -395,6 +397,7 @@ DisciplineGroup detail view — duration entries, size entries, monthly summary.
                     </button>
                 </div>
             </form>
+            {% endif %}
         </div>
     </div>
     {% endif %}

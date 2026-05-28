@@ -13,7 +13,11 @@ DisciplineGroup list view — shows groups for a given year.
             <nav aria-label="breadcrumb">
                 <ol class="breadcrumb">
                     <li class="breadcrumb-item">
+                        {% if user.is_admin_role %}
                         <a href="{% url 'catalog:index' %}">Katalog</a>
+                        {% else %}
+                        <span>Katalog</span>
+                        {% endif %}
                     </li>
                     <li class="breadcrumb-item active">Gruppen {{ year }}</li>
                 </ol>
@@ -96,6 +100,7 @@ DisciplineGroup list view — shows groups for a given year.
                                    title="Details anzeigen">
                                     <i class="bi bi-eye"></i>
                                 </a>
+                                {% if user.is_admin_role %}
                                 <form method="post" action="{% url 'catalog:group_toggle_scaling' year=year pk=group.pk %}" class="d-inline">
                                     {% csrf_token %}
                                     <button type="submit"
@@ -104,6 +109,7 @@ DisciplineGroup list view — shows groups for a given year.
                                         <i class="bi bi-{% if group.auto_scaling_enabled %}toggle-on{% else %}toggle-off{% endif %}"></i>
                                     </button>
                                 </form>
+                                {% endif %}
                             </div>
                         </td>
                     </tr>
