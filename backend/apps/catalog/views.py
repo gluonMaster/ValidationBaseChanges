@@ -2786,8 +2786,7 @@ class BulkApplyPreviewView(CatalogEditorMixin, TemplateView):
         # (with legacy fallback for records that still have only text subjects).
         records = _get_group_records(group, semester=semester)
 
-        from copy import deepcopy
-        from apps.karteien.category_price import apply_category_price_to_record
+        from apps.karteien.services.billing_pipeline import build_apply_category_proposal
 
         preview_rows: list[dict[str, Any]] = []
         for record in records:
@@ -2806,13 +2805,11 @@ class BulkApplyPreviewView(CatalogEditorMixin, TemplateView):
                 row["skip_reason"] = "Abrechnungsmodus: Legacy"
             else:
                 row["eligible"] = True
-                # Apply on a deep copy to avoid DB changes
                 try:
-                    record_copy = deepcopy(record)
-                    diff = apply_category_price_to_record(
-                        record_copy, semester=semester, from_month=from_month,
+                    proposal = build_apply_category_proposal(
+                        record, semester=semester, from_month=from_month,
                     )
-                    row["diff"] = diff
+                    row["diff"] = proposal.diff
                 except Exception as exc:
                     row["eligible"] = False
                     row["error"] = str(exc)
@@ -2866,8 +2863,8 @@ class BulkApplyCategoryPriceView(CatalogEditorMixin, View):
                 )
 
         from apps.karteien.models import KarteiRecord, MonthsMode, RecordStatus
-        from apps.karteien.category_price import apply_category_price_to_record
-        from apps.approvals.services import create_or_update_pending_change
+        from apps.karteien.services.billing_pipeline import build_apply_category_proposal
+        from apps.approvals.services import create_or_update_pending_change_from_snapshot
 
         # Find records linked to this group's subject in the matching semester
         # (with legacy fallback for records that still have only text subjects).
@@ -2885,11 +2882,8 @@ class BulkApplyCategoryPriceView(CatalogEditorMixin, View):
                 skipped_count += 1
                 continue
 
-            old_base_amounts = dict(record.base_amounts or {})
-
-            # Apply category price in-memory
             try:
-                apply_category_price_to_record(
+                proposal = build_apply_category_proposal(
                     record, semester=semester, from_month=from_month,
                 )
             except Exception:
@@ -2898,20 +2892,14 @@ class BulkApplyCategoryPriceView(CatalogEditorMixin, View):
 
             # Create pending change
             admin_comment = f"[Gruppe: {group.subject.name}] {comment}"
-            pending = create_or_update_pending_change(
-                record, admin_comment=admin_comment
+            create_or_update_pending_change_from_snapshot(
+                record,
+                snapshot=proposal.snapshot,
+                admin_comment=admin_comment,
             )
-            pending_snapshot = dict(pending.snapshot or {})
-            pending_snapshot["_old_base_amounts"] = old_base_amounts
-            pending.snapshot = pending_snapshot
-            pending.save(update_fields=["snapshot"])
 
-            # Save safe fields via queryset update (no full record.save())
-            KarteiRecord.objects.filter(pk=record.pk).update(
-                status=RecordStatus.PENDING,
-                base_amounts=record.base_amounts,
-                months_mode=record.months_mode,
-            )
+            # Save only approval status; billing payload is frozen in snapshot.
+            KarteiRecord.objects.filter(pk=record.pk).update(status=RecordStatus.PENDING)
             updated_count += 1
 
         messages.success(

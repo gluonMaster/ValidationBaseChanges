@@ -183,9 +183,12 @@ def test_single_category_apply_creates_pending_proposal_with_current_metadata(
     record.refresh_from_db()
 
     assert record.status == RecordStatus.PENDING
-    assert record.base_amounts["month_2"] == "80.00"
+    assert record.base_amounts["month_2"] == "25.00"
+    assert pending.snapshot["_pending_action"] == "APPLY_CATEGORY"
+    assert pending.snapshot["_pending_nontracked_payload"]["base_amounts"]["month_2"] == "80.00"
+    assert pending.snapshot["_pending_meta"]["touched_months"] == [2, 3, 4, 5, 6]
     assert pending.snapshot["month_2"] == "80.00"
-    assert pending.snapshot["_old_base_amounts"]["month_2"] == "25.00"
+    assert "_old_base_amounts" not in pending.snapshot
 
 
 def test_bulk_category_apply_creates_pending_proposals_for_group_records(
@@ -216,9 +219,11 @@ def test_bulk_category_apply_creates_pending_proposals_for_group_records(
         pending = PendingChange.objects.get(record=record, is_processed=False)
 
         assert record.status == RecordStatus.PENDING
-        assert record.base_amounts["month_2"] == "45.00"
+        assert record.base_amounts["month_2"] == "20.00"
+        assert pending.snapshot["_pending_action"] == "APPLY_CATEGORY"
+        assert pending.snapshot["_pending_nontracked_payload"]["base_amounts"]["month_2"] == "45.00"
         assert pending.snapshot["month_2"] == "45.00"
-        assert pending.snapshot["_old_base_amounts"]["month_2"] == "20.00"
+        assert "_old_base_amounts" not in pending.snapshot
 
 
 def test_bulk_category_apply_operator_restrictions_block_past_months(
@@ -419,10 +424,6 @@ def test_current_decline_rolls_back_old_base_amounts_marker(
     assert DeclinedChange.objects.filter(record=record).exists()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="target snapshot v2 behavior, not implemented before PROMPT_166...178",
-)
 def test_target_category_apply_decline_does_not_need_live_prewrite_or_rollback_marker(
     client,
     admin_user,
@@ -479,10 +480,6 @@ def test_target_billing_preview_and_category_apply_preview_use_same_pipeline(
     assert billing_preview["months"]["2"]["value"] == apply_preview["new_months"]["month_2"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="target snapshot v2 behavior, not implemented before PROMPT_166...178",
-)
 def test_target_bulk_apply_does_not_prewrite_live_base_amounts(
     client,
     admin_user,
