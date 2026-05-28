@@ -26,6 +26,15 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal
 
 from apps.karteien.models import TRACKED_FIELDS, KarteiRecord, RecordStatus
+from apps.karteien.services.pending_snapshot import (
+    build_tracked_snapshot,
+    apply_pending_snapshot_to_record,
+    apply_nontracked_payload_to_record,
+    get_pending_contract_status_entry,
+    get_pending_contract_type_entry,
+    get_rollback_nontracked_payload,
+    is_snapshot_v2,
+)
 
 from .models import DeclinedChange, PendingChange, SuperadminState
 
@@ -249,20 +258,7 @@ def build_snapshot(record: KarteiRecord) -> dict[str, Any]:
         Dictionary with all tracked field values, JSON-serializable.
         Dates are converted to ISO strings, Decimals to strings.
     """
-    snapshot: dict[str, Any] = {}
-
-    for field_name in TRACKED_FIELDS:
-        value = getattr(record, field_name, None)
-
-        # Convert non-JSON-serializable types
-        if isinstance(value, date):
-            snapshot[field_name] = value.isoformat()
-        elif isinstance(value, Decimal):
-            snapshot[field_name] = str(value) if value is not None else None
-        else:
-            snapshot[field_name] = value
-
-    return snapshot
+    return build_tracked_snapshot(record)
 
 
 def _build_diff_string(old_snapshot: dict[str, Any], new_snapshot: dict[str, Any]) -> str:
@@ -697,9 +693,24 @@ def apply_decision(
                 if isinstance(pending.snapshot, dict)
                 else {}
             )
-            old_base_amounts = pending_snapshot.get("_old_base_amounts")
-            if old_base_amounts is not None:
-                record.base_amounts = old_base_amounts
+            rollback_payload = (
+                get_rollback_nontracked_payload(pending_snapshot)
+                if is_snapshot_v2(pending_snapshot)
+                else None
+            )
+            if rollback_payload:
+                rollback_updates = {
+                    key: value
+                    for key, value in rollback_payload.items()
+                    if key not in TRACKED_FIELDS
+                }
+                rollback_updates["status"] = RecordStatus.DECLINED
+                apply_nontracked_payload_to_record(record, rollback_payload)
+                KarteiRecord.objects.filter(pk=record.pk).update(**rollback_updates)
+            elif not is_snapshot_v2(pending_snapshot) and (
+                pending_snapshot.get("_old_base_amounts") is not None
+            ):
+                record.base_amounts = pending_snapshot["_old_base_amounts"]
                 record.save(update_fields=["status", "base_amounts"])
             else:
                 record.save(update_fields=["status"])
@@ -746,7 +757,7 @@ def _create_contract_entries_from_snapshot(
     """
     from apps.karteien.models import ContractTypeEntry, ContractStatusEntry
 
-    meta_type = snapshot.get("_pending_contract_type_entry")
+    meta_type = get_pending_contract_type_entry(snapshot)
     if meta_type and isinstance(meta_type, dict):
         ContractTypeEntry.objects.update_or_create(
             record=record,
@@ -758,7 +769,7 @@ def _create_contract_entries_from_snapshot(
             },
         )
 
-    meta_status = snapshot.get("_pending_contract_status_entry")
+    meta_status = get_pending_contract_status_entry(snapshot)
     if meta_status and isinstance(meta_status, dict):
         ContractStatusEntry.objects.update_or_create(
             record=record,
@@ -778,7 +789,8 @@ def _apply_snapshot_to_record(
     """
     Apply a snapshot dictionary to a KarteiRecord.
 
-    Converts string representations back to proper Django field types.
+    Snapshot v1 applies top-level tracked fields only. Snapshot v2 also
+    applies the normalized `_pending_nontracked_payload` in memory.
 
     Args:
         record: The record to update.
@@ -787,28 +799,7 @@ def _apply_snapshot_to_record(
     Returns:
         The updated record (not saved).
     """
-    for field_name, value in snapshot.items():
-        if field_name not in TRACKED_FIELDS:
-            continue
-
-        field = record._meta.get_field(field_name)
-
-        if value is not None:
-            # DecimalField
-            if field_name in ("price1", "price2") or field_name.startswith("month_"):
-                if isinstance(value, str) and value:
-                    value = Decimal(value)
-                elif not value:
-                    value = None
-            # DateField
-            elif field_name == "birthdate":
-                if isinstance(value, str) and value:
-                    from datetime import datetime as dt
-                    value = dt.strptime(value, "%Y-%m-%d").date()
-
-        setattr(record, field_name, value)
-
-    return record
+    return apply_pending_snapshot_to_record(record, snapshot)
 
 
 def _write_history_entry(

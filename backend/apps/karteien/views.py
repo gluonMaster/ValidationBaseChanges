@@ -54,7 +54,12 @@ from apps.catalog.warnings import (
 from .forms import KarteiRecordForm, KarteiRecordFilterForm, MonthsOverrideForm
 from .models import (
     KarteiRecord, RecordStatus, MonthsMode, ContractStatusKind, ContractStatusEntry,
-    get_contract_type_for_month, get_contract_status_for_month,
+    ContractTypeEntry, TRACKED_FIELDS, get_contract_type_for_month,
+    get_contract_status_for_month,
+)
+from .services.pending_snapshot import (
+    build_projected_record_from_snapshot,
+    changed_fields_between_records,
 )
 from .validators import validate_kartei_record, apply_operator_filters
 from apps.familyid_reservations.services import get_next_family_id
@@ -386,61 +391,26 @@ class KarteiRecordDetailView(KarteiViewerMixin, DetailView):
             context["pending_view_mode"] = view_param
             
             if view_param == "pending":
-                # Build preview record from pending snapshot (unsaved copy)
                 pending = record.pending_change
-                snapshot = pending.snapshot
-                
-                # Create a copy of the record for display
-                preview_record = KarteiRecord()
-                preview_record.pk = record.pk
-                preview_record.pkid = record.pkid
-                preview_record.id = record.id
-                preview_record.year = record.year
-                preview_record.status = record.status
-                preview_record.months_mode = record.months_mode
-                # Note: is_sepa is a computed property (from sepa_marker),
-                # so it doesn't need explicit copying - sepa_marker is copied below
-                
-                # Copy non-tracked fields from original record
-                for field in record._meta.fields:
-                    field_name = field.name
-                    if field_name not in ('pk',):
-                        try:
-                            setattr(preview_record, field_name, getattr(record, field_name))
-                        except Exception:
-                            pass
-                
-                # Apply snapshot values to preview record
-                from apps.karteien.models import TRACKED_FIELDS
-                
-                changed_fields = set()
-                for field_name in TRACKED_FIELDS:
-                    if field_name in snapshot:
-                        snap_value = snapshot[field_name]
-                        orig_value = getattr(record, field_name, None)
-                        
-                        # Convert snapshot value to proper type
-                        if snap_value is not None:
-                            if field_name.startswith("month_") or field_name in ("price1", "price2"):
-                                if isinstance(snap_value, str) and snap_value:
-                                    snap_value = Decimal(snap_value)
-                                elif not snap_value:
-                                    snap_value = None
-                            elif field_name == "birthdate":
-                                if isinstance(snap_value, str) and snap_value:
-                                    from datetime import datetime as dt
-                                    snap_value = dt.strptime(snap_value, "%Y-%m-%d").date()
-                        
-                        setattr(preview_record, field_name, snap_value)
-                        
-                        # Check if value changed
-                        if not self._values_equal(orig_value, snap_value):
-                            changed_fields.add(field_name)
-                
+                projection = build_projected_record_from_snapshot(
+                    record,
+                    pending.snapshot,
+                )
+                preview_record = projection.record
+                changed_fields = changed_fields_between_records(
+                    record,
+                    preview_record,
+                    TRACKED_FIELDS,
+                )
+
                 context["pending_record_preview"] = preview_record
                 context["pending_changed_fields"] = changed_fields
-                # Use preview record as display_record
                 context["display_record"] = preview_record
+                context["pending_timeline_context"] = projection.timeline
+                context["pending_meta"] = projection.pending_meta
+                context["is_sepa_record"] = preview_record.is_sepa
+                context["mismatch_months"] = list(get_month_mismatches(preview_record))
+                context["is_override_mode"] = preview_record.months_mode == MonthsMode.OVERRIDE
             else:
                 # Current view - use original record
                 context["display_record"] = record
@@ -463,8 +433,12 @@ class KarteiRecordDetailView(KarteiViewerMixin, DetailView):
         ).order_by("start_month")
         
         # Helper for discounts_disabled_months display
-        if record.discounts_disabled and record.discounts_disabled_months:
-            months = sorted(record.discounts_disabled_months)
+        discount_display_record = context.get("display_record", record)
+        if (
+            discount_display_record.discounts_disabled
+            and discount_display_record.discounts_disabled_months
+        ):
+            months = sorted(discount_display_record.discounts_disabled_months)
             if len(months) == 1:
                 context["disabled_months_display"] = f"Monat {months[0]}"
             elif months == list(range(months[0], months[-1] + 1)):
@@ -543,6 +517,28 @@ class KarteiRecordDetailView(KarteiViewerMixin, DetailView):
         contract_status_entries = list(
             record.contract_status_entries.all().select_related("changed_by")
         )
+        pending_timeline_context = context.get("pending_timeline_context")
+        if pending_timeline_context:
+            pending_type = pending_timeline_context.contract_type_entry
+            if pending_type:
+                contract_type_entries.append(
+                    ContractTypeEntry(
+                        record=record,
+                        effective_from_month=int(pending_type["effective_from_month"]),
+                        is_monthly=bool(pending_type.get("is_monthly", False)),
+                        comment=pending_type.get("comment", ""),
+                    )
+                )
+            pending_status = pending_timeline_context.contract_status_entry
+            if pending_status:
+                contract_status_entries.append(
+                    ContractStatusEntry(
+                        record=record,
+                        effective_from_month=int(pending_status["effective_from_month"]),
+                        kind=pending_status["kind"],
+                        comment=pending_status.get("comment", ""),
+                    )
+                )
 
         STATUS_DISPLAY = {
             ContractStatusKind.ACTIVE: ("✓", "success", "Aktiv"),
@@ -553,10 +549,10 @@ class KarteiRecordDetailView(KarteiViewerMixin, DetailView):
         contract_timeline = []
         for m in range(1, 13):
             is_monthly = get_contract_type_for_month(
-                record, m, entries=contract_type_entries,
+                display_rec, m, entries=contract_type_entries,
             )
             status_kind = get_contract_status_for_month(
-                record, m, entries=contract_status_entries,
+                display_rec, m, entries=contract_status_entries,
             )
             symbol, color, label = STATUS_DISPLAY.get(
                 status_kind, ("?", "secondary", status_kind),
@@ -996,28 +992,7 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
         Returns:
             The updated instance (not saved).
         """
-        from apps.karteien.models import TRACKED_FIELDS
-        
-        for field_name, value in snapshot.items():
-            if field_name not in TRACKED_FIELDS:
-                continue
-            
-            if value is not None:
-                # DecimalField
-                if field_name in ("price1", "price2") or field_name.startswith("month_"):
-                    if isinstance(value, str) and value:
-                        value = Decimal(value)
-                    elif not value:
-                        value = None
-                # DateField
-                elif field_name == "birthdate":
-                    if isinstance(value, str) and value:
-                        from datetime import datetime as dt
-                        value = dt.strptime(value, "%Y-%m-%d").date()
-            
-            setattr(instance, field_name, value)
-        
-        return instance
+        return build_projected_record_from_snapshot(instance, snapshot).record
     
     def _get_snapshot_instance(self) -> tuple[KarteiRecord | None, DeclinedChange | None]:
         """
@@ -1046,7 +1021,10 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
                         except Exception:
                             pass
                 # Apply snapshot to the copy
-                self._apply_snapshot_to_instance(instance_copy, pending.snapshot)
+                instance_copy = self._apply_snapshot_to_instance(
+                    instance_copy,
+                    pending.snapshot,
+                )
                 return (instance_copy, None)
         
         elif record.status == RecordStatus.DECLINED:
@@ -1078,7 +1056,10 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
                         except Exception:
                             pass
                 # Apply snapshot to the copy
-                self._apply_snapshot_to_instance(instance_copy, declined.snapshot)
+                instance_copy = self._apply_snapshot_to_instance(
+                    instance_copy,
+                    declined.snapshot,
+                )
                 return (instance_copy, declined)
         
         return (None, None)

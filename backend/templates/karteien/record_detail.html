@@ -364,7 +364,7 @@ Shows all fields of a single KarteiRecord.
 
             <dt class="col-sm-4">Vertragstyp</dt>
             <dd class="col-sm-8">
-              {% if record.is_monthly_contract %}
+              {% if display_record.is_monthly_contract %}
               <span class="badge bg-info text-dark">Monatlich</span>
               {% else %}
               <span class="badge bg-secondary">Jährlich</span>
@@ -373,7 +373,7 @@ Shows all fields of a single KarteiRecord.
 
             <dt class="col-sm-4">Vertragsstatus</dt>
             <dd class="col-sm-8">
-              {% if record.is_contract_terminated %}
+              {% if display_record.is_contract_terminated %}
               <span class="badge bg-danger">Gekündigt</span>
               {% else %}
               <span class="badge bg-success">Aktiv</span>
@@ -420,7 +420,7 @@ Shows all fields of a single KarteiRecord.
 
             <dt class="col-sm-4">SEPA</dt>
             <dd class="col-sm-8">
-              {% if record.is_sepa %}
+              {% if display_record.is_sepa %}
               <span class="badge bg-warning text-dark">SEPA</span>
               {% else %} - {% endif %}
             </dd>
@@ -436,20 +436,20 @@ Shows all fields of a single KarteiRecord.
       <span>
         <i class="bi bi-calendar-month"></i>
         Monatsdaten
-        {% if record.months_mode %}
-        <span class="badge {% if record.months_mode == 'AUTO' %}bg-success{% elif record.months_mode == 'OVERRIDE' %}bg-danger{% else %}bg-secondary{% endif %} ms-2">
-          {{ record.months_mode }}
+        {% if display_record.months_mode %}
+        <span class="badge {% if display_record.months_mode == 'AUTO' %}bg-success{% elif display_record.months_mode == 'OVERRIDE' %}bg-danger{% else %}bg-secondary{% endif %} ms-2">
+          {{ display_record.months_mode }}
         </span>
-        {% if record.months_mode == 'LEGACY' and record.legacy_base_amounts_enabled %}
+        {% if display_record.months_mode == 'LEGACY' and display_record.legacy_base_amounts_enabled %}
         <span class="badge bg-info ms-1" title="Rabatte wurden auf Legacy-Monatswerte angewendet (ohne Preisbezug)">
           <i class="bi bi-arrow-repeat"></i> Recalc
         </span>
         {% endif %}
         {% endif %}
-        {% if record.discounts_disabled %}
+        {% if display_record.discounts_disabled %}
         <span class="badge bg-warning text-dark ms-1">Rabatte deaktiviert</span>
         {% endif %}
-        {% if record.months_mode == 'AUTO' and price_mismatch_count %}
+        {% if display_record.months_mode == 'AUTO' and price_mismatch_count %}
         <span class="badge bg-warning text-dark ms-1" title="Kategoriepreis weicht in {{ price_mismatch_count }} Monat(en) ab">
           Preisabweichung {{ price_mismatch_count }}
         </span>
@@ -649,7 +649,7 @@ Shows all fields of a single KarteiRecord.
       <span>
         <i class="bi bi-percent"></i>
         Rabatte
-        {% if record.discounts_disabled %}
+        {% if display_record.discounts_disabled %}
         <span class="badge bg-warning text-dark ms-2">Rabatte deaktiviert</span>
         {% endif %}
       </span>
@@ -667,7 +667,7 @@ Shows all fields of a single KarteiRecord.
       {% endif %}
     </div>
     <div class="card-body">
-      {% if record.discounts_disabled %}
+      {% if display_record.discounts_disabled %}
       <div class="alert alert-warning mb-3">
         <i class="bi bi-exclamation-triangle"></i>
         <strong>Rabatte deaktiviert</strong>
@@ -807,7 +807,7 @@ Shows all fields of a single KarteiRecord.
             <tr>
               <td>{{ e.effective_from_month }}</td>
               <td>{% if e.is_monthly %}Monatsvertrag{% else %}Jahresvertrag{% endif %}</td>
-              <td>{{ e.changed_by.get_full_name|default:e.changed_by.username|default:"-" }}</td>
+              <td>{% if e.changed_by %}{{ e.changed_by.get_full_name|default:e.changed_by.username }}{% else %}-{% endif %}</td>
               <td>{{ e.changed_at|date:"d.m.Y H:i" }}</td>
               <td>{{ e.comment|default:"-" }}</td>
             </tr>
@@ -819,7 +819,7 @@ Shows all fields of a single KarteiRecord.
       <p class="text-muted mb-4">
         <i class="bi bi-info-circle"></i>
         Kein Vertragstyp-Verlauf vorhanden.
-        Fallback: <strong>{% if record.is_monthly_contract %}Monatsvertrag{% else %}Jahresvertrag{% endif %}</strong>
+        Fallback: <strong>{% if display_record.is_monthly_contract %}Monatsvertrag{% else %}Jahresvertrag{% endif %}</strong>
         (Legacy-Feld)
       </p>
       {% endif %}
@@ -843,7 +843,7 @@ Shows all fields of a single KarteiRecord.
             <tr>
               <td>{{ e.effective_from_month }}</td>
               <td>{{ e.get_kind_display }}</td>
-              <td>{{ e.changed_by.get_full_name|default:e.changed_by.username|default:"-" }}</td>
+              <td>{% if e.changed_by %}{{ e.changed_by.get_full_name|default:e.changed_by.username }}{% else %}-{% endif %}</td>
               <td>{{ e.changed_at|date:"d.m.Y H:i" }}</td>
               <td>{{ e.comment|default:"-" }}</td>
             </tr>

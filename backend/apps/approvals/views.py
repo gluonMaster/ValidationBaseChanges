@@ -34,7 +34,12 @@ from django.urls import reverse, reverse_lazy
 from django.views import View
 from django.views.generic import DetailView, ListView, TemplateView
 
-from apps.karteien.models import KarteiRecord, RecordStatus, TRACKED_FIELDS
+from apps.karteien.models import KarteiRecord, RecordStatus
+from apps.karteien.services.pending_snapshot import (
+    build_projected_record_from_snapshot,
+    comparison_fields_for_snapshot,
+    values_equal,
+)
 
 from .forms import DeclinedChangeEditForm, PendingChangeEditForm
 from .models import DeclinedChange, PendingChange
@@ -100,6 +105,60 @@ class SuperadminMixin(LoginRequiredMixin, UserPassesTestMixin):
             "Diese Funktion ist nur für Superadmin verfügbar."
         )
         return redirect("karteien:record_list")
+
+
+def _build_snapshot_comparisons(
+    record: KarteiRecord,
+    snapshot: dict[str, Any],
+    *,
+    projected_key: str,
+    include_labels: bool = False,
+) -> tuple[list[dict[str, Any]], Any]:
+    """Build tracked + v2 non-tracked comparison rows from a projection."""
+
+    projection = build_projected_record_from_snapshot(record, snapshot)
+    comparisons: list[dict[str, Any]] = []
+
+    for field_name in comparison_fields_for_snapshot(snapshot):
+        current_value = getattr(record, field_name, "")
+        projected_value = getattr(projection.record, field_name, "")
+        row = {
+            "field": field_name,
+            "current": current_value,
+            projected_key: projected_value,
+            "changed": not values_equal(current_value, projected_value),
+        }
+        if include_labels:
+            row["field_label"] = _get_field_label(field_name)
+            row["war"] = current_value
+            row["ist"] = projected_value
+        comparisons.append(row)
+
+    timeline = projection.timeline
+    timeline_rows = (
+        (PENDING_CONTRACT_TYPE_LABEL, timeline.contract_type_entry),
+        (PENDING_CONTRACT_STATUS_LABEL, timeline.contract_status_entry),
+    )
+    for field_name, entry in timeline_rows:
+        if not entry:
+            continue
+        row = {
+            "field": field_name,
+            "current": "",
+            projected_key: entry,
+            "changed": True,
+        }
+        if include_labels:
+            row["field_label"] = _get_field_label(field_name)
+            row["war"] = ""
+            row["ist"] = entry
+        comparisons.append(row)
+
+    return comparisons, projection
+
+
+PENDING_CONTRACT_TYPE_LABEL = "_pending_contract_type_entry"
+PENDING_CONTRACT_STATUS_LABEL = "_pending_contract_status_entry"
 
 
 # =============================================================================
@@ -202,25 +261,13 @@ class DeclinedDetailView(AdminEditorMixin, DetailView):
         declined = self.object
         record = declined.record
         
-        # Build current snapshot for comparison
-        current_snapshot = build_snapshot(record)
-        declined_snapshot = declined.snapshot
-        
-        # Build comparison data
-        from apps.karteien.models import TRACKED_FIELDS
-        comparisons = []
-        for field in TRACKED_FIELDS:
-            current_val = current_snapshot.get(field)
-            declined_val = declined_snapshot.get(field)
-            
-            comparisons.append({
-                "field": field,
-                "current": current_val,
-                "declined": declined_val,
-                "changed": current_val != declined_val,
-            })
-        
+        comparisons, projection = _build_snapshot_comparisons(
+            record,
+            declined.snapshot,
+            projected_key="declined",
+        )
         context["comparisons"] = comparisons
+        context["snapshot_projection"] = projection
         context["record"] = record
         
         return context
@@ -451,29 +498,13 @@ class PendingDetailView(AdminEditorMixin, DetailView):
         pending = self.object
         record = pending.record
         
-        # Build comparison
-        from apps.karteien.models import TRACKED_FIELDS
-        pending_snapshot = pending.snapshot
-        comparisons = []
-        
-        for field in TRACKED_FIELDS:
-            current_val = getattr(record, field, None)
-            pending_val = pending_snapshot.get(field)
-            
-            # Normalize for comparison
-            if current_val is None:
-                current_val = ""
-            if pending_val is None:
-                pending_val = ""
-            
-            comparisons.append({
-                "field": field,
-                "current": current_val,
-                "pending": pending_val,
-                "changed": str(current_val) != str(pending_val),
-            })
-        
+        comparisons, projection = _build_snapshot_comparisons(
+            record,
+            pending.snapshot,
+            projected_key="pending",
+        )
         context["comparisons"] = comparisons
+        context["snapshot_projection"] = projection
         context["record"] = record
         
         return context
@@ -760,35 +791,14 @@ class SuperadminWarIstView(SuperadminMixin, DetailView):
         pending = self.object
         record = pending.record
         
-        # Get pending snapshot
-        pending_snapshot = pending.snapshot
-        
-        # Build comparison for all tracked fields
-        comparisons = []
-        for field_name in TRACKED_FIELDS:
-            # War = current value in record (original)
-            war_value = getattr(record, field_name, None)
-            # Ist = value from pending snapshot (proposed)
-            ist_value = pending_snapshot.get(field_name)
-            
-            # Normalize for display
-            if war_value is None:
-                war_value = ""
-            if ist_value is None:
-                ist_value = ""
-            
-            # Check if changed
-            changed = str(war_value) != str(ist_value)
-            
-            comparisons.append({
-                "field": field_name,
-                "field_label": _get_field_label(field_name),
-                "war": war_value,
-                "ist": ist_value,
-                "changed": changed,
-            })
-        
+        comparisons, projection = _build_snapshot_comparisons(
+            record,
+            pending.snapshot,
+            projected_key="ist",
+            include_labels=True,
+        )
         context["comparisons"] = comparisons
+        context["snapshot_projection"] = projection
         context["record"] = record
         context["changed_count"] = sum(1 for c in comparisons if c["changed"])
         
@@ -874,6 +884,32 @@ def _get_field_label(field_name: str) -> str:
         "price1": "Preis 1",
         "subject2": "Fach 2",
         "price2": "Preis 2",
+        "subject1_ref_id": "Fach 1 (Ref)",
+        "teacher1_ref_id": "Lehrer 1 (Ref)",
+        "price1_ref_id": "Preis 1 (Ref)",
+        "start_month_1": "Startmonat 1",
+        "end_month_1": "Endmonat 1",
+        "months_csv_1": "Monate CSV 1",
+        "subject2_ref_id": "Fach 2 (Ref)",
+        "teacher2_ref_id": "Lehrer 2 (Ref)",
+        "price2_ref_id": "Preis 2 (Ref)",
+        "start_month_2": "Startmonat 2",
+        "end_month_2": "Endmonat 2",
+        "months_csv_2": "Monate CSV 2",
+        "sepa_marker": "SEPA",
+        "months_mode": "Abrechnungsmodus",
+        "base_amounts": "Basisbeträge",
+        "hours_amounts": "Stunden",
+        "legacy_base_amounts_enabled": "Legacy-Basis aktiv",
+        "discounts_disabled": "Rabatte deaktiviert",
+        "discounts_disabled_months": "Rabatt-Monate deaktiviert",
+        "is_monthly_contract": "Vertragstyp",
+        "contract_type_raw": "Vertragstyp Rohtext",
+        "is_contract_terminated": "Vertragsstatus",
+        "contract_status_raw": "Vertragsstatus Rohtext",
+        "contract_terminated_from_month": "Kündigung ab Monat",
+        PENDING_CONTRACT_TYPE_LABEL: "Vertragstyp-Verlauf",
+        PENDING_CONTRACT_STATUS_LABEL: "Vertragsstatus-Verlauf",
         "extra1": "Extra 1",
         "extra2": "Extra 2",
         "extra3": "Extra 3",

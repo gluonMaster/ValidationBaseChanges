@@ -24,6 +24,27 @@ def test_admin_can_open_standard_editor_for_pending_record(
 
 
 @pytest.mark.django_db
+def test_admin_pending_editor_prefills_from_snapshot(
+    client,
+    admin_user,
+    kartei_record_builder,
+):
+    record = kartei_record_builder(
+        status=RecordStatus.PENDING,
+        child_name="Live Pending Child",
+    )
+    snapshot = build_snapshot(record)
+    snapshot["child_name"] = "Snapshot Pending Child"
+    PendingChange.objects.create(record=record, snapshot=snapshot)
+    client.force_login(admin_user)
+
+    response = client.get(reverse("karteien:record_update", args=[record.pk]))
+
+    assert response.status_code == 200
+    assert response.context["form"].instance.child_name == "Snapshot Pending Child"
+
+
+@pytest.mark.django_db
 def test_admin_can_open_standard_editor_for_declined_record(
     client,
     admin_user,
@@ -43,6 +64,34 @@ def test_admin_can_open_standard_editor_for_declined_record(
     )
 
     assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_admin_declined_editor_prefills_from_snapshot(
+    client,
+    admin_user,
+    kartei_record_builder,
+):
+    record = kartei_record_builder(
+        status=RecordStatus.DECLINED,
+        child_name="Live Declined Child",
+    )
+    snapshot = build_snapshot(record)
+    snapshot["child_name"] = "Snapshot Declined Child"
+    declined = DeclinedChange.objects.create(
+        record=record,
+        snapshot=snapshot,
+        decline_reason="Needs correction",
+    )
+    client.force_login(admin_user)
+
+    response = client.get(
+        reverse("karteien:record_update", args=[record.pk]),
+        {"declined_change_id": declined.pk},
+    )
+
+    assert response.status_code == 200
+    assert response.context["form"].instance.child_name == "Snapshot Declined Child"
 
 
 @pytest.mark.django_db
