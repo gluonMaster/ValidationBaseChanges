@@ -924,10 +924,12 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
     - SAFE: Applied directly to the record (only for NORMAL status)
     - RISKY: Create/update PendingChange, mark record as PENDING
     
-    Important: This view only allows editing records with status NORMAL.
-    For PENDING/DECLINED records, users must use the approvals workflow:
-    - PENDING: Wait for Superadmin decision (approvals UI)
-    - DECLINED: Use DeclinedOverview to fix and resubmit
+    Current status behavior:
+    - NORMAL: Admin/Operator can use the standard editor, with role filters.
+    - PENDING: Admin can edit through this standard editor; the existing
+      PendingChange snapshot is updated. Operator is blocked.
+    - DECLINED: Admin can edit through this standard editor; saving creates
+      a new PendingChange and moves the record back to PENDING. Operator is blocked.
     
     Operator restrictions (SEPA, past-months) are enforced here.
     """
@@ -949,7 +951,8 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
         # Store original status for form_valid logic
         self._original_status = self.object.status
         
-        # For PENDING/DECLINED: allow ADMIN, block Operator
+        # Current behavior: Admin may use the standard editor for
+        # PENDING/DECLINED; Operator is blocked.
         if self.object.status == RecordStatus.PENDING:
             if not user.is_admin_role:
                 messages.error(
@@ -959,7 +962,7 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
                     "Entscheidung des Superadmin."
                 )
                 return redirect("karteien:record_detail", pk=self.object.pk)
-            # Admin can proceed to edit PENDING record
+            # Admin can proceed to edit PENDING through the standard editor.
         
         if self.object.status == RecordStatus.DECLINED:
             if not user.is_admin_role:
@@ -969,7 +972,7 @@ class KarteiRecordUpdateView(KarteiEditorMixin, UpdateView):
                     "\"Abgelehnte Änderungen\", um Korrekturen erneut einzureichen."
                 )
                 return redirect("karteien:record_detail", pk=self.object.pk)
-            # Admin can proceed to edit DECLINED record
+            # Admin can proceed to edit DECLINED through the standard editor.
             # Store declined_change_id from query param if provided
             self._declined_change_id = request.GET.get("declined_change_id")
         

@@ -195,7 +195,7 @@ class PriceOption(models.Model):
                 name='unique_year_subject_amount_comment'
             ),
             models.CheckConstraint(
-                check=models.Q(amount__gte=Decimal('0.00')),
+                condition=models.Q(amount__gte=Decimal('0.00')),
                 name='price_amount_non_negative'
             )
         ]
@@ -473,7 +473,7 @@ class SemesterConfig(models.Model):
         ordering = ['-year']
         constraints = [
             models.CheckConstraint(
-                check=models.Q(last_month_sem1__gte=1, last_month_sem1__lte=11),
+                condition=models.Q(last_month_sem1__gte=1, last_month_sem1__lte=11),
                 name='semester_boundary_range_1_to_11',
             ),
         ]
@@ -587,15 +587,15 @@ class SubjectCategory(models.Model):
                 name='unique_category_year_name',
             ),
             models.CheckConstraint(
-                check=models.Q(yearly_rate__gte=Decimal('0.00')),
+                condition=models.Q(yearly_rate__gte=Decimal('0.00')),
                 name='category_yearly_rate_non_negative',
             ),
             models.CheckConstraint(
-                check=models.Q(monthly_rate__gte=Decimal('0.00')),
+                condition=models.Q(monthly_rate__gte=Decimal('0.00')),
                 name='category_monthly_rate_non_negative',
             ),
             models.CheckConstraint(
-                check=models.Q(group_threshold__gte=1),
+                condition=models.Q(group_threshold__gte=1),
                 name='category_group_threshold_min_1',
             ),
         ]
@@ -795,14 +795,14 @@ class DurationEntry(models.Model):
                 name='unique_duration_group_month',
             ),
             models.CheckConstraint(
-                check=models.Q(
+                condition=models.Q(
                     effective_from_month__gte=1,
                     effective_from_month__lte=12,
                 ),
                 name='duration_month_range_1_12',
             ),
             models.CheckConstraint(
-                check=models.Q(duration_minutes__gte=1),
+                condition=models.Q(duration_minutes__gte=1),
                 name='duration_minutes_min_1',
             ),
         ]
@@ -863,14 +863,14 @@ class GroupSizeEntry(models.Model):
                 name='unique_size_group_month',
             ),
             models.CheckConstraint(
-                check=models.Q(
+                condition=models.Q(
                     effective_from_month__gte=1,
                     effective_from_month__lte=12,
                 ),
                 name='size_month_range_1_12',
             ),
             models.CheckConstraint(
-                check=models.Q(manual_size__gte=1),
+                condition=models.Q(manual_size__gte=1),
                 name='manual_size_min_1',
             ),
         ]

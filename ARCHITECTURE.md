@@ -4,6 +4,35 @@
 
 Примечание для нового чата: чтобы экономить контекст, начните с `docs/ProjectMap.md`, а здесь открывайте только нужные разделы (через поиск по файлу).
 
+## 0. Актуальность документа: current / defects / target
+
+Дата актуализации этого раздела: 2026-05-27.
+
+### Current implementation
+
+- Базовая архитектура apps в этом документе остается полезной как карта системы.
+- `approvals.apply_decision()` является основным интегрированным path для решений Superadmin; старые helper-описания вроде `apply_pending_change()` ниже могут быть историческими.
+- Admin сейчас может редактировать `PENDING`/`DECLINED` через стандартный `/karteien/<pkid>/edit/` editor с prefill из pending/declined snapshot.
+- Operator в `PENDING`/`DECLINED` через стандартный editor блокируется.
+- SAFE-изменения могут применяться напрямую к live `KarteiRecord`; RISKY-изменения создают/обновляют `PendingChange`.
+
+### Known defects
+
+- В PRICELIST V2 новая category pricing логика добавлена рядом со старым billing path, а не стала единым ядром.
+- `billing_preview_api`, form save, category apply, bulk apply и approve/decline могут использовать разные расчетные пути.
+- Некоторые billing/context поля prewrite'ятся в live record до approval, что создает split-brain между live record и pending snapshot.
+- `PendingChange.snapshot` пока не является полноценным frozen payload v2 для всех non-tracked billing/context fields.
+- Legacy contract fields и `ContractTypeEntry` / `ContractStatusEntry` пока сосуществуют как конкурирующие источники истины.
+
+### Target stabilization v2
+
+Целевой документ: `PRICELIST_V2_STABILIZATION_TZ_REVISED.md`.
+
+- Пока change находится в `PENDING`, live record должен оставаться approved-state.
+- Billing/context changes должны храниться во frozen snapshot v2 payload.
+- Preview / form save / apply / approve / decline должны использовать единый billing pipeline.
+- `base_amounts` в `AUTO` остается historical base history и не переписывается silently.
+
 ## 1. Overview
 
 - Исходники legacy VBA-модулей для справки лежат в `legacy_VBA/`:
@@ -166,7 +195,8 @@
 **Задачи:**
 
 - Определение, какие изменения считаются “risk” и требуют Superadmin:
-  - Использует политику, аналогичную `RISK_POLICY_MODE = "TRACKED_FIELDS"`.
+  - Current implementation still starts from a legacy-like `TRACKED_FIELDS` policy.
+  - Known defect: this is not sufficient for PRICELIST V2, because non-tracked billing/context fields can change financial meaning.
 - Отдельное хранение:
   - Pending изменений (аналог `pre_tblKartei`).
   - Declined изменений (аналог `decl_tblKartei`).
@@ -181,7 +211,8 @@
 - `PendingChange` (`apps/approvals/models.py`):
   - `id` — auto-generated BigAutoField (не совпадает с ID Kartei).
   - `record` — OneToOneField на `karteien.KarteiRecord` (on_delete=CASCADE).
-  - `snapshot` — JSONField со снимком всех tracked-полей (формат: `{"field_name": value, ...}`).
+  - `snapshot` — JSONField. Current format is a flat tracked-fields snapshot with compatibility metadata keys such as `_old_base_amounts`, `_pending_contract_type_entry`, `_pending_contract_status_entry`.
+  - Target stabilization v2: `snapshot` must also carry a frozen non-tracked billing/context payload for reviewed changes.
   - `is_processed` — bool, True после обработки (approve/decline).
   - `created_at`, `updated_at` — timestamps.
 - `DeclinedChange` (`apps/approvals/models.py`):
@@ -202,13 +233,14 @@
 - `get_changed_tracked_fields(local, original) -> dict[str, tuple[old, new]]`:
   - Возвращает словарь изменённых tracked-полей для отображения "War/Ist".
 - `build_snapshot(record: KarteiRecord) -> dict`:
-  - Строит JSON-сериализуемый снимок tracked-полей.
+  - Current implementation builds a JSON-сериализуемый снимок tracked-полей; callers may add reserved metadata keys.
+  - Target stabilization v2 extends this to an explicit frozen payload contract for billing/context state.
 - `create_or_update_pending_change(record) -> PendingChange`:
-  - Создаёт или обновляет pending-запись (заглушка, полная интеграция позже).
+  - Создаёт или обновляет pending-запись для legacy-compatible paths.
 - `create_declined_change(record, reason, declined_by) -> DeclinedChange`:
-  - Создаёт decline-запись (заглушка, полная интеграция позже).
+  - Создаёт decline-запись для legacy-compatible paths.
 - `apply_pending_change(pending) -> KarteiRecord`:
-  - Применяет approved изменения к записи (заглушка).
+  - Historical helper; main integrated decision path is `apply_decision()`.
 
 **Superadmin Web UI (PROMPT_09):**
 
@@ -289,17 +321,15 @@
 - **Pending List** (`/approvals/pending/`):
   - Информационный список изменений, ожидающих Superadmin.
 
-**Ограничения по статусу записи:**
+**Ограничения по статусу записи (current implementation, 2026-05-27):**
 
-Редактирование через `/karteien/<id>/edit/` разрешено **только для записей со статусом NORMAL**:
+- **NORMAL**: Admin/Operator могут редактировать запись. SAFE-изменения применяются напрямую к `KarteiRecord`; RISKY-изменения создают/обновляют `PendingChange` и переводят запись в `PENDING`.
 
-- **NORMAL**: Admin/Operator могут редактировать запись. SAFE-изменения (не затрагивающие tracked-поля) применяются напрямую к `KarteiRecord`. RISKY-изменения создают `PendingChange` и переводят запись в статус PENDING.
+- **PENDING**: Admin может открыть стандартный `/karteien/<pkid>/edit/` editor; форма работает поверх pending snapshot и обновляет pending-состояние. Operator блокируется. Superadmin по-прежнему принимает решение через approvals flow.
 
-- **PENDING**: Редактирование через Kartei UI заблокировано. Запись ожидает решения Superadmin через approvals-флоу (PROMPT_09). При попытке открыть форму редактирования пользователь получает сообщение об ошибке и перенаправляется на страницу деталей записи.
+- **DECLINED**: Admin может открыть стандартный `/karteien/<pkid>/edit/` editor с prefill из `DeclinedChange.snapshot`; сохранение создает новый `PendingChange` для повторного review. Operator блокируется. Старые snapshot-only формы approvals могут существовать как compatibility layer, но не являются единственным path.
 
-- **DECLINED**: Редактирование через Kartei UI заблокировано. Для исправления и повторной отправки Admin/Operator должны использовать DeclinedOverview (`/approvals/declined/`). После исправления запись переходит обратно в статус PENDING.
-
-В UI (списки и детали записей) кнопка "Bearbeiten" отображается только для NORMAL-записей. Для PENDING показывается индикатор ожидания, для DECLINED — ссылка на DeclinedOverview.
+Целевое состояние stabilization v2 для финансово значимых изменений: live record остается approved-state до approval, а все reviewed изменения должны находиться во frozen snapshot payload.
 
 **Валидаторы** (`apps/karteien/validators.py`):
 
@@ -545,9 +575,11 @@
 
 Скидки (`FamilyDiscount`, `RecordDiscount`) участвуют в расчёте `AUTO` начислений в `apps/karteien/billing.py`:
 
-- Базовые суммы берутся из `PriceOption` (с учётом `start_month_*` и режима Stundenfächer).
+- Current legacy billing path: базовые суммы берутся из `PriceOption` (с учётом `start_month_*` и режима Stundenfächer).
 - Затем применяются скидки (сначала процентные, затем фиксированные).
 - Поддерживается отключение скидок на всю запись или на конкретные месяцы (`discounts_disabled`, `discounts_disabled_months`).
+
+Known PRICELIST V2 defect: category pricing (`catalog/pricing.py`, category apply, bulk apply) живёт рядом с этим legacy billing path. `billing_preview_api`, form save и category apply могут давать разные результаты. Target stabilization v2 — единый billing pipeline для preview / save / apply / approve / decline.
 
 **Django Admin:**
 

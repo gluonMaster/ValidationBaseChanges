@@ -1,7 +1,16 @@
-# Prompt files (internal documentation, not for repo)
-PROMPT*.md
+# Prompt files and external audit context (local agent workflow, not for repo)
+/PROMPT_*.md
+Alt-PROMPTS-ValidationBaseChange/
 legacy_VBA/PROMPTS/
-Claude.md
+GPT_PRO_PRICELIST_REQUIRED_CONTEXT/
+GPT_PRO_PRICELIST_CONTEXT_FILES.md
+
+# Local/private Claude notes. Keep canonical CLAUDE.md trackable.
+CLAUDE.local.md
+Claude.local.md
+
+# Local agent/runtime credentials and private QA notes
+.codex-local/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -49,6 +58,12 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
+# Browser/MCP local artifacts
+.playwright-mcp/
+test-results/
+playwright-report/
+blob-report/
+
 # Translations
 *.mo
 *.pot
@@ -63,7 +78,6 @@ media/
 
 # Sphinx documentation
 docs/_build/
-docs/
 
 # Jupyter Notebook
 .ipynb_checkpoints

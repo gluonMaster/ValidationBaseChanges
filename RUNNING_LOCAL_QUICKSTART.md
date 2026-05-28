@@ -65,6 +65,38 @@ docker compose logs web --tail=50
 
 После этого приложение доступно по адресу `http://localhost:8000/`.
 
+## 3.1 Автоматические проверки разработчика
+
+Из корня репозитория:
+
+```bash
+python backend/manage.py check
+python backend/manage.py makemigrations --check --dry-run
+pytest -m "not browser" --reuse-db
+```
+
+Для automated browser smoke tests после `pip install -r backend/requirements.txt` один раз установите Chromium binary:
+
+```bash
+python -m playwright install chromium
+```
+
+Запуск минимального browser smoke baseline:
+
+```bash
+pytest -m browser backend/tests/browser --browser chromium --reuse-db
+```
+
+Эти тесты используют `pytest-playwright` + `pytest-django live_server` и создают fixture-backed users/records в тестовой БД. Они покрывают login/root redirects по ролям, ADMIN Kartei create/edit entry points, OPERATOR redirects для `PENDING`/`DECLINED`, SUPERADMIN pending overview + War/Ist detail и USER read-only cabinet/detail route. Destructive approve/decline/bulk apply и catalog group pricing smoke здесь намеренно не автоматизированы.
+
+Не запускайте backend pytest и browser pytest параллельно против одной PostgreSQL test DB. Если после оборванного запуска появляется `database "test_kindeltern" already exists`, остановите лишние pytest/live_server процессы и очистите stale test DB:
+
+```bash
+docker compose exec db sh -lc 'TEST_DB="test_${POSTGRES_DB:-kindeltern}"; psql -U "$POSTGRES_USER" -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '"'"'${TEST_DB}'"'"';"; dropdb -U "$POSTGRES_USER" --if-exists "$TEST_DB"'
+```
+
+После migration changes используйте `--create-db`; для повторных локальных прогонов без migration changes используйте `--reuse-db`.
+
 > Если в логах постоянно повторяется только `Database not ready, waiting...`, убедитесь, что:
 >
 > - изменённый `backend/entrypoint.sh` действительно попал в образ (повторный `docker compose build web`);

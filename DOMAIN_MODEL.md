@@ -11,6 +11,35 @@
 
 Примечание для нового чата: чтобы экономить контекст, начните с `docs/ProjectMap.md`, а здесь открывайте только нужные разделы (через поиск по файлу).
 
+## 0.0 Актуальность документа: legacy / current / target
+
+Дата актуализации этого раздела: 2026-05-27.
+
+Этот документ исторически описывает legacy Excel/Access модель и соответствие Django-моделей. Для текущего веб-поведения обязательно учитывать следующие уточнения.
+
+### Current implementation
+
+- Django использует `KarteiRecord.pkid` как surrogate PK, а Access/Excel `ID` хранит в `KarteiRecord.id`; доменный ключ: `(year, id)`.
+- `RecordStatus.NORMAL` хранится как пустая строка `""`.
+- Admin сейчас может редактировать `PENDING`/`DECLINED` через стандартный record editor с prefill из pending/declined snapshot; Operator в этих статусах блокируется.
+- `PendingChange.snapshot` в текущем коде в основном хранит tracked fields, но уже может содержать reserved metadata keys вроде `_pending_contract_type_entry`, `_pending_contract_status_entry`, `_old_base_amounts`.
+- NeuList в Django работает per-year через `SuperadminState.last_seen_by_year`; legacy `last_seen_id` остается fallback/diagnostic.
+
+### Known defects
+
+- Non-tracked billing/context fields не всегда безопасны: часть таких полей сейчас prewrite'ится в live record до approval.
+- PRICELIST V2 имеет split-brain между legacy billing path и category pricing path.
+- Legacy contract fields и `ContractTypeEntry` / `ContractStatusEntry` пока сосуществуют и не полностью сведены к единому source of truth.
+
+### Target stabilization v2
+
+Целевое состояние описано в `PRICELIST_V2_STABILIZATION_TZ_REVISED.md`:
+
+- live record остается approved-state до approval;
+- billing/context changes входят во frozen snapshot v2 payload;
+- contract timeline helpers становятся operational read truth;
+- `base_amounts` в `AUTO` остается historical base history.
+
 ## 0. Дополнения web-реализации (не в legacy)
 
 В Django-версии проекта есть сущности, которые **не имеют прямых таблиц/колонок** в Excel/Access, но нужны для реализации ТЗ (например, прайслист v2 и вспомогательные справочники). Ключевые примеры:
@@ -220,13 +249,13 @@
 - **PENDING**:
   - По ID существует запись в `pre_tblKartei`.
   - `Kartei!BA = "PENDING"`, колонка A залита голубым (кроме случаев со special value `"Zahlung"` в D).
-  - **В веб-интерфейсе**: Редактирование через Kartei UI заблокировано. Изменения возможны только через approvals-флоу (решение Superadmin).
+  - **В текущем Django-интерфейсе**: Admin может редактировать через стандартный `/karteien/<pkid>/edit/` editor поверх pending snapshot; Operator блокируется. Решение все равно принимает Superadmin через approvals-флоу.
 - **DECLINED**:
   - По ID существует запись в `decl_tblKartei`.
   - `Kartei!BA = "DECLINED"`, колонка A залита красным.
-  - **В веб-интерфейсе**: Редактирование через Kartei UI заблокировано. Для исправления используется DeclinedOverview (`/approvals/declined/`).
+  - **В текущем Django-интерфейсе**: Admin может редактировать через стандартный `/karteien/<pkid>/edit/` editor с prefill из `DeclinedChange.snapshot`; сохранение создает новый `PendingChange`. Operator блокируется.
 
-**Важно**: SAFE-применение изменений (без создания `PendingChange`) разрешено только для записей со статусом NORMAL. Для записей PENDING/DECLINED любые изменения tracked-полей должны пройти через approvals-флоу.
+**Важно**: SAFE-применение изменений без `PendingChange` является current legacy-compatible behavior. Для целевой stabilization v2 финансово значимые billing/context изменения должны храниться во frozen pending payload и применяться только после approval.
 
 ---
 
@@ -251,20 +280,24 @@
 - U–AF (21–32) – `Months[1..12]`
 - AK (37), AL (38), AM (39) – `Extra1..3`
 
-**Non-tracked поля** (изменение не попадает в историю и обычно считается safe):
+**Non-tracked поля** (изменение не попадает в legacy history и historically обычно считалось safe):
 
 - Все прочие колонки (C, K, L, N, P, Q, S, T, AG–AJ, AN–AS, AU, AW–AY, BA).
 - Примеры:
   - `SepaMarker` (AU) — влияет на права, но не фиксируется в истории.
   - `LastChangeRole/Date/Time` — служебные.
 
-Риск‑классификация (`Export_RiskClassification.IsRiskyChange` при `RISK_POLICY_MODE = "TRACKED_FIELDS"`):
+Текущее важное уточнение: не все non-tracked поля безопасны для прямой записи. Billing/context поля (`subject*_ref`, `price*_ref`, `start/end/months_csv`, `base_amounts`, `hours_amounts`, contract metadata и связанные поля) могут менять финансовый смысл записи. В stabilization v2 такие изменения должны попадать в pending snapshot payload, а не prewrite'иться в live record до approval.
+
+Legacy risk‑классификация (`Export_RiskClassification.IsRiskyChange` при `RISK_POLICY_MODE = "TRACKED_FIELDS"`):
 
 - Для существующих ID:
   - Если меняется хотя бы одно tracked‑поле → изменение считается risky → идёт в `pre_tblKartei`.
-  - Если меняются только non‑tracked поля → изменение safe → можно обновлять `tblKartei` напрямую.
+  - Если меняются только non‑tracked поля → legacy считает изменение safe → можно обновлять `tblKartei` напрямую.
 - Для новых ID:
   - Всегда считаются safe (нет исходной записи в `tblKartei`).
+
+В Django current implementation часть этой логики сохранена ради совместимости, но для PRICELIST V2 она неполна. Target stabilization v2 должна классифицировать billing/context payload по финансовому смыслу, а не только по legacy `TRACKED_FIELDS`.
 
 ---
 
@@ -371,7 +404,7 @@
 - **Год**: Поле `year` заменяет отдельные файлы баз по годам. Уникальность обеспечивается ограничением `(year, id)`.
 - **Статус**: Поле `status` - enum (`RecordStatus`) со значениями `''` (normal), `'PENDING'`, `'DECLINED'`.
 - **История**: Поле `history_raw` сохраняет legacy-формат истории. Нормализованная история - в отдельной модели `history.HistoryEvent`.
-- **Tracked Fields**: Константа `TRACKED_FIELDS` в `models.py` определяет поля, изменения которых фиксируются в истории и считаются "risky".
+- **Tracked Fields**: Константа `TRACKED_FIELDS` в `models.py` определяет legacy-набор полей, изменения которых фиксируются в истории и считаются "risky". Для PRICELIST V2 этого набора недостаточно: billing/context changes должны оцениваться отдельно.
 
 ### 7.3 Месячные поля
 
@@ -450,13 +483,14 @@ EXCEL_COL_TO_MONTH = {21: 1, 22: 2, ..., 32: 12}
 | Access Field      | Django Field      | Notes                                              |
 | ----------------- | ----------------- | -------------------------------------------------- |
 | `ID`              | `record` (FK)     | Ссылка на `KarteiRecord`, not duplicated as field. |
-| `Value1..Value52` | `snapshot` (JSON) | Tracked fields хранятся в JSON-снимке.             |
+| `Value1..Value52` | `snapshot` (JSON) | Flat tracked-fields snapshot + возможные reserved metadata keys. |
 | `InteriorColor*`  | —                 | Цвета не переносятся в pending (только данные).    |
 
 Ключевые отличия от Access:
 
 - В Access `pre_tblKartei` повторяет структуру `tblKartei` (52 поля).
-- В Django `PendingChange` хранит только tracked-поля в JSON-поле `snapshot`.
+- В текущем Django `PendingChange.snapshot` базово хранит flat tracked-поля, но уже может содержать reserved metadata keys (`_old_base_amounts`, `_pending_contract_type_entry`, `_pending_contract_status_entry`).
+- Target stabilization v2 расширяет snapshot до frozen payload для non-tracked billing/context changes.
 - Связь с оригинальной записью через `OneToOneField` (одна pending-запись на ID).
 - Поле `is_processed` отслеживает, обработано ли изменение.
 
@@ -588,7 +622,7 @@ Patch‑режим импорта: `python manage.py import_access_year --patch-
 
 - Находит/создаёт `KarteiRecord` по `(year, ID)`
 - Устанавливает `status = PENDING`
-- Создаёт `PendingChange` с `snapshot` из tracked-полей
+- Создаёт `PendingChange` с legacy-compatible flat `snapshot` из tracked-полей; metadata / snapshot v2 payload не импортируются из Access legacy tables.
 - Маркерные строки пропускаются
 
 **decl_tblKartei → DeclinedChange:**
@@ -788,19 +822,20 @@ per_hour_subjects = Subject.objects.filter(
 
 **Модель `SuperadminState`** (`apps/approvals/models.py`):
 
-| Поле             | Тип                  | Описание                                           |
-| ---------------- | -------------------- | -------------------------------------------------- |
-| `user`           | OneToOneField        | Ссылка на User (Superadmin).                       |
-| `last_seen_id`   | PositiveIntegerField | Последний просмотренный ID.                        |
-| `last_seen_date` | DateTimeField        | Альтернативный трекер (дата последнего просмотра). |
-| `updated_at`     | DateTimeField        | Время последнего обновления состояния.             |
+| Поле                | Тип                  | Описание                                                                 |
+| ------------------- | -------------------- | ------------------------------------------------------------------------ |
+| `user`              | OneToOneField        | Ссылка на User (Superadmin).                                             |
+| `last_seen_by_year` | JSONField            | Per-year tracker: `{ "2025": 123, "2026": 45 }`. Current source of truth. |
+| `last_seen_id`      | PositiveIntegerField | Legacy/fallback/diagnostic field, не основной фильтр per-year NeuList.   |
+| `last_seen_date`    | DateTimeField        | Альтернативный трекер (дата последнего просмотра).                       |
+| `updated_at`        | DateTimeField        | Время последнего обновления состояния.                                   |
 
 **Сервисы** (`apps/approvals/services.py`):
 
 - `get_or_create_superadmin_state(user)` — получает или создаёт состояние.
-- `get_new_records(user, year)` — возвращает записи с `id > last_seen_id`.
+- `get_new_records(user, year)` — возвращает записи выбранного года с `id > last_seen_by_year[str(year)]`.
 - `get_new_records_count(user, year)` — количество новых записей.
-- `update_last_seen_id(user, max_id=None)` — обновляет `last_seen_id`.
+- `update_last_seen_id(user, year, max_id=None)` — обновляет `last_seen_by_year[str(year)]` и может поддерживать legacy `last_seen_id`.
 
 **URL-эндпоинты:**
 
@@ -813,17 +848,18 @@ per_hour_subjects = Subject.objects.filter(
 
 Запись считается "новой" если:
 
-- `record.id > state.last_seen_id`
+- `record.year == selected_year`
+- `record.id > state.last_seen_by_year[str(selected_year)]`
 - Опционально: `record.created_at > state.last_seen_date` (для случаев, когда ID не монотонно возрастает)
 
-По умолчанию используется ID-based подход (аналог VBA).
+По умолчанию используется per-year ID-based подход. Это важно, потому что Access/Excel `id` уникален только в пределах года.
 
 ### 10.4 Отображение в UI
 
 NeuList страница показывает:
 
 - Таблицу новых записей (ID, FamilyID, Parent, Child, Birthdate, Status)
-- Текущее значение `last_seen_id`
+- Текущее значение `last_seen_by_year` для выбранного года
 - Количество новых записей
 - Кнопку "Alle als gesehen markieren" для сброса
 - Фильтр по году

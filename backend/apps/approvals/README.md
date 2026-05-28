@@ -1,5 +1,9 @@
 # Approvals App
 
+> Важно: canonical docs для нового агента — `CLAUDE.md`,
+> `docs/Status.md` и `docs/ProjectMap.md`. Если app-level README
+> расходится с ними, считать README устаревшим локальным контекстом.
+
 ## Назначение
 
 Приложение `approvals` реализует workflow утверждения/отклонения изменений и риск-классификацию.
@@ -26,10 +30,23 @@ Pending-изменение, ожидающее одобрения Superadmin.
 | -------------- | ------------- | -------------------------------------------------- |
 | `id`           | BigAutoField  | Авто-генерируемый PK (не ID Kartei).               |
 | `record`       | OneToOneField | Ссылка на `KarteiRecord` (один pending на запись). |
-| `snapshot`     | JSONField     | Снимок tracked-полей: `{"field": value, ...}`.     |
+| `snapshot`     | JSONField     | Current: flat snapshot по tracked-полям плюс reserved metadata keys. |
 | `is_processed` | BooleanField  | True после approve/decline.                        |
 | `created_at`   | DateTimeField | Время создания.                                    |
 | `updated_at`   | DateTimeField | Время последнего обновления.                       |
+
+Текущий формат `snapshot` совместим со старым flat tracked-fields payload:
+`{"field": value, ...}` для legacy `TRACKED_FIELDS`. Дополнительно snapshot
+может содержать reserved metadata keys, которые не являются tracked-полями и
+обрабатываются специальной логикой:
+
+- `_old_base_amounts` — сохранение предыдущих `base_amounts` для текущих rollback/decline paths.
+- `_pending_contract_type_entry` — pending metadata для `ContractTypeEntry`, создается только при approve.
+- `_pending_contract_status_entry` — pending metadata для `ContractStatusEntry`, создается только при approve.
+
+Target stabilization v2: для billing/context изменений нужен frozen payload,
+который полностью хранит reviewable billing proposal до approve. Текущий flat
+snapshot с metadata keys — current implementation, а не целевой v2 контракт.
 
 ### `DeclinedChange`
 
@@ -55,7 +72,7 @@ Pending-изменение, ожидающее одобрения Superadmin.
 
 ### Управление pending/declined
 
-- `build_snapshot(record) -> dict` — строит JSON-снимок tracked-полей.
+- `build_snapshot(record) -> dict` — строит JSON-снимок tracked-полей; reserved metadata keys добавляются отдельными workflows поверх него.
 - `create_or_update_pending_change(record) -> PendingChange` — создаёт/обновляет pending.
 - `create_declined_change(record, reason, declined_by) -> DeclinedChange` — создаёт declined.
 - `apply_pending_change(pending) -> KarteiRecord` — применяет approved изменения.
@@ -88,14 +105,16 @@ Pending-изменение, ожидающее одобрения Superadmin.
 
 - `get_new_records(user, year) -> list[KarteiRecord]`:
 
-  - Записи с ID > last_seen_id.
+  - Записи выбранного года с `id > last_seen_by_year[str(year)]`.
+  - Если год еще не tracked в `last_seen_by_year`, считается `0`, чтобы не скрывать записи из нового года legacy-значением.
 
 - `get_new_records_count(user, year) -> int`:
 
-  - Количество новых записей.
+  - Количество новых записей по тем же per-year правилам.
 
-- `update_last_seen_id(user, max_id=None)`:
-  - Обновляет last_seen_id.
+- `update_last_seen_id(user, year, max_id=None)`:
+  - Обновляет `last_seen_by_year[str(year)]`.
+  - Также записывает `last_seen_id` как legacy/fallback/diagnostic значение.
 
 ## Модели (PROMPT_09)
 
@@ -106,7 +125,8 @@ Pending-изменение, ожидающее одобрения Superadmin.
 | Поле             | Тип                  | Описание                                |
 | ---------------- | -------------------- | --------------------------------------- |
 | `user`           | OneToOneField(User)  | Ссылка на Superadmin пользователя.      |
-| `last_seen_id`   | PositiveIntegerField | Последний просмотренный ID для NeuList. |
+| `last_seen_by_year` | JSONField         | Current source для NeuList: `{year: last_seen_id}`. |
+| `last_seen_id`   | PositiveIntegerField | Legacy/fallback/diagnostic значение; не current source для per-year NeuList. |
 | `last_seen_date` | DateTimeField        | Альтернативный трекер (дата).           |
 | `updated_at`     | DateTimeField        | Время последнего обновления.            |
 

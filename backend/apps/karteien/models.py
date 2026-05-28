@@ -838,7 +838,7 @@ class ContractTypeEntry(models.Model):
                 name="unique_contract_type_record_month",
             ),
             models.CheckConstraint(
-                check=models.Q(effective_from_month__gte=1, effective_from_month__lte=12),
+                condition=models.Q(effective_from_month__gte=1, effective_from_month__lte=12),
                 name="contract_type_month_1_12",
             ),
         ]
@@ -906,7 +906,7 @@ class ContractStatusEntry(models.Model):
                 name="unique_contract_status_record_month",
             ),
             models.CheckConstraint(
-                check=models.Q(effective_from_month__gte=1, effective_from_month__lte=12),
+                condition=models.Q(effective_from_month__gte=1, effective_from_month__lte=12),
                 name="contract_status_month_1_12",
             ),
         ]
